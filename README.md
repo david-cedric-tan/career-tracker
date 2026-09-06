@@ -1,4 +1,4 @@
-# Application Tracker
+# Career Tracker
 
 Personal career + productivity assistant for tracking job applications, network contacts, resumes, and follow-ups — with a dashboard for progress over time.
 
