@@ -28,6 +28,16 @@ import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
 import { cx, relativeDay } from '../lib/format'
 
+/** `position` is the manual order behind the drag handles; everything else is
+    a computed sort that ignores it. */
+const SORTS = [
+  { value: 'due_date', label: 'Due date' },
+  { value: '-priority', label: 'Priority' },
+  { value: 'title', label: 'Title' },
+  { value: '-created_at', label: 'Newest' },
+  { value: 'position', label: 'Custom order' },
+] as const
+
 const SCOPES = [
   { value: '', label: 'All' },
   { value: 'overdue', label: 'Overdue' },
@@ -56,6 +66,7 @@ export function TodosPage() {
     setFormOpen(true)
   })
 
+  const sort = params.get('sort') ?? 'due_date'
   const scope = params.get('scope') ?? ''
   // `open` is the default *view*, but "Any status" has to be representable in
   // the URL — clearing the param would just fall back to the default again, so
@@ -65,9 +76,40 @@ export function TodosPage() {
 
   const choices = useResource(() => todos.choices(), [])
   const list = useResource(
-    () => todos.list({ scope, status: statusFilter, ordering: 'due_date' }),
-    [scope, statusFilter],
+    () => todos.list({ scope, status: statusFilter, ordering: sort }),
+    [scope, statusFilter, sort],
   )
+  // The order shown while a drag is in flight, so the row follows the cursor
+  // instead of waiting on the round trip.
+  const [dragOrder, setDragOrder] = useState<Todo[] | null>(null)
+  const [draggingId, setDraggingId] = useState<number | null>(null)
+
+  async function persistOrder(ordered: Todo[]) {
+    setDragOrder(ordered)
+    try {
+      await todos.reorder(ordered.map((todo) => todo.id))
+      // Dragging *is* the act of choosing a custom order, so switch to it
+      // rather than making the arrangement invisible behind another sort.
+      if (sort !== 'position') setParam('sort', 'position')
+      else list.reload()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+      setDragOrder(null)
+      list.reload()
+    }
+  }
+
+  function onDropRow(targetId: number) {
+    const current = dragOrder ?? list.data ?? []
+    if (draggingId === null || draggingId === targetId) return
+    const from = current.findIndex((todo) => todo.id === draggingId)
+    const to = current.findIndex((todo) => todo.id === targetId)
+    if (from === -1 || to === -1) return
+    const next = [...current]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    void persistOrder(next)
+  }
   const suggestions = useResource(() => todos.suggestions(), [])
   // Counted over every todo, not the current filter — otherwise the ring would
   // read 100% the moment you filtered to "Done".
@@ -95,7 +137,9 @@ export function TodosPage() {
     }
   }
 
-  const rows = list.data ?? []
+  // While a drag is settling, show the arrangement the user just made.
+  const rows = dragOrder ?? list.data ?? []
+
 
   return (
     <>
@@ -206,6 +250,21 @@ export function TodosPage() {
           ))}
         </div>
         <Select
+          value={sort}
+          onChange={(event) => {
+            setDragOrder(null)
+            setParam('sort', event.target.value)
+          }}
+          aria-label="Sort todos"
+          wrapperClassName="w-44"
+        >
+          {SORTS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+        <Select
           value={status}
           onChange={(event) => setParam('status', event.target.value)}
           aria-label="Filter by status"
@@ -250,7 +309,35 @@ export function TodosPage() {
           <Card padded={false}>
             <ul className="divide-y divide-line">
               {rows.map((todo) => (
-                <li key={todo.id} className="flex items-start gap-3 px-3 py-3 sm:px-4">
+                <li
+                  key={todo.id}
+                  draggable
+                  onDragStart={() => setDraggingId(todo.id)}
+                  onDragEnd={() => setDraggingId(null)}
+                  // Without preventDefault the row refuses the drop.
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    onDropRow(todo.id)
+                    setDraggingId(null)
+                  }}
+                  className={cx(
+                    'group/todo flex items-start gap-3 px-3 py-3 transition-opacity sm:px-4',
+                    'cursor-grab active:cursor-grabbing',
+                    draggingId === todo.id && 'opacity-40',
+                  )}
+                >
+                  {/* Draggable under every sort, not just Custom: dragging is
+                      how you ask for a custom order, so requiring you to pick
+                      it first would put the setting before the intention. The
+                      drop switches the sort for you. */}
+                  <span
+                    aria-hidden="true"
+                    title="Drag to reorder"
+                    className="mt-0.5 shrink-0 text-ink-3 opacity-0 transition-opacity group-hover/todo:opacity-100"
+                  >
+                    <Icon name="gripVertical" size={16} />
+                  </span>
                   <button
                     type="button"
                     onClick={() => void toggle(todo)}

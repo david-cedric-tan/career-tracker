@@ -200,6 +200,10 @@ function ResumeFormBody({ open, onClose, onSaved, existing }: ResumeFormProps) {
   // The file endpoint is keyed by id, so a brand-new resume can't take an
   // attachment until it's been saved once.
   const [current, setCurrent] = useState<Resume | null>(existing ?? null)
+  // A file picked before the resume exists. Uploading needs an id, so it's
+  // held here and sent the moment the create call returns — the two-step is
+  // the API's shape, not something the user should have to perform.
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [form, setForm] = useState(() => ({
     label: existing?.label ?? '',
     variant_type: (existing?.variant_type ?? 'general') as Resume['variant_type'],
@@ -234,9 +238,13 @@ function ResumeFormBody({ open, onClose, onSaved, existing }: ResumeFormProps) {
       target_roles: targetRoles,
     }
     try {
-      const saved = existing
+      let saved = existing
         ? await resumes.update(existing.id, payload)
         : await resumes.create(payload)
+      if (pendingFile) {
+        saved = await resumes.uploadFile(saved.id, pendingFile)
+        setPendingFile(null)
+      }
       setCurrent(saved)
       notify(existing ? 'Resume updated.' : 'Resume added.')
       onSaved()
@@ -352,26 +360,34 @@ function ResumeFormBody({ open, onClose, onSaved, existing }: ResumeFormProps) {
 
         <div>
           <Label>Attachment</Label>
-          {current ? (
-            <FilePicker
-              url={current.file}
-              name={current.file_name}
-              kind={current.file_kind}
-              size={current.file_size}
-              onUpload={async (file) => {
-                setCurrent(await resumes.uploadFile(current.id, file))
-                onSaved()
-              }}
-              onRemove={async () => {
-                setCurrent(await resumes.removeFile(current.id))
-                onSaved()
-              }}
-            />
-          ) : (
-            <p className="rounded-lg border border-dashed border-line-strong bg-surface-2 p-3 text-[12.5px] text-ink-3">
-              Save this resume first, then attach the PDF, Word or Pages file.
-            </p>
-          )}
+          <FilePicker
+            url={current?.file ?? null}
+            name={current?.file_name ?? pendingFile?.name ?? ''}
+            kind={current?.file_kind ?? null}
+            size={current?.file_size ?? pendingFile?.size ?? null}
+            help={
+              current
+                ? undefined
+                : 'PDF, Word, Pages, ODT, RTF or text — attached when you save.'
+            }
+            onUpload={async (file) => {
+              if (!current) {
+                // Nothing to attach to yet; onSubmit sends it after create.
+                setPendingFile(file)
+                return
+              }
+              setCurrent(await resumes.uploadFile(current.id, file))
+              onSaved()
+            }}
+            onRemove={async () => {
+              if (!current) {
+                setPendingFile(null)
+                return
+              }
+              setCurrent(await resumes.removeFile(current.id))
+              onSaved()
+            }}
+          />
         </div>
       </form>
     </Modal>

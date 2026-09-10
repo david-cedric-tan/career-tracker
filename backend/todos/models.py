@@ -51,6 +51,11 @@ class Todo(models.Model):
         Company, on_delete=models.SET_NULL, null=True, blank=True, related_name="todos"
     )
 
+    # Manual order, used only by the "Custom" sort. Every other sort ignores
+    # it, so dragging a list into shape doesn't fight due dates or priority —
+    # it's a separate view of the same todos.
+    position = models.PositiveIntegerField(default=0)
+
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

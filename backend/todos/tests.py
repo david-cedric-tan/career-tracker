@@ -91,3 +91,53 @@ class TodoApiTests(APITestCase):
         mine = Todo.objects.create(user=self.user, title="Mine")
         response = self.client.get("/api/todos/")
         self.assertEqual([row["id"] for row in response.data], [mine.id])
+
+
+class TodoReorderTests(APITestCase):
+    """Dragging a list into shape is its own view of the same todos — the
+    "Custom" sort. Every other sort ignores `position`."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("dave", password="tracker-pass-9182")
+        self.other = User.objects.create_user("mallory", password="tracker-pass-9182")
+        self.client.force_authenticate(self.user)
+        self.a = Todo.objects.create(user=self.user, title="A")
+        self.b = Todo.objects.create(user=self.user, title="B")
+        self.c = Todo.objects.create(user=self.user, title="C")
+
+    def test_reorder_sets_positions_in_the_order_given(self):
+        response = self.client.post(
+            "/api/todos/reorder/", {"ids": [self.c.id, self.a.id, self.b.id]}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        ordered = self.client.get("/api/todos/?ordering=position").data
+        self.assertEqual([row["title"] for row in ordered], ["C", "A", "B"])
+
+    def test_other_sorts_ignore_the_manual_order(self):
+        self.client.post(
+            "/api/todos/reorder/", {"ids": [self.c.id, self.b.id, self.a.id]}, format="json"
+        )
+        ordered = self.client.get("/api/todos/?ordering=title").data
+        self.assertEqual([row["title"] for row in ordered], ["A", "B", "C"])
+
+    def test_a_new_todo_lands_at_the_top_of_the_manual_order(self):
+        self.client.post(
+            "/api/todos/reorder/", {"ids": [self.a.id, self.b.id, self.c.id]}, format="json"
+        )
+        self.client.post("/api/todos/", {"title": "Just written down"}, format="json")
+        ordered = self.client.get("/api/todos/?ordering=position").data
+        self.assertEqual(ordered[0]["title"], "Just written down")
+
+    def test_cannot_reorder_someone_elses_todos(self):
+        theirs = Todo.objects.create(user=self.other, title="Not mine")
+        response = self.client.post(
+            "/api/todos/reorder/", {"ids": [self.a.id, theirs.id]}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        theirs.refresh_from_db()
+        self.assertEqual(theirs.position, 0)
+
+    def test_a_malformed_payload_is_rejected(self):
+        response = self.client.post("/api/todos/reorder/", {"ids": "nope"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("ids", response.data)

@@ -32,6 +32,7 @@ class TodoSerializer(serializers.ModelSerializer):
             "person", "person_name",
             "company", "company_name",
             "is_overdue",
+            "position",
             "completed_at",
             "created_at",
             "updated_at",
