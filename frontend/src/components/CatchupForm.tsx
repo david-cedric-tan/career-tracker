@@ -10,6 +10,7 @@ import { Input, Select } from './ui/Field'
 import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
+import { ConfirmDelete } from './ui/ConfirmDelete'
 
 type Props = {
   open: boolean
@@ -37,6 +38,7 @@ function CatchupFormBody({
   personId,
 }: Props) {
   const { notify } = useToast()
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const celebrate = useCelebrate()
   const [form, setForm] = useState(() => ({
     person: (existing?.person ?? personId ?? null) as number | null,
@@ -118,7 +120,11 @@ function CatchupFormBody({
       footer={
         <>
           {existing ? (
-            <Button variant="danger" onClick={() => void remove()} className="mr-auto">
+            <Button
+              variant="danger"
+              onClick={() => setConfirmDelete(true)}
+              className="mr-auto"
+            >
               Delete
             </Button>
           ) : null}
@@ -228,6 +234,14 @@ function CatchupFormBody({
           placeholder="The two or three things worth remembering before the next one."
         />
       </form>
+
+      <ConfirmDelete
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={remove}
+        kind="catch-up"
+        name={existing?.title || (existing ? 'This catch-up' : null)}
+      />
     </Modal>
   )
 }

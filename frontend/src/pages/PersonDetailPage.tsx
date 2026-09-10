@@ -7,6 +7,7 @@ import { CatchupForm } from '../components/CatchupForm'
 import { PersonForm } from '../components/PersonForm'
 import { TaggedInPanel } from '../components/TaggedInPanel'
 import { PageHeader } from '../components/layout/PageHeader'
+import { Avatar } from '../components/ui/Avatar'
 import { Badge } from '../components/ui/Badge'
 import { ImagePicker } from '../components/ui/ImagePicker'
 import { CHANNEL_ICON, PERSON_STATUS_TONE, PRIORITY_TONE } from '../lib/tones'
@@ -157,11 +158,51 @@ export function PersonDetailPage() {
             {person.notes ? (
               <div className="mt-4 rounded-lg border border-line bg-surface-2 p-3">
                 <p className="mb-1 text-[12px] font-medium uppercase tracking-wide text-ink-3">
-                  Notes
+                  Profile notes
                 </p>
                 <RichText text={person.notes} className="text-[13.5px] text-ink-2" />
               </div>
             ) : null}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Connected To"
+              subtitle="Who else in your network knows them."
+            />
+            {person.connection_details.length === 0 ? (
+              <p className="mt-3 text-[13px] text-ink-3">
+                No one linked yet — add connections when editing this contact.
+              </p>
+            ) : (
+              /* Tiles rather than rows: this is a "who else do I know here"
+                 glance, and faces scan far faster in a grid than stacked in a
+                 list that pushes everything below it down the page. */
+              <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {person.connection_details.map((connection) => {
+                  const role = connection.title || connection.relationship_display || 'Contact'
+                  const company = connection.company_names.join(', ')
+                  return (
+                    <li key={connection.id}>
+                      <Link
+                        to={`/network/${connection.id}`}
+                        state={{ from: `${location.pathname}${location.search}` }}
+                        // The tile truncates; the tooltip is where the full
+                        // role and company live.
+                        title={`${connection.full_name}\n${role}${company ? `\n${company}` : ''}`}
+                        className="flex h-full flex-col items-center gap-1.5 rounded-lg border border-line bg-surface-2 p-2.5 text-center transition-all hover:-translate-y-0.5 hover:border-brand-ring hover:bg-brand-soft hover:shadow-md"
+                      >
+                        <Avatar name={connection.full_name} src={connection.photo} size="md" />
+                        <span className="w-full truncate text-[12.5px] font-medium text-ink">
+                          {connection.full_name}
+                        </span>
+                        <span className="w-full truncate text-[11px] text-ink-3">{role}</span>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </Card>
 
           <Card>

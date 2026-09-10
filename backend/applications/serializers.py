@@ -5,11 +5,13 @@ from config.images import validate_image
 
 from .models import (
     Application,
+    ApplicationDocument,
     ApplicationJobListing,
     ApplicationStage,
     AppsEventLog,
     Company,
     Country,
+    EventType,
     Industry,
     JobListing,
     Location,
@@ -443,14 +445,106 @@ class AppsEventLogSerializer(serializers.ModelSerializer):
 # endpoint should not drag every nested listing along for 40 rows.
 # ---------------------------------------------------------------------------
 
+class ApplicationDocumentSerializer(serializers.ModelSerializer):
+    """Read shape for a document in the application's gallery."""
+
+    file = serializers.SerializerMethodField()
+    file_kind = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ApplicationDocument
+        fields = [
+            "id", "title", "description", "file", "file_kind", "kind",
+            "original_name", "position", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_file(self, document):
+        request = self.context.get("request")
+        url = document.file.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_file_kind(self, document):
+        return document_kind(document.original_name or document.file.name)
+
+
+class ApplicationDocumentUploadSerializer(serializers.Serializer):
+    """Write shape — multipart, so the file rides alongside its labels."""
+
+    file = serializers.FileField()
+    title = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class ApplicationDocumentEditSerializer(serializers.Serializer):
+    """Title/description only — replacing the file means a new upload."""
+
+    title = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+def outcome_changed_at(application):
+    """When the current outcome was decided, or None if it never moved.
+
+    Read off the event log rather than stored: `updated_at` moves on any edit,
+    so it can't answer "when was this rejected". Uses the prefetched rows the
+    list view already loads, so it costs no extra query.
+    """
+    stamps = [
+        log.changed_at
+        for log in application.event_logs.all()
+        if log.event_type == EventType.OUTCOME
+    ]
+    return max(stamps).isoformat() if stamps else None
+
+
+def application_deadline(application):
+    """The soonest closing date across this application's listings, or None.
+
+    An application can cover several postings at one company; the one that
+    shuts first is the one that actually constrains you, so that's the date
+    worth showing. Listings with no closing date simply don't compete.
+    """
+    dates = [
+        link.job_listing.closing_at
+        for link in application.listing_links.all()
+        if link.job_listing.closing_at
+    ]
+    # ISO string rather than a date object, so the field reads the same whether
+    # it's been through JSON rendering or not.
+    return min(dates).isoformat() if dates else None
+
+
+def company_logo_url(application, context):
+    """Absolute URL of the application's company mark, or None."""
+    logo = application.company.logo
+    if not logo:
+        return None
+    request = context.get("request")
+    return request.build_absolute_uri(logo.url) if request else logo.url
+
+
 class ApplicationListSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
+    company_logo = serializers.SerializerMethodField()
     stage_display = serializers.SerializerMethodField()
+
+    def get_company_logo(self, application):
+        return company_logo_url(application, self.context)
     outcome_display = serializers.CharField(source="get_outcome_display", read_only=True)
 
     def get_stage_display(self, application):
         return stage_label(application.stage)
     listing_count = serializers.IntegerField(source="listing_links.count", read_only=True)
+    awaiting_days = serializers.IntegerField(read_only=True)
+    deadline = serializers.SerializerMethodField()
+    outcome_changed_at = serializers.SerializerMethodField()
+
+    def get_deadline(self, application):
+        return application_deadline(application)
+
+    def get_outcome_changed_at(self, application):
+        return outcome_changed_at(application)
     role_names = serializers.SerializerMethodField()
     resume_label = serializers.CharField(
         source="resume.label", read_only=True, default=None
@@ -460,7 +554,7 @@ class ApplicationListSerializer(serializers.ModelSerializer):
         model = Application
         fields = [
             "id",
-            "company", "company_name",
+            "company", "company_name", "company_logo",
             "stage", "stage_display",
             "outcome", "outcome_display",
             "applied_at",
@@ -470,6 +564,11 @@ class ApplicationListSerializer(serializers.ModelSerializer):
             "resume", "resume_label",
             "listing_count",
             "role_names",
+            "awaiting_response", "awaiting_since", "awaiting_days",
+            "is_historical",
+            "deadline",
+            "stage_updated_at",
+            "outcome_changed_at",
             "updated_at",
         ]
         read_only_fields = fields
@@ -480,7 +579,11 @@ class ApplicationListSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
+    company_logo = serializers.SerializerMethodField()
     stage_display = serializers.SerializerMethodField()
+
+    def get_company_logo(self, application):
+        return company_logo_url(application, self.context)
     outcome_display = serializers.CharField(source="get_outcome_display", read_only=True)
 
     def get_stage_display(self, application):
@@ -490,6 +593,16 @@ class ApplicationSerializer(serializers.ModelSerializer):
         source="resume.label", read_only=True, default=None
     )
     event_logs = AppsEventLogSerializer(many=True, read_only=True)
+    documents = ApplicationDocumentSerializer(many=True, read_only=True)
+    awaiting_days = serializers.IntegerField(read_only=True)
+    deadline = serializers.SerializerMethodField()
+    outcome_changed_at = serializers.SerializerMethodField()
+
+    def get_deadline(self, application):
+        return application_deadline(application)
+
+    def get_outcome_changed_at(self, application):
+        return outcome_changed_at(application)
 
     # Free-text note that becomes AppsEventLog.note when stage/outcome changes.
     # Not a model field — the service layer consumes it.
@@ -507,7 +620,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
         model = Application
         fields = [
             "id",
-            "company", "company_name",
+            "company", "company_name", "company_logo",
             "stage", "stage_display",
             "outcome", "outcome_display",
             "applied_at",
@@ -517,17 +630,24 @@ class ApplicationSerializer(serializers.ModelSerializer):
             "follow_up_date",
             "reapply_at",
             "stage_updated_at",
+            "awaiting_response", "awaiting_since", "awaiting_days",
+            "is_historical",
+            "deadline",
+            "outcome_changed_at",
             "notes",
             "listing_links",
             "listing_ids",
             "event_logs",
             "event_note",
+            "documents",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
-            "id", "company_name", "stage_display", "outcome_display",
-            "listing_links", "resume_label", "event_logs",
+            "id", "company_name", "company_logo", "stage_display", "outcome_display",
+            "listing_links", "resume_label", "event_logs", "documents",
+            "awaiting_since", "awaiting_days", "is_historical", "deadline",
+            "outcome_changed_at",
             "stage_updated_at", "created_at", "updated_at",
         ]
 

@@ -225,7 +225,7 @@ function EducationFormBody({
           error={errors.school}
           onChange={(event) => set('school', event.target.value)}
         />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Degree"
             placeholder="Bachelor of Commerce"
@@ -241,7 +241,7 @@ function EducationFormBody({
             onChange={(event) => set('field_of_study', event.target.value)}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Started"
             type="date"

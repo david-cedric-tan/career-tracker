@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { dashboard } from '../api/resources'
 import type { ActivityItem } from '../api/types'
 import type { Series } from '../components/charts/TrendChart'
-import { BarList } from '../components/charts/BarList'
+import { BarList, type BarSegment } from '../components/charts/BarList'
+import { OUTCOME_TONE, TONE_COLOR, stageTone } from '../lib/tones'
 import { CompanyPanel } from '../components/dashboard/CompanyPanel'
 import { WidgetBoard } from '../components/dashboard/WidgetBoard'
 import { StatTile } from '../components/charts/StatTile'
@@ -18,30 +19,46 @@ import { useResource } from '../hooks/useResource'
 import { cx, displayName, formatDate, relativeDay, relativeTime } from '../lib/format'
 
 const PERIODS = [
-  { value: 'week', label: 'Weekly' },
+  // "All" is the default: the dashboard's job on open is "how is this going",
+  // which is a question about everything, not the last twelve months.
+  { value: 'all', label: 'All' },
   { value: 'month', label: 'Monthly' },
+  { value: 'quarter', label: 'Quarterly' },
 ] as const
+
+type Period = (typeof PERIODS)[number]['value']
 
 export function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [period, setPeriod] = useState<'week' | 'month'>('week')
+  const [period, setPeriod] = useState<Period>('all')
   const [showTable, setShowTable] = useState(false)
 
   // Pipeline/Outcomes bars reuse Applications' own filter params, so a click
   // on either just deep-links there with a stateful way back to this page.
-  function goToApplications(param: 'stage' | 'outcome', value: string) {
-    navigate(`/applications?${param}=${encodeURIComponent(value)}`, { state: { from: '/' } })
+  function goToApplications(
+    param: 'stage' | 'outcome',
+    value: string,
+    segment: BarSegment = 'all',
+  ) {
+    const params = new URLSearchParams({ [param]: value })
+    // Clicking a coloured slice filters to what that slice represents, so the
+    // list you land on is the applications you just pointed at.
+    if (segment === 'rejected') params.set('outcome', 'rejected')
+    if (segment === 'awaiting') params.set('awaiting', '1')
+    navigate(`/applications?${params}`, { state: { from: '/' } })
   }
 
-  const summary = useResource(() => dashboard.summary(), [])
+  // Every applications-derived widget reads the same window, so the counters,
+  // the chart and the company panel can't end up describing different spans.
+  const summary = useResource(() => dashboard.summary({ period }), [period])
   const trend = useResource(
-    () => dashboard.timeseries({ period, buckets: period === 'week' ? 12 : 6 }),
+    () => dashboard.timeseries({ period, buckets: period === 'quarter' ? 8 : 12 }),
     [period],
   )
   const attention = useResource(() => dashboard.attention(), [])
   const activity = useResource(() => dashboard.activity({ limit: 12 }), [])
-  const companyStats = useResource(() => dashboard.companies(), [])
+  const companyStats = useResource(() => dashboard.companies({ period }), [period])
   const regionStats = useResource(() => dashboard.regions(), [])
 
   if (summary.initial) return <Loading label="Building your dashboard…" />
@@ -155,7 +172,13 @@ export function DashboardPage() {
             <Card className="h-full">
               <CardHeader
                 title="Progress Over Time"
-                subtitle={period === 'week' ? 'Last 12 weeks' : 'Last 6 months'}
+                subtitle={
+                  period === 'all'
+                    ? 'Everything you\u2019ve logged'
+                    : period === 'month'
+                      ? 'Last 12 months'
+                      : 'Last 8 quarters'
+                }
                 action={
                   <button
                     type="button"
@@ -198,19 +221,63 @@ export function DashboardPage() {
 
           pipeline: (
             <Card className="h-full">
-              <CardHeader title="Pipeline" subtitle="Applications by current stage" />
-              <div className="mt-4">
+              <CardHeader
+                title="Pipeline & outcomes"
+                subtitle="Where applications are now, and how the finished ones landed"
+              />
+              {/* The legend shows the marks themselves rather than describing
+                  them: matching a swatch to a bar is a glance, reading a
+                  sentence and then looking for what it meant is not. */}
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <span className="text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                  By stage
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-warning/30 bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-[#8a5d00] dark:text-warning">
+                  <span className="size-2 shrink-0 rounded-sm bg-warning" aria-hidden="true" />
+                  Waiting on them
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-critical/25 bg-critical/10 px-2 py-0.5 text-[11px] font-medium text-critical">
+                  <span className="bar-rejected size-2 shrink-0 rounded-sm" aria-hidden="true" />
+                  Rejected
+                </span>
+              </div>
+              <div className="mt-3">
                 <BarList
-                  ramp
                   rows={
                     stats?.applications.by_stage.map((bucket) => ({
                       key: bucket.value,
                       label: bucket.label,
                       count: bucket.count,
+                      rejected: bucket.rejected,
+                      awaiting: bucket.awaiting,
+                      // Offer is green here for the same reason its badge is:
+                      // the ramp says "how far along", but reaching an offer
+                      // is a different kind of fact from being one step later.
+                      color: TONE_COLOR[stageTone(bucket.value)],
                     })) ?? []
                   }
                   emptyText="No applications logged yet."
-                  onSelect={(row) => goToApplications('stage', row.key)}
+                  onSelect={(row, segment) => goToApplications('stage', row.key, segment)}
+                />
+              </div>
+
+              <p className="mt-5 border-t border-line pt-4 text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
+                By outcome
+              </p>
+              <div className="mt-3">
+                <BarList
+                  rows={
+                    stats?.applications.by_outcome
+                      .filter((bucket) => bucket.count > 0)
+                      .map((bucket) => ({
+                        key: bucket.value,
+                        label: bucket.label,
+                        count: bucket.count,
+                        color: TONE_COLOR[OUTCOME_TONE[bucket.value] ?? 'neutral'],
+                      })) ?? []
+                  }
+                  emptyText="No outcomes recorded yet."
+                  onSelect={(row) => goToApplications('outcome', row.key)}
                 />
               </div>
             </Card>
@@ -225,27 +292,6 @@ export function DashboardPage() {
                 error={attention.error}
                 onRetry={attention.reload}
               />
-            </Card>
-          ),
-
-          outcomes: (
-            <Card className="h-full">
-              <CardHeader title="Outcomes" subtitle="How applications have resolved" />
-              <div className="mt-4">
-                <BarList
-                  rows={
-                    stats?.applications.by_outcome
-                      .filter((bucket) => bucket.count > 0)
-                      .map((bucket) => ({
-                        key: bucket.value,
-                        label: bucket.label,
-                        count: bucket.count,
-                      })) ?? []
-                  }
-                  emptyText="No outcomes recorded yet."
-                  onSelect={(row) => goToApplications('outcome', row.key)}
-                />
-              </div>
             </Card>
           ),
 

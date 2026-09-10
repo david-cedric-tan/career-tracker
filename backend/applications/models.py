@@ -2,6 +2,8 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -120,6 +122,21 @@ class Outcome(models.TextChoices):
     DECLINED = "declined", "Declined"
     WITHDRAWN = "withdrawn", "Withdrawn"
     GHOSTED = "ghosted", "Ghosted"
+
+    @classmethod
+    def terminal(cls):
+        """Everything except "still going" — reaching any of these means the
+        employer has answered, so a pending waiting flag is finished with."""
+        return {
+            cls.REJECTED,
+            cls.OFFER_RECEIVED,
+            cls.ACCEPTED,
+            cls.DECLINED,
+            cls.WITHDRAWN,
+            cls.GHOSTED,
+        }
+
+
 class RoleType(models.TextChoices):
     VACATIONER = "vacationer", "Vacationer / Internship"
     GRADUATE = "graduate", "Graduate"
@@ -139,6 +156,11 @@ class EventType(models.TextChoices):
     STAGE = "stage", "Stage change"
     OUTCOME = "outcome", "Outcome change"
     EDITED = "edited", "Edited"
+    # Waiting is neither a stage nor an outcome — it's who owes the next move.
+    # Added rather than folded into STAGE so the time series keeps counting
+    # only real pipeline movement, and so the timeline can draw it softer.
+    WAITING_STARTED = "waiting_started", "Waiting for response"
+    WAITING_ENDED = "waiting_ended", "Response received"
 
 
 class ResumeVariantType(models.TextChoices):
@@ -327,6 +349,15 @@ class Resume(models.Model):
             models.UniqueConstraint(
                 fields=["user", "label"], name="uniq_resume_label_per_user"
             ),
+            # Scoped to the user, not global: two people uploading their own
+            # "Resume_2026.pdf" have nothing to do with each other. Partial,
+            # because `file_name` is blank until a document is attached and
+            # empty strings collide with each other where NULLs would not.
+            models.UniqueConstraint(
+                fields=["user", "file_name"],
+                condition=~models.Q(file_name=""),
+                name="uniq_resume_file_name_per_user",
+            ),
             models.CheckConstraint(
                 condition=models.Q(
                     variant_type__in=[c[0] for c in ResumeVariantType.choices]
@@ -433,6 +464,19 @@ class Application(models.Model):
     # declined application can just as reasonably want a future reminder.
     reapply_at = models.DateField(null=True, blank=True)
     stage_updated_at = models.DateTimeField(null=True, blank=True)
+
+    # Whether the employer currently owes the next move. Deliberately neither a
+    # stage nor an outcome: the stage is *where* you are, the outcome is *how
+    # it ended*, and this is a temporary state layered on top of both. Folding
+    # it into either would mean "Video interview, done, waiting" had to become
+    # its own stage, multiplying the pipeline for every step.
+    awaiting_response = models.BooleanField(default=False)
+    awaiting_since = models.DateTimeField(null=True, blank=True)
+
+    # Logged retrospectively rather than tracked live. Set by `backfill`, and
+    # what lets the detail page stop presenting a made-up "created today".
+    is_historical = models.BooleanField(default=False)
+
     notes = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -454,6 +498,25 @@ class Application(models.Model):
                 name="valid_outcome",
             ),
         ]
+
+    @property
+    def awaiting_days(self):
+        """How long the ball has been in their court, or None."""
+        if not self.awaiting_response or self.awaiting_since is None:
+            return None
+        return (timezone.now() - self.awaiting_since).days
+
+    def clear_waiting(self):
+        """Drop the waiting flag, reporting whether it was actually set.
+
+        The caller decides whether that warrants a WAITING_ENDED row — moving
+        stage does, because a reply is usually what let you move.
+        """
+        if not self.awaiting_response:
+            return False
+        self.awaiting_response = False
+        self.awaiting_since = None
+        return True
 
     def __str__(self):
         return f"{self.company.name} — {self.get_stage_display()} ({self.applied_at})"
@@ -577,3 +640,41 @@ class AppsEventLog(models.Model):
 
     def __str__(self):
         return f"{self.application_id}: {self.prev_stage or '—'} → {self.curr_stage}"
+
+
+class ApplicationDocument(models.Model):
+    """A supporting file the user attached to one application (cover letter,
+    take-home task, portfolio piece, the offer PDF).
+
+    Separate from `Resume`, which is a reusable artefact shared across
+    applications: these belong to exactly one application and carry their own
+    title and description, so the gallery can label them without opening them.
+    """
+
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name="documents"
+    )
+    file = models.FileField(upload_to="application_documents/")
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    # The name it was uploaded under, kept so a download is recognisable even
+    # though storage renames the file.
+    original_name = models.CharField(max_length=255, blank=True)
+    kind = models.CharField(max_length=10)
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return self.title or self.original_name or f"Document {self.pk}"
+
+
+@receiver(post_delete, sender=ApplicationDocument)
+def delete_application_document_file(sender, instance, **kwargs):
+    """Removing the row removes the file — a post_delete signal so deleting the
+    whole application cleans up storage too, not just rows."""
+    if instance.file:
+        instance.file.delete(save=False)

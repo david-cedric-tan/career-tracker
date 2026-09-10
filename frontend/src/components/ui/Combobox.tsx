@@ -1,10 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { cx } from '../../lib/format'
+import { Avatar } from './Avatar'
 import { Icon } from './Icon'
 import { Label } from './Field'
 import { Spinner } from './Button'
 
-export type Option = { id: number; label: string; hint?: string }
+export type Option = {
+  id: number
+  label: string
+  hint?: string
+  /** Optional mark for the row — a person's photo or a company's logo. Falls
+      back to initials, so a row never renders an empty hole. */
+  avatar?: string | null
+  /** Logos are square, faces are round. */
+  avatarShape?: 'circle' | 'square'
+}
 
 /**
  * Type-ahead picker over a catalog, with "create <name>" inline.
@@ -213,9 +223,19 @@ export function Combobox({
                     index === active ? 'bg-surface-2 text-ink' : 'text-ink-2',
                   )}
                 >
-                  <span className="truncate">{option.label}</span>
+                  {option.avatar !== undefined ? (
+                    <Avatar
+                      name={option.label}
+                      src={option.avatar}
+                      size="xs"
+                      shape={option.avatarShape ?? 'circle'}
+                    />
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
                   {option.hint ? (
-                    <span className="shrink-0 text-[11px] text-ink-3">{option.hint}</span>
+                    <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
+                      {option.hint}
+                    </span>
                   ) : null}
                   {option.id === value ? (
                     <Icon name="check" size={15} className="text-brand" />
@@ -338,9 +358,23 @@ export function MultiSelect({
                 onChange={() => toggle(option.id)}
                 className="size-4 shrink-0 cursor-pointer rounded border-line-strong accent-[var(--color-brand)]"
               />
+              {option.avatar !== undefined ? (
+                <Avatar
+                  name={option.label}
+                  src={option.avatar}
+                  size="xs"
+                  shape={option.avatarShape ?? 'circle'}
+                />
+              ) : null}
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {/* Capped and truncating rather than `shrink-0`: a long hint used
+                  to win the fight for width and squeeze the name down to an
+                  ellipsis, which is backwards — the name is the thing you're
+                  picking by. */}
               {option.hint ? (
-                <span className="shrink-0 text-[11px] text-ink-3">{option.hint}</span>
+                <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
+                  {option.hint}
+                </span>
               ) : null}
             </label>
           ))

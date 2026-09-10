@@ -2,33 +2,6 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import type { Attention, DashboardSummary } from '../../api/types'
 import { cx, formatDate, relativeDay } from '../../lib/format'
-import { Icon } from '../ui/Icon'
-
-/* Placeholder content — swap for a real source when one exists. */
-const QUOTES = [
-  ['Rejection is redirection. Log it and move.', 'Careers desk'],
-  ['The best time to network was a year ago. The second best is today.', 'Old proverb, adapted'],
-  ['You miss 100% of the applications you don’t submit.', 'Also a proverb'],
-  ['Momentum beats motivation. Send one more.', 'Anon'],
-  ['A follow-up is not a nuisance. Silence is.', 'Every recruiter, quietly'],
-  ['Track it or it didn’t happen.', 'This app'],
-] as const
-
-// Chosen once when the module loads rather than during render: reading the
-// clock mid-render is impure, and a quote that changed on every re-render
-// would make the dashboard feel unstable.
-const TODAYS_QUOTE = QUOTES[Math.floor(Date.now() / 86_400_000) % QUOTES.length]
-
-export function QuoteWidget() {
-  const [text, source] = TODAYS_QUOTE
-
-  return (
-    <div className="flex h-full flex-col justify-between gap-3">
-      <p className="text-[15px] font-medium leading-snug text-ink">“{text}”</p>
-      <p className="text-[12px] text-ink-3">— {source}</p>
-    </div>
-  )
-}
 
 export function CalendarWidget({ attention }: { attention: Attention | null }) {
   const items = useMemo(() => {
@@ -96,25 +69,6 @@ export function CalendarWidget({ attention }: { attention: Attention | null }) {
         )
       })}
     </ul>
-  )
-}
-
-export function PhotoWidget() {
-  return (
-    <div className="flex h-full flex-col gap-2">
-      <div
-        className="grid min-h-24 flex-1 place-items-center rounded-lg text-ink-3 ring-1 ring-line"
-        style={{
-          backgroundImage:
-            'linear-gradient(135deg, var(--color-brand-soft), var(--color-surface-2))',
-        }}
-      >
-        <Icon name="file" size={22} />
-      </div>
-      <p className="text-[11.5px] text-ink-3">
-        Placeholder — will pin a photo from an experience gallery.
-      </p>
-    </div>
   )
 }
 

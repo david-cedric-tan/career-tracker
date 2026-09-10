@@ -23,6 +23,20 @@ export function formatShortDate(value: string): string {
   return parse(value).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 }
 
+/**
+ * A month-and-year label for a chart bucket — "Oct '25".
+ *
+ * The day is dropped because these are always month or quarter *starts*, so
+ * "1" carried no information; the year is added because a chart spanning more
+ * than twelve months repeats month names, and without it two different Octobers
+ * look like the same point.
+ */
+export function formatPeriodLabel(value: string): string {
+  const date = parse(value)
+  const month = date.toLocaleDateString(undefined, { month: 'short' })
+  return `${month} '${String(date.getFullYear()).slice(-2)}`
+}
+
 export function formatDateTime(value: string): string {
   return parse(value).toLocaleString(undefined, {
     day: 'numeric',

@@ -16,7 +16,7 @@ const SHORTCUTS = [
 
 type ShortcutFx = (typeof SHORTCUTS)[number]['fx']
 
-/** The layers a given effect needs inside its button, behind the icon. */
+/** The layers a given effect needs inside its host, behind the icon. */
 function ShortcutEffect({ fx }: { fx: ShortcutFx }) {
   if (fx === 'sonar') {
     return (
@@ -111,7 +111,7 @@ export function QuickAccessMenu({ hidden = false }: { hidden?: boolean }) {
                   navigate(item.to)
                 }}
                 aria-label={item.label}
-                className="qa-btn relative grid size-11 shrink-0 place-items-center overflow-visible rounded-full border border-line bg-surface text-ink shadow-md transition-colors hover:border-brand-ring hover:bg-brand-soft hover:text-brand-strong"
+                className="qa-fx-host relative grid size-11 shrink-0 place-items-center overflow-visible rounded-full border border-line bg-surface text-ink shadow-md transition-colors hover:border-brand-ring hover:bg-brand-soft hover:text-brand-strong"
               >
                 <span className="qa-pulse" aria-hidden="true" />
                 <ShortcutEffect fx={item.fx} />

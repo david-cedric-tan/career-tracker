@@ -39,8 +39,14 @@ const INTENSITY: Record<CelebrationKind, number> = {
   experience: 70,
 }
 
-const GRAVITY = 0.12
-const DRAG = 0.985
+// Softened alongside the longer life below: at the old pull the particles
+// simply fell off the bottom before their extra lifetime could be seen, so
+// stretching `maxLife` on its own would have changed nothing on screen.
+const GRAVITY = 0.055
+const DRAG = 0.99
+
+/** How much longer a burst lasts than the original tuning. */
+const DURATION_SCALE = 2.5
 
 /**
  * Fireworks on genuine progress (FR-FX-*).
@@ -82,6 +88,21 @@ export function CelebrationProvider({ children }: { children: ReactNode }) {
     return () => query.removeEventListener('change', onChange)
   }, [])
 
+  /** Cut a burst short and clear the canvas.
+   *
+   * A celebration is a flourish, never something to sit through: the moment
+   * you do anything else, you've moved on and it should get out of the way.
+   */
+  const stop = useCallback(() => {
+    if (frame.current !== null) {
+      cancelAnimationFrame(frame.current)
+      frame.current = null
+    }
+    particles.current = []
+    const canvas = canvasRef.current
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+  }, [])
+
   /** Advance one frame. Returns whether anything is still alive. */
   const step = useCallback(() => {
     const canvas = canvasRef.current
@@ -90,19 +111,23 @@ export function CelebrationProvider({ children }: { children: ReactNode }) {
 
     context.clearRect(0, 0, canvas.width, canvas.height)
 
+    // Each particle is replaced rather than mutated in place. The array is
+    // rebuilt every frame anyway (that's how dead ones are dropped), so this
+    // costs one object per live particle and keeps the whole loop free of
+    // in-place mutation.
     const alive: Particle[] = []
     for (const p of particles.current) {
-      p.vx *= DRAG
-      p.vy = p.vy * DRAG + GRAVITY
-      p.x += p.vx
-      p.y += p.vy
-      p.life -= 1
-      if (p.life <= 0 || p.y > canvas.height + 40) continue
+      const vx = p.vx * DRAG
+      const vy = p.vy * DRAG + GRAVITY
+      const x = p.x + vx
+      const y = p.y + vy
+      const life = p.life - 1
+      if (life <= 0 || y > canvas.height + 40) continue
 
-      context.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife))
+      context.globalAlpha = Math.max(0, Math.min(1, life / p.maxLife))
       context.fillStyle = p.colour
-      context.fillRect(p.x, p.y, p.size, p.size * 1.6)
-      alive.push(p)
+      context.fillRect(x, y, p.size, p.size * 1.6)
+      alive.push({ ...p, x, y, vx, vy, life })
     }
     context.globalAlpha = 1
     particles.current = alive
@@ -134,7 +159,7 @@ export function CelebrationProvider({ children }: { children: ReactNode }) {
         for (let i = 0; i < count / shells.length; i += 1) {
           const angle = Math.random() * Math.PI * 2
           const speed = 2 + Math.random() * 6
-          const maxLife = 55 + Math.random() * 45
+          const maxLife = (55 + Math.random() * 45) * DURATION_SCALE
           particles.current.push({
             x: shell.x,
             y: shell.y,
@@ -149,15 +174,36 @@ export function CelebrationProvider({ children }: { children: ReactNode }) {
       }
 
       if (frame.current === null) {
+        // Any interaction ends it. Listeners are attached only while a burst
+        // is running and torn down the moment it finishes, so there's nothing
+        // bound to the window while the app sits idle.
+        const interrupt = () => {
+          stop()
+          detach()
+        }
+        const detach = () => {
+          window.removeEventListener('pointerdown', interrupt)
+          window.removeEventListener('keydown', interrupt)
+          window.removeEventListener('wheel', interrupt)
+        }
+        window.addEventListener('pointerdown', interrupt)
+        window.addEventListener('keydown', interrupt)
+        window.addEventListener('wheel', interrupt, { passive: true })
+
         // A hoisted declaration, so the loop can schedule itself without
         // referencing a const that isn't initialised yet.
         function run() {
-          frame.current = step() ? requestAnimationFrame(run) : null
+          if (step()) {
+            frame.current = requestAnimationFrame(run)
+            return
+          }
+          frame.current = null
+          detach()
         }
         frame.current = requestAnimationFrame(run)
       }
     },
-    [reducedMotion, enabled, step],
+    [reducedMotion, enabled, step, stop],
   )
 
   useEffect(

@@ -51,7 +51,13 @@ class PersonViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = (
             Person.objects.filter(user=self.request.user)
-            .prefetch_related("companies", "applications__company", "contact_methods")
+            .prefetch_related(
+                "company_links__company",
+                "applications__company",
+                "contact_methods",
+                "connections__relationship",
+                "connections__company_links__company",
+            )
         )
         params = self.request.query_params
 

@@ -9,14 +9,19 @@ exports are data-only. The full "Data + Resources" backup (FR-EXPORT-05) is
 a .zip built by `collect_media_manifest` below, layered on top of this same
 archive rather than changing its shape. It covers every file field that's
 already part of this archive (resumes, experience photos, profile
-avatar/wallpaper, company logos, person photos) — Education/Certifications/
-ExtraCurriculars and their attachments aren't in this archive shape yet at
-all, so their files aren't in the zip either.
+avatar/wallpaper, company logos, person photos), plus certification
+attachments — those rows aren't in the archive shape yet, so the files ride
+along named by their caption for a human reading the zip, and restore skips
+the manifest rows rather than reattaching them. Education/ExtraCurricular
+attachments are still absent.
 """
 
 import os
+import re
 
-from accounts.models import Experience, ExperiencePhoto, Profile
+from django.utils.text import get_valid_filename
+
+from accounts.models import Certification, Experience, ExperiencePhoto, Profile
 from applications.models import (
     Application,
     ApplicationJobListing,
@@ -306,6 +311,34 @@ def _ext(name):
     return os.path.splitext(name or "")[1]
 
 
+def _caption_filename(attachment, taken):
+    """The name a profile attachment is stored under inside the zip.
+
+    The caption is the point of this: someone opening the backup should see
+    "AWS Cloud Practitioner.pdf", not "profile_attachments/x7f3k2.pdf". Falls
+    back to the uploaded name when there's no caption, and `taken` keeps two
+    files captioned the same from colliding into one zip entry.
+    """
+    label = (attachment.caption or attachment.original_name or "").strip()
+    # A caption that already ends in ".pdf" shouldn't come out as ".pdf.pdf".
+    stem = get_valid_filename(os.path.splitext(label)[0] or label)
+    # `get_valid_filename` drops the slashes but leaves the dots, so a caption
+    # like "../../etc/passwd" survives as "....etcpasswd" — no longer a
+    # traversal, but still a dot-run that reads as a hidden file.
+    stem = re.sub(r"\.{2,}", ".", stem).strip("._-")
+    if not stem:
+        stem = f"attachment-{attachment.pk}"
+
+    extension = _ext(attachment.file.name) or _ext(attachment.original_name)
+    name = f"{stem}{extension}"
+    suffix = 2
+    while name.lower() in taken:
+        name = f"{stem}-{suffix}{extension}"
+        suffix += 1
+    taken.add(name.lower())
+    return name
+
+
 def collect_media_manifest(user):
     """Every uploaded file this user's archive can reference right now.
 
@@ -384,6 +417,25 @@ def collect_media_manifest(user):
                 company.logo,
             )
         )
+
+    taken_captions = set()
+    for certification in (
+        Certification.objects.filter(user=user).prefetch_related("attachments")
+    ):
+        for attachment in certification.attachments.all():
+            if not attachment.file:
+                continue
+            entries.append(
+                (
+                    {
+                        "kind": "certification_attachment",
+                        "match": {"name": certification.name},
+                        "caption": attachment.caption,
+                        "path": f"media/certifications/{_caption_filename(attachment, taken_captions)}",
+                    },
+                    attachment.file,
+                )
+            )
 
     for person in Person.objects.filter(user=user).exclude(photo=""):
         entries.append(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { updateProfile } from '../../api/auth'
 import type { Attention, DashboardSummary, RegionStat } from '../../api/types'
 import { useAuth } from '../../auth/context'
@@ -12,10 +12,20 @@ import {
   type WidgetSpan,
 } from '../../lib/widgets'
 import { Icon } from '../ui/Icon'
-import { CalendarWidget, FocusWidget, PhotoWidget, QuoteWidget } from './widgets'
+import { CalendarWidget, FocusWidget } from './widgets'
+import { PhotoWidget } from './PhotoWidget'
+import { QuoteWidget } from './QuoteWidget'
 import { RegionMapWidget } from './RegionMapWidget'
 
 const ALL_WIDGETS = Object.keys(WIDGET_META) as WidgetId[]
+
+/** How long a press has to last before it means "rearrange" and not "click". */
+const HOLD_MS = 450
+
+/** How close to the window edge a drag has to get before the page scrolls. */
+const EDGE_PX = 90
+/** Pixels per frame at the very edge; it eases in from zero at the boundary. */
+const MAX_SCROLL_STEP = 18
 
 type Layout = {
   order: WidgetId[]
@@ -99,6 +109,85 @@ export function WidgetBoard({
   )
   const [dragging, setDragging] = useState<WidgetId | null>(null)
   const [editing, setEditing] = useState(false)
+  // Long-press to start rearranging, so a tile can be picked up where it sits
+  // rather than by first finding the Arrange button. Cancelled by any movement
+  // or release before the hold completes, so an ordinary click still clicks.
+  const holdTimer = useRef<number | null>(null)
+
+  const cancelHold = useCallback(() => {
+    if (holdTimer.current !== null) {
+      window.clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+  }, [])
+
+  const startHold = useCallback(() => {
+    if (editing) return
+    cancelHold()
+    holdTimer.current = window.setTimeout(() => {
+      setEditing(true)
+      // A short buzz where the platform offers one, so the mode change is
+      // felt as well as seen.
+      navigator.vibrate?.(15)
+    }, HOLD_MS)
+  }, [editing, cancelHold])
+
+  useEffect(() => cancelHold, [cancelHold])
+
+  // Enter and Escape both leave arrange mode. There's nothing to cancel back
+  // to — every move is saved as it happens — so Escape means "I'm done here"
+  // rather than "undo", and both keys do the same thing as the Done button.
+  useEffect(() => {
+    if (!editing) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Enter' && event.key !== 'Escape') return
+      // A dialog or an input has first claim on both keys.
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) {
+        return
+      }
+      event.preventDefault()
+      setEditing(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [editing])
+
+  // The board is taller than the window, so a tile often has to travel past
+  // the fold. HTML5 drag suppresses wheel and trackpad scrolling while a drag
+  // is in flight, which otherwise makes those positions unreachable — so the
+  // page scrolls itself when the pointer nears an edge, easing in with
+  // distance rather than snapping to a fixed speed.
+  useEffect(() => {
+    if (dragging === null) return
+
+    let frame = 0
+    let step = 0
+
+    function run() {
+      if (step !== 0) window.scrollBy(0, step)
+      frame = requestAnimationFrame(run)
+    }
+
+    function onDragOver(event: DragEvent) {
+      const fromTop = event.clientY
+      const fromBottom = window.innerHeight - event.clientY
+      if (fromTop < EDGE_PX) {
+        step = -Math.round(((EDGE_PX - fromTop) / EDGE_PX) * MAX_SCROLL_STEP)
+      } else if (fromBottom < EDGE_PX) {
+        step = Math.round(((EDGE_PX - fromBottom) / EDGE_PX) * MAX_SCROLL_STEP)
+      } else {
+        step = 0
+      }
+    }
+
+    document.addEventListener('dragover', onDragOver)
+    frame = requestAnimationFrame(run)
+    return () => {
+      document.removeEventListener('dragover', onDragOver)
+      cancelAnimationFrame(frame)
+    }
+  }, [dragging])
 
   // Adopt this account's saved board once per login — saved value or the
   // default, never whatever the last user of this browser left behind.
@@ -302,6 +391,11 @@ export function WidgetBoard({
             <li
               key={id}
               draggable={editing}
+              onPointerDown={startHold}
+              onPointerUp={cancelHold}
+              onPointerLeave={cancelHold}
+              // Any real movement means a scroll or a drag, not a hold.
+              onPointerMove={cancelHold}
               onDragStart={() => setDragging(id)}
               onDragOver={(event) => {
                 if (editing) event.preventDefault()
@@ -309,10 +403,21 @@ export function WidgetBoard({
               onDrop={() => drop(id)}
               onDragEnd={() => setDragging(null)}
               className={cx(
-                'relative flex flex-col transition-opacity',
+                'relative flex flex-col',
                 SPAN_CLASS[span],
-                dragging === id ? 'opacity-50' : 'opacity-100',
-                editing && 'cursor-grab',
+                // Transform and shadow as well as opacity, so a tile lifts off
+                // the board while it's held rather than just fading.
+                'transition-[opacity,transform,box-shadow] duration-200 ease-out',
+                dragging === id
+                  ? 'scale-[0.97] opacity-60 shadow-lg'
+                  : 'scale-100 opacity-100',
+                // Everything else slides aside rather than jumping, which is
+                // what makes a drop read as rearranging instead of redrawing.
+                dragging !== null && dragging !== id && 'transition-transform',
+                editing && 'cursor-grab active:cursor-grabbing',
+                // Suppresses the OS text-selection and callout that a long
+                // press would otherwise trigger mid-hold.
+                editing && 'select-none',
                 // A `bare` widget brings its own Card; everything else gets
                 // the board's own tile chrome.
                 !meta.bare &&
@@ -350,6 +455,23 @@ export function WidgetBoard({
         })}
       </ul>
 
+      {/* Only while arranging, and deliberately tiny: it's a reminder of the
+          two keys, not a toolbar. Pinned to the top so it stays put while the
+          board scrolls under it during a drag. */}
+      {editing ? (
+        <div className="pointer-events-none fixed inset-x-0 top-3 z-[60] flex justify-center px-4">
+          <div className="arrange-hint fab-glow flex items-center gap-2 rounded-full border border-line bg-surface-solid px-3 py-1.5 text-[12px] text-ink-2 shadow-lg">
+            <Icon name="gripVertical" size={13} className="shrink-0 text-ink-3" />
+            <span>Drag tiles to rearrange</span>
+            <span className="text-ink-3">·</span>
+            <Key>Enter</Key>
+            <span className="text-ink-3">or</span>
+            <Key>Esc</Key>
+            <span>when done</span>
+          </div>
+        </div>
+      ) : null}
+
       {editing && layout.hidden.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="text-[12px] text-ink-3">Hidden:</span>
@@ -367,5 +489,15 @@ export function WidgetBoard({
         </div>
       ) : null}
     </section>
+  )
+}
+
+
+/** A keycap, so the shortcut reads as a key rather than as a word. */
+function Key({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="rounded border border-line-strong bg-surface-2 px-1.5 py-0.5 font-sans text-[11px] font-semibold leading-none text-ink shadow-[0_1px_0_var(--color-line-strong)]">
+      {children}
+    </kbd>
   )
 }

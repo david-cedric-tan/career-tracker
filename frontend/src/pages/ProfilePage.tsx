@@ -16,7 +16,7 @@ import { ExperiencePanel } from '../components/ExperiencePanel'
 export function ProfilePage() {
   return (
     <>
-      <PageHeader title="Profile" subtitle="Your identity and career story." />
+      <PageHeader title="My Profile" subtitle="Your identity and career story." />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="flex flex-col gap-4">

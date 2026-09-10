@@ -111,6 +111,33 @@ type View = { k: number; x: number; y: number }
 
 const RESET_VIEW: View = { k: 1, x: 0, y: 0 }
 
+const VIEW_KEY = 'career-tracker:region-map-view'
+
+/**
+ * The pan/zoom survives leaving the dashboard.
+ *
+ * Zooming into a region is a deliberate act — you did it to look at something
+ * — so snapping back to the whole world every time you visit another page and
+ * return means doing it again each time. Per-browser rather than per-account:
+ * it's a viewport, not data, and the reset button is right there.
+ */
+function readView(): View {
+  try {
+    const raw = localStorage.getItem(VIEW_KEY)
+    if (!raw) return RESET_VIEW
+    const parsed = JSON.parse(raw) as Partial<View>
+    // Guard every field: a stored value from an older shape, or a hand-edited
+    // one, shouldn't leave the map at NaN with no way back but the reset.
+    const k = Number(parsed.k)
+    const x = Number(parsed.x)
+    const y = Number(parsed.y)
+    if (!Number.isFinite(k) || !Number.isFinite(x) || !Number.isFinite(y)) return RESET_VIEW
+    return { k: Math.min(Math.max(k, MIN_ZOOM), MAX_ZOOM), x, y }
+  } catch {
+    return RESET_VIEW
+  }
+}
+
 function clampZoom(k: number) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, k))
 }
@@ -128,11 +155,19 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
   )
   const features = useWorldFeatures()
   const { ref: containerRef, size } = useElementSize<HTMLDivElement>()
-  const [view, setView] = useState<View>(RESET_VIEW)
+  const [view, setView] = useState<View>(readView)
   // Distinguishes a pan from a click: a drag that moved more than a couple of
   // pixels must not also navigate to the country underneath it.
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify(view))
+    } catch {
+      // Not persisting is survivable — the view still holds for this session.
+    }
+  }, [view])
+
   // Moving from the country onto its own tooltip fires the country's
   // mouseleave first, which would tear the tooltip away before it could be
   // clicked. Clearing is deferred by a beat, and cancelled if the pointer
@@ -214,7 +249,15 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
   return (
     <div
       ref={containerRef}
-      className="relative min-h-55 min-w-70 resize overflow-hidden rounded-lg"
+      // Opts out of the global tooltip layer: this widget pins its own
+      // tooltip to the country you're pointing at, and two at once would be
+      // worse than either.
+      data-native-title=""
+      // `min-w-70` (280px) plus card and page padding overflowed a 320px
+      // screen, which set the whole page scrolling sideways. The floor only
+      // applies once there's room for it, and drag-to-resize is a pointer
+      // affordance anyway — hence `sm:`.
+      className="relative min-h-55 w-full resize-none overflow-hidden rounded-lg sm:min-w-70 sm:resize"
       style={{ height: DEFAULT_HEIGHT, maxWidth: '100%', background: 'var(--map-ocean)' }}
     >
       {!features ? (

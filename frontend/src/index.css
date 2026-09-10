@@ -910,21 +910,26 @@
   pointer-events: none;
 }
 
-.qa-btn:hover .qa-pulse,
-.qa-btn:focus-visible .qa-pulse {
+.qa-fx-host:hover .qa-pulse,
+.qa-fx-host:focus-visible .qa-pulse {
   animation: qa-pulse 1.4s ease-out infinite;
 }
 
-/* Every effect layer is invisible and un-animated until the button is
-   hovered, so nothing runs while the menu just sits open. */
+/* Every effect layer is invisible and un-animated until its host is hovered,
+   so nothing runs while the menu just sits open.
+
+   The host is `.qa-fx-host` rather than the quick-access button specifically,
+   because the sidebar nav reuses these same effects — the layers only need
+   *some* positioned ancestor to sit inside, so they work at icon size just as
+   well as at button size. */
 .qa-fx {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.qa-btn:hover .qa-fx,
-.qa-btn:focus-visible .qa-fx {
+.qa-fx-host:hover .qa-fx,
+.qa-fx-host:focus-visible .qa-fx {
   opacity: 1;
 }
 
@@ -935,8 +940,8 @@
   border: 1.5px solid var(--color-brand);
 }
 
-.qa-btn:hover .qa-sonar,
-.qa-btn:focus-visible .qa-sonar {
+.qa-fx-host:hover .qa-sonar,
+.qa-fx-host:focus-visible .qa-sonar {
   animation: tour-sonar 1.5s ease-out infinite;
 }
 
@@ -949,8 +954,8 @@
   background: var(--color-brand);
 }
 
-.qa-btn:hover .qa-steam,
-.qa-btn:focus-visible .qa-steam {
+.qa-fx-host:hover .qa-steam,
+.qa-fx-host:focus-visible .qa-steam {
   animation: tour-steam 1.5s ease-in-out infinite;
 }
 
@@ -980,8 +985,8 @@
   transform-origin: left center;
 }
 
-.qa-btn:hover .qa-write,
-.qa-btn:focus-visible .qa-write {
+.qa-fx-host:hover .qa-write,
+.qa-fx-host:focus-visible .qa-write {
   animation: qa-write 1.3s ease-in-out infinite;
 }
 
@@ -999,8 +1004,8 @@
   }
 }
 
-.qa-btn:hover .qa-stamp,
-.qa-btn:focus-visible .qa-stamp {
+.qa-fx-host:hover .qa-stamp,
+.qa-fx-host:focus-visible .qa-stamp {
   animation: qa-stamp 1.1s ease-in-out infinite;
 }
 
@@ -1015,8 +1020,8 @@
   }
 }
 
-.qa-btn:hover .qa-swing,
-.qa-btn:focus-visible .qa-swing {
+.qa-fx-host:hover .qa-swing,
+.qa-fx-host:focus-visible .qa-swing {
   animation: qa-swing 1.1s ease-in-out infinite;
   transform-origin: 50% 15%;
 }
@@ -1050,8 +1055,8 @@
   );
 }
 
-.qa-btn:hover .qa-shimmer::after,
-.qa-btn:focus-visible .qa-shimmer::after {
+.qa-fx-host:hover .qa-shimmer::after,
+.qa-fx-host:focus-visible .qa-shimmer::after {
   animation: qa-shimmer 1.2s ease-in-out infinite;
 }
 
@@ -1061,10 +1066,10 @@
     display: none;
   }
 
-  .qa-btn:hover .qa-stamp,
-  .qa-btn:focus-visible .qa-stamp,
-  .qa-btn:hover .qa-swing,
-  .qa-btn:focus-visible .qa-swing {
+  .qa-fx-host:hover .qa-stamp,
+  .qa-fx-host:focus-visible .qa-stamp,
+  .qa-fx-host:hover .qa-swing,
+  .qa-fx-host:focus-visible .qa-swing {
     animation: none;
   }
 }
@@ -1120,4 +1125,1180 @@
   .map-tip::after {
     display: none;
   }
+}
+
+/* The rejected slice of a pipeline bar — diagonal stripes over the stage's own
+   colour, so it reads as "some of these are gone" rather than as a second
+   category sitting beside it. Works in both themes because it's drawn from the
+   critical colour at partial opacity over whatever the bar already is. */
+.bar-rejected {
+  /* Softened to sit beside the tinted bars rather than punch through them —
+     the stripes still read as "written off" without the full-strength red. */
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--color-critical) 60%, transparent) 0 3px,
+    color-mix(in srgb, var(--color-critical) 25%, transparent) 3px 6px
+  );
+}
+
+/* The page header is the one block of text that sits directly on the
+   wallpaper — everything below it is covered by a glass card. The scrim is
+   top-weighted for exactly this reason, but the wallpaper's own opacity is a
+   user slider, so a light photo turned up high can still swallow the subtitle.
+   A soft shadow keeps both lines legible at any slider position, and costs
+   nothing when there's no wallpaper (the rule doesn't apply). */
+[data-wallpaper]:not([data-wallpaper='']) .page-header-text {
+  text-shadow: 0 1px 3px color-mix(in srgb, var(--color-page) 70%, transparent);
+}
+
+/* ------------------------------------------------------------------ nav fx
+   Hover animations for the sidebar, one per destination (see NavEffect.tsx).
+   Everything is sized in percentages of the 20px icon box, so the same rules
+   would still read correctly if that box changed size. `currentColor` means
+   each effect inherits the row's hover colour rather than hardcoding brand.
+
+   Everything waits `--nav-fx-delay` before it starts. Running the sidebar is
+   otherwise a flipbook — eight effects firing in turn as the pointer crosses
+   them on its way somewhere else. The delay means only a row you actually
+   stop on animates, and the reveal is on a matching transition delay so the
+   stand-in shapes don't flash into view either. */
+/* Long enough that crossing a row on the way elsewhere never starts anything,
+   short enough that stopping on one doesn't feel unresponsive. */
+.qa-fx-host {
+  --nav-fx-delay: 260ms;
+}
+
+.nav-fx {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  color: inherit;
+  transition: opacity 0.2s ease-out;
+}
+
+.qa-fx-host:hover .nav-fx,
+.qa-fx-host:focus-visible .nav-fx {
+  opacity: 1;
+  transition-delay: var(--nav-fx-delay);
+}
+
+/* The animated stand-ins rebuild the icon's shape, so the real one steps
+   aside while they play rather than showing through them. */
+.nav-icon-swap {
+  transition: opacity 0.2s ease-out;
+}
+
+.qa-fx-host:hover .nav-icon-swap,
+.qa-fx-host:focus-visible .nav-icon-swap {
+  opacity: 0;
+  transition-delay: var(--nav-fx-delay);
+}
+
+/* Dashboard — the four panels lighting up clockwise. */
+@keyframes nav-grid {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.35;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.nav-grid-cell {
+  width: 42%;
+  height: 42%;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.qa-fx-host:hover .nav-grid-cell,
+.qa-fx-host:focus-visible .nav-grid-cell {
+  animation: nav-grid 2.4s ease-in-out infinite;
+}
+
+/* Job Directory — books dropping onto the shelf one after another. */
+@keyframes nav-book {
+  0% {
+    transform: translateY(-160%);
+    opacity: 0;
+  }
+  40%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.nav-book {
+  bottom: 0;
+  width: 22%;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.qa-fx-host:hover .nav-book,
+.qa-fx-host:focus-visible .nav-book {
+  animation: nav-book 2.6s ease-out infinite;
+}
+
+/* Applications — the briefcase lid swinging open and shut. */
+.nav-case-body {
+  left: 6%;
+  right: 6%;
+  bottom: 6%;
+  height: 54%;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+@keyframes nav-lid {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-34deg);
+  }
+}
+
+.nav-case-lid {
+  left: 20%;
+  right: 20%;
+  top: 26%;
+  height: 1.6px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: left center;
+}
+
+.qa-fx-host:hover .nav-case-lid,
+.qa-fx-host:focus-visible .nav-case-lid {
+  animation: nav-lid 2.2s ease-in-out infinite;
+}
+
+/* Todos — lines being ticked off, top to bottom. */
+@keyframes nav-tick {
+  0% {
+    transform: scaleX(0);
+    opacity: 0.4;
+  }
+  35%,
+  100% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.nav-tick {
+  left: 10%;
+  right: 10%;
+  height: 1.7px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: left center;
+}
+
+.qa-fx-host:hover .nav-tick,
+.qa-fx-host:focus-visible .nav-tick {
+  animation: nav-tick 2.4s ease-out infinite;
+}
+
+/* `qa-swing` animates the icon itself and is shared with the quick-access
+   menu, so the sidebar's dwell delay is applied here rather than on the shared
+   rule. Higher specificity than the rule that sets the shorthand above, so it
+   wins without needing !important. */
+.qa-fx-host:hover .qa-swing.nav-delayed,
+.qa-fx-host:focus-visible .qa-swing.nav-delayed {
+  animation-delay: var(--nav-fx-delay);
+}
+
+/* Motion is decoration here — the icon and label already say where the row
+   goes, so none of it is load-bearing. */
+@media (prefers-reduced-motion: reduce) {
+  .nav-fx,
+  .nav-grid-cell,
+  .nav-book,
+  .nav-case-lid,
+  .nav-tick,
+  .qa-stamp,
+  .qa-swing {
+    animation: none !important;
+  }
+
+  .nav-icon-swap {
+    opacity: 1 !important;
+  }
+}
+
+/* ------------------------------------------------------- awaiting response
+   An amber heartbeat on the "waiting for response" badge. A smooth ease in
+   and out rather than a brief flash: at this cadence a sharp blink would
+   read as an alert, and nothing here is urgent enough to demand that. */
+@keyframes waiting-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.3);
+  }
+}
+
+.waiting-dot {
+  animation: waiting-pulse 1.5s ease-in-out infinite;
+}
+
+/* A ring that expands out of the badge on each beat, in step with the dot —
+   same 1.5s cycle and same easing, so the two read as one pulse rather than
+   two effects that happen to share a badge.
+
+   Only while the badge is hovered. The dot keeps beating either way (that's
+   the ambient "still waiting" signal); the ring is the response to being
+   pointed at, and a table full of them rippling unprompted would be a lot. */
+@keyframes waiting-ripple {
+  0% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.22);
+  }
+}
+
+.waiting-ripple {
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  border: 1px solid var(--color-warning);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.waiting-badge:hover .waiting-ripple,
+.waiting-badge:focus-within .waiting-ripple {
+  animation: waiting-ripple 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waiting-dot {
+    animation: none;
+    opacity: 1;
+  }
+
+  .waiting-badge:hover .waiting-ripple,
+  .waiting-badge:focus-within .waiting-ripple {
+    animation: none;
+  }
+}
+
+/* The global tooltip's entrance — the same small rise the inline Tooltip
+   component uses, so hover feedback feels identical wherever it comes from.
+
+   The centring transform lives in the keyframes and is held with `forwards`:
+   split between a class and an animation, the element would snap back to the
+   class's transform the moment the animation ended, which put the bubble half
+   a width off the thing it belongs to. */
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% + 3px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%);
+  }
+}
+
+@keyframes tooltip-in-below {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -3px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.tooltip-in {
+  transform: translate(-50%, -100%);
+  animation: tooltip-in 0.13s ease-out forwards;
+}
+
+.tooltip-in-below {
+  transform: translate(-50%, 0);
+  animation: tooltip-in-below 0.13s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The transform stays — it's positioning, not decoration. */
+  .tooltip-in,
+  .tooltip-in-below {
+    animation: none;
+  }
+}
+
+/* The arrange-mode hint drops in from above rather than appearing outright —
+   it shows up in response to entering the mode, so a little movement ties it
+   to that action. */
+@keyframes arrange-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.arrange-hint {
+  animation: arrange-hint-in 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrange-hint {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------- brand weather
+   Clouds drifting across the mountain mark while it's hovered. Left→right
+   with a soft fade at both ends, so a band appears and dissolves rather than
+   popping in at the edge of a 40px box. */
+@keyframes brand-cloud-drift {
+  0% {
+    opacity: 0;
+    transform: translateX(-120%) scaleX(0.8);
+  }
+  25%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(120%) scaleX(1.15);
+  }
+}
+
+.brand-clouds {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  /* Slow on the way out, quick on the way in (see `.is-windy`). Cutting the
+     bands off the instant the pointer leaves looked like a bug; letting them
+     drift away over a second or so reads as the wind dropping. */
+  transition: opacity 1.3s ease-out;
+}
+
+.brand-clouds.is-windy {
+  opacity: 1;
+  transition-duration: 0.3s;
+}
+
+.brand-cloud {
+  position: absolute;
+  left: 0;
+  width: 60%;
+  border-radius: 999px;
+  /* Soft at the ends, solid in the middle — a wisp, not a bar. */
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.85),
+    rgb(255 255 255 / 0.55),
+    transparent
+  );
+  filter: blur(0.5px);
+  animation-name: brand-cloud-drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-cloud {
+    animation: none;
+  }
+}
+
+/* The brand easter egg. The backdrop fades while the mark rises into it, so
+   it arrives as one movement rather than two things appearing at once. */
+@keyframes brand-credit-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes brand-credit-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7) translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.brand-credit {
+  animation: brand-credit-in 0.28s ease-out;
+}
+
+.brand-credit-mark {
+  animation: brand-credit-mark-in 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-credit,
+  .brand-credit-mark {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------ vinyl
+   The record on the about screen. The spin is the state readout — you can see
+   from across the room whether the soundtrack is running, with no icon to
+   decode — so it pauses in place rather than resetting to zero. */
+@keyframes vinyl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vinyl {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 9999px;
+  background:
+    repeating-radial-gradient(
+      circle at center,
+      rgb(255 255 255 / 0.07) 0 1px,
+      transparent 1px 4px
+    ),
+    radial-gradient(circle at 30% 25%, #3a3a3f, #121215 70%);
+  box-shadow:
+    0 6px 18px rgb(0 0 0 / 0.45),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08);
+  animation: vinyl-spin 4s linear infinite;
+  animation-play-state: paused;
+  transition: transform 0.2s ease-out;
+}
+
+.vinyl:hover {
+  transform: scale(1.05);
+}
+
+.vinyl.is-spinning {
+  animation-play-state: running;
+}
+
+.vinyl-groove {
+  position: absolute;
+  inset: 18%;
+  border-radius: 9999px;
+  border: 1px solid rgb(255 255 255 / 0.06);
+}
+
+.vinyl-groove-2 {
+  inset: 30%;
+}
+
+.vinyl-label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46%;
+  height: 46%;
+  overflow: hidden;
+  border-radius: 9999px;
+  /* A flash of colour so the rotation is legible even on a dark record, and
+     tinted to the scene so the label says which mood is loaded. */
+  background: linear-gradient(160deg, #7dd3fc, #38bdf8);
+  transition: background 0.4s ease-out;
+}
+
+.vinyl-nature .vinyl-label {
+  background: linear-gradient(160deg, #86efac, #22c55e);
+}
+
+/* A sun and two birds on the nature label — the same scene as the mark, at
+   the size of a fingernail. */
+.vinyl-sun {
+  position: absolute;
+  top: 12%;
+  right: 14%;
+  width: 32%;
+  height: 32%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #fef9c3, #fbbf24 70%, transparent 76%);
+}
+
+.vinyl-bird {
+  position: absolute;
+  top: 52%;
+  left: 18%;
+  width: 22%;
+  height: 22%;
+  border-top: 1px solid rgb(255 255 255 / 0.95);
+  border-right: 1px solid rgb(255 255 255 / 0.95);
+  border-radius: 60% 0 0 0;
+  rotate: 45deg;
+}
+
+.vinyl-bird-2 {
+  top: 66%;
+  left: 46%;
+  width: 16%;
+  height: 16%;
+}
+
+.vinyl-hole {
+  width: 18%;
+  height: 18%;
+  border-radius: 9999px;
+  background: #0b0b0d;
+}
+
+/* The scene name swapping in when you switch mood. */
+@keyframes scene-swap {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.scene-swap {
+  display: inline-block;
+  animation: scene-swap 0.28s ease-out;
+}
+
+/* ------------------------------------------------------------ nature scene
+   The counterpart to the cloud bands: a sun, a couple of birds crossing, and
+   a strip of grass along the bottom of the mark. */
+.nature-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@keyframes nature-sun-glow {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.nature-sun {
+  position: absolute;
+  top: 12%;
+  right: 14%;
+  width: 22%;
+  height: 22%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #fde68a, #fbbf24 65%, transparent 72%);
+  animation: nature-sun-glow 3.2s ease-in-out infinite;
+}
+
+/* Heat radiating off it — rings expanding and dissolving, two of them offset
+   so there's always one mid-flight rather than a single pulse with a gap. */
+@keyframes nature-sun-radiate {
+  0% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+.nature-sun::before,
+.nature-sun::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid rgb(253 224 71 / 0.9);
+  animation: nature-sun-radiate 2.4s ease-out infinite;
+}
+
+.nature-sun::after {
+  animation-delay: 1.2s;
+}
+
+/* A shallow "v", the way a bird reads at this size. */
+@keyframes nature-bird-fly {
+  0% {
+    opacity: 0;
+    transform: translate(-40%, 0);
+  }
+  15%,
+  85% {
+    opacity: 0.95;
+  }
+  35% {
+    transform: translate(20%, -22%);
+  }
+  65% {
+    transform: translate(70%, 4%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(150%, -12%);
+  }
+}
+
+@keyframes nature-bird-flap {
+  0%,
+  100% {
+    transform: rotate(45deg) scaleY(1);
+  }
+  50% {
+    transform: rotate(45deg) scaleY(0.45);
+  }
+}
+
+.nature-bird {
+  position: absolute;
+  left: 0;
+  width: 12%;
+  height: 12%;
+  border-top: 1.5px solid rgb(255 255 255 / 0.9);
+  border-right: 1.5px solid rgb(255 255 255 / 0.9);
+  border-radius: 60% 0 0 0;
+  transform-origin: center;
+  animation-name: nature-bird-fly;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* The wings are a child so the flap and the flight path don't fight over one
+   transform — the wrapper travels, the inner shape beats. */
+.nature-bird::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-top: inherit;
+  border-right: inherit;
+  border-radius: inherit;
+  animation: nature-bird-flap 0.45s ease-in-out infinite;
+}
+
+@keyframes nature-grass-sway {
+  0%,
+  100% {
+    transform: skewX(-2deg);
+  }
+  50% {
+    transform: skewX(2deg);
+  }
+}
+
+.nature-grass {
+  position: absolute;
+  inset-inline: -6%;
+  bottom: -2%;
+  height: 22%;
+  border-radius: 50% 50% 0 0 / 30% 30% 0 0;
+  background: linear-gradient(180deg, #4ade80, #15803d);
+  transform-origin: bottom center;
+  animation: nature-grass-sway 4.5s ease-in-out infinite;
+}
+
+/* Conifers at the edges — a triangle on a short trunk, which is all a tree
+   needs to read as one at this size. Rooted in the grass and swaying against
+   it, slightly out of phase so the pair don't move as one object. */
+.nature-tree {
+  position: absolute;
+  bottom: 12%;
+  width: 16%;
+  height: 30%;
+  transform-origin: bottom center;
+  animation: nature-grass-sway 5.2s ease-in-out infinite;
+}
+
+.nature-tree::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 14%;
+  height: 30%;
+  transform: translateX(-50%);
+  background: #14532d;
+}
+
+.nature-tree::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 22% 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  background: linear-gradient(180deg, #22c55e, #166534);
+}
+
+.nature-tree-left {
+  left: 2%;
+}
+
+.nature-tree-right {
+  right: 2%;
+  height: 24%;
+  animation-delay: 1.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl,
+  .scene-swap,
+  .nature-sun,
+  .nature-bird,
+  .nature-grass {
+    animation: none;
+  }
+}
+
+/* The wordmark leaning in the wind — a slow shear rather than a wobble, so it
+   reads as pressure against the letters instead of a shake. */
+@keyframes word-blown {
+  0%,
+  100% {
+    transform: skewX(0deg) translateX(0);
+  }
+  35% {
+    transform: skewX(-5deg) translateX(1.5px);
+  }
+  70% {
+    transform: skewX(-2deg) translateX(0.5px);
+  }
+}
+
+.word-blown {
+  animation: word-blown 2.6s ease-in-out infinite;
+}
+
+/* Nature elements fade on the same slow timing as the clouds, so switching
+   scenes doesn't switch the feel of leaving. */
+.nature-scene {
+  opacity: 0;
+  transition: opacity 1.3s ease-out;
+}
+
+.nature-scene.is-out {
+  opacity: 1;
+  transition-duration: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word-blown {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------- brand scenes: wordmark
+   The wordmark box is wide and short, so every percentage-based size tuned
+   for the 40px square came out wrong here — a 22%-tall strip of grass became
+   a bar across the letters. The wide variant sizes in pixels instead, and
+   drops behind the text rather than over it. */
+.brand-clouds.is-wide,
+.nature-scene.is-wide {
+  z-index: 0;
+}
+
+.nature-scene.is-wide .nature-sun {
+  top: 2px;
+  right: 4px;
+  width: 10px;
+  height: 10px;
+}
+
+.nature-scene.is-wide .nature-bird {
+  width: 6px;
+  height: 6px;
+}
+
+.nature-scene.is-wide .nature-grass {
+  inset-inline: 0;
+  bottom: 0;
+  height: 5px;
+  border-radius: 3px 3px 0 0;
+}
+
+.nature-scene.is-wide .nature-tree {
+  bottom: 3px;
+  width: 8px;
+  height: 12px;
+}
+
+.brand-clouds.is-wide .ice-shelf {
+  height: 4px;
+}
+
+.brand-clouds.is-wide .ice-lake {
+  height: 3px;
+  bottom: 4px;
+}
+
+
+/* ------------------------------------------------------------ winter bits
+   The cold half of the windy scene: a shelf of ice along the base, a frozen
+   lake on it, and a snowman standing by. */
+.ice-shelf {
+  position: absolute;
+  inset-inline: -4%;
+  bottom: 0;
+  height: 16%;
+  border-radius: 40% 40% 0 0 / 60% 60% 0 0;
+  background: linear-gradient(180deg, #f8fafc, #cbd5e1);
+}
+
+.ice-lake {
+  position: absolute;
+  left: 12%;
+  bottom: 13%;
+  width: 42%;
+  height: 7%;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #bae6fd, #7dd3fc);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7);
+}
+
+.snowman {
+  position: absolute;
+  right: 14%;
+  bottom: 14%;
+  width: 14%;
+  height: 18%;
+  border-radius: 9999px;
+  background: #f8fafc;
+}
+
+.snowman-head {
+  position: absolute;
+  bottom: 72%;
+  left: 50%;
+  width: 68%;
+  height: 55%;
+  transform: translateX(-50%);
+  border-radius: 9999px;
+  background: #f8fafc;
+}
+
+/* Both scenes drift away as they fade rather than fading in place, so leaving
+   reads as the weather moving on. */
+.brand-clouds.is-settling,
+.nature-scene.is-settling {
+  opacity: 0;
+  transform: translateX(6%);
+  transition:
+    opacity 2s ease-out,
+    transform 2s ease-out;
+}
+
+/* The transport icon on the record. Counter-spins at the same rate as the
+   disc so it stays upright while the vinyl turns — a play triangle rotating
+   with the label would be unreadable, and it's the icon that makes the disc
+   legible as a button in the first place. */
+@keyframes vinyl-counter-spin {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.vinyl-transport {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  background: rgb(15 23 42 / 0.55);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+  animation: vinyl-counter-spin 4s linear infinite;
+  animation-play-state: paused;
+}
+
+.vinyl-transport.is-spinning {
+  animation-play-state: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-transport {
+    animation: none;
+  }
+}
+
+/* The mixing panel behind the vinyl's gear. */
+@keyframes media-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.media-panel {
+  animation: media-panel-in 0.2s ease-out;
+  /* Frosted rather than flat: a bright top edge where the light catches, a
+     darker underside, and a soft outer shadow so it floats off the backdrop. */
+  background: linear-gradient(
+    160deg,
+    rgb(255 255 255 / 0.18),
+    rgb(255 255 255 / 0.07)
+  );
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow:
+    0 10px 30px rgb(0 0 0 / 0.35),
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    inset 0 -1px 0 rgb(0 0 0 / 0.15);
+}
+
+/* Range inputs inherit almost nothing across browsers, so the track, fill and
+   thumb are all drawn by hand — otherwise this is a native grey slider sitting
+   on dark glass.
+
+   The filled portion comes from `--fill`, set inline from the value: a native
+   range has no element for "left of the thumb", so a hard-stopped gradient is
+   what draws one. */
+.media-fader {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.media-fader::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background:
+    linear-gradient(
+      90deg,
+      rgb(255 255 255 / 0.92) 0 var(--fill, 0%),
+      rgb(255 255 255 / 0.18) var(--fill, 0%) 100%
+    );
+  box-shadow:
+    inset 0 1px 1px rgb(0 0 0 / 0.25),
+    inset 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+
+.media-fader::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background:
+    linear-gradient(
+      90deg,
+      rgb(255 255 255 / 0.92) 0 var(--fill, 0%),
+      rgb(255 255 255 / 0.18) var(--fill, 0%) 100%
+    );
+  box-shadow:
+    inset 0 1px 1px rgb(0 0 0 / 0.25),
+    inset 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+
+/* A bead of glass: a bright rim, a highlight off the top-left, and a shadow
+   under it so it sits above the track rather than in it. */
+.media-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.72) 55%),
+    rgb(255 255 255 / 0.6);
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.45),
+    inset 0 0 0 1px rgb(255 255 255 / 0.85);
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.3),
+    box-shadow 0.16s ease-out;
+}
+
+.media-fader::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.72) 55%),
+    rgb(255 255 255 / 0.6);
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.45),
+    inset 0 0 0 1px rgb(255 255 255 / 0.85);
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.3),
+    box-shadow 0.16s ease-out;
+}
+
+/* Swells under the finger, with a halo — the same "grabbed" feedback iOS
+   gives, and it keeps the thumb visible from under a fingertip. */
+.media-fader:hover::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+.media-fader:active::-webkit-slider-thumb {
+  transform: scale(1.35);
+  box-shadow:
+    0 3px 10px rgb(0 0 0 / 0.5),
+    inset 0 0 0 1px rgb(255 255 255 / 0.9),
+    0 0 0 7px rgb(255 255 255 / 0.16);
+}
+
+.media-fader:hover::-moz-range-thumb {
+  transform: scale(1.12);
+}
+
+.media-fader:active::-moz-range-thumb {
+  transform: scale(1.35);
+  box-shadow:
+    0 3px 10px rgb(0 0 0 / 0.5),
+    inset 0 0 0 1px rgb(255 255 255 / 0.9),
+    0 0 0 7px rgb(255 255 255 / 0.16);
+}
+
+.media-fader:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 2px 6px rgb(0 0 0 / 0.45),
+    inset 0 0 0 1px rgb(255 255 255 / 0.9),
+    0 0 0 4px rgb(255 255 255 / 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-panel {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------ liquid glass
+   One dial (`--glass`, 0-1) turns every panel from a solid surface into
+   frosted glass: the fill loses opacity, the backdrop blurs and saturates,
+   and a highlight appears along the top edge where light would catch.
+
+   Gated behind `[data-glass]` so at zero none of this is in play —
+   `backdrop-filter` on every card is the expensive part, and a setting that
+   costs something while switched off is a bad trade.
+
+   `.glass-panel` is an explicit opt-in rather than a blanket rule on the card
+   class: the sidebar and mobile header should frost too, and some surfaces
+   shouldn't. */
+[data-glass] .glass-panel {
+  background-color: color-mix(
+    in srgb,
+    var(--color-surface) calc(100% - var(--glass, 0) * 42%),
+    transparent
+  );
+  /* Borders lose opacity in step, or a frosted panel keeps a hard opaque
+     outline that gives the illusion away. */
+  border-color: color-mix(
+    in srgb,
+    var(--color-line) calc(100% - var(--glass, 0) * 30%),
+    transparent
+  );
+  -webkit-backdrop-filter: blur(calc(var(--glass, 0) * 20px))
+    saturate(calc(100% + var(--glass, 0) * 70%));
+  backdrop-filter: blur(calc(var(--glass, 0) * 20px))
+    saturate(calc(100% + var(--glass, 0) * 70%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / calc(var(--glass, 0) * 0.28)),
+    0 8px 24px rgb(0 0 0 / calc(var(--glass, 0) * 0.16));
+}
+
+/* The glass slider on the settings page — the same hand-drawn track as the
+   about screen's faders, in the app's own palette rather than on dark glass. */
+.glass-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.glass-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-brand) 0 var(--fill, 0%),
+    var(--color-surface-2) var(--fill, 0%) 100%
+  );
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.glass-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-brand) 0 var(--fill, 0%),
+    var(--color-surface-2) var(--fill, 0%) 100%
+  );
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+.glass-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.3),
+    inset 0 0 0 2px var(--color-brand);
+  transition: transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+
+.glass-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.3),
+    inset 0 0 0 2px var(--color-brand);
+  transition: transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.3);
+}
+
+.glass-slider:active::-webkit-slider-thumb {
+  transform: scale(1.3);
+}
+
+.glass-slider:active::-moz-range-thumb {
+  transform: scale(1.3);
 }

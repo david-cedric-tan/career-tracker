@@ -7,9 +7,9 @@ event logs are always filtered to `request.user`.
 
 import os
 import secrets
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
-from django.db.models import Prefetch, Q
+from django.db.models import Max, Prefetch, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
@@ -18,17 +18,20 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from config.attachments import classify_and_validate
 from config.images import contain_thumbnail
 from .imports import import_listings
 
 from .models import (
     Application,
+    ApplicationDocument,
     ApplicationJobListing,
     ApplicationStage,
     AppsEventLog,
     Company,
     CompanyNote,
     Country,
+    EventType,
     Industry,
     JobListing,
     Location,
@@ -42,6 +45,9 @@ from .models import (
     WorkArrangement,
 )
 from .serializers import (
+    ApplicationDocumentEditSerializer,
+    ApplicationDocumentSerializer,
+    ApplicationDocumentUploadSerializer,
     ApplicationJobListingSerializer,
     CompanyLogoSerializer,
     CompanyNoteSerializer,
@@ -60,7 +66,17 @@ from .serializers import (
     StateSerializer,
     VenueSerializer,
 )
-from .services import diff, log_change, log_creation, log_transition, snapshot
+from .services import (
+    diff,
+    end_waiting,
+    log_change,
+    log_creation,
+    log_transition,
+    log_waiting,
+    resync_waiting,
+    settle_waiting,
+    snapshot,
+)
 
 
 def stage_keys() -> set[str]:
@@ -333,6 +349,21 @@ class ResumeViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         upload = serializer.validated_data["file"]
+
+        # Checked here rather than left to the database, so a clash comes back
+        # as a field error the form can show instead of a 500. Scoped to this
+        # user: another account's identically-named resume is irrelevant.
+        clash = (
+            Resume.objects.filter(user=request.user, file_name=upload.name)
+            .exclude(pk=resume.pk)
+            .first()
+        )
+        if clash is not None:
+            return Response(
+                {"file": [f"You already have a resume file called “{upload.name}” ({clash.label})."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         resume.file.delete(save=False)  # don't orphan the previous document
         # Keep the original name for display and download; the stored name gets
         # a suffix so a replacement can't be served from cache.
@@ -464,6 +495,12 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         )
         params = self.request.query_params
 
+        # Set by the dashboard's pipeline chart when you click the amber slice
+        # of a bar, so the list you land on is the applications that slice
+        # represented.
+        if params.get("awaiting") in {"1", "true"}:
+            qs = qs.filter(awaiting_response=True)
+
         for field in ("stage", "outcome"):
             values = [v for v in params.getlist(field) if v]
             if values:
@@ -508,6 +545,79 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             return ApplicationListSerializer
         return ApplicationSerializer
+
+    # --- supporting documents (cover letters, take-homes, offer PDFs) -------
+    #
+    # Scoped through `get_object()` in every action, so a document id belonging
+    # to someone else's application can't be reached by guessing it.
+
+    @action(
+        detail=True,
+        methods=["post"],
+        parser_classes=[MultiPartParser, FormParser],
+        url_path="documents",
+    )
+    def add_document(self, request, pk=None):
+        application = self.get_object()
+        serializer = ApplicationDocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        upload = serializer.validated_data["file"]
+        kind = classify_and_validate(upload)
+        original_name = upload.name
+
+        extension = os.path.splitext(upload.name)[1].lower()
+        upload.name = f"application-{application.id}-{secrets.token_hex(4)}{extension}"
+
+        # Falls back to the uploaded filename so a document is never nameless
+        # in the gallery.
+        title = serializer.validated_data.get("title", "").strip()
+        if not title:
+            title = os.path.splitext(original_name)[0]
+
+        last = application.documents.aggregate(Max("position")).get("position__max")
+        ApplicationDocument.objects.create(
+            application=application,
+            file=upload,
+            title=title,
+            description=serializer.validated_data.get("description", "").strip(),
+            original_name=original_name,
+            kind=kind,
+            position=0 if last is None else last + 1,
+        )
+
+        application.refresh_from_db()
+        return Response(
+            self.get_serializer(application).data, status=status.HTTP_201_CREATED
+        )
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"documents/(?P<document_id>\d+)",
+    )
+    def edit_document(self, request, pk=None, document_id=None):
+        application = self.get_object()
+        document = application.documents.filter(pk=document_id).first()
+        if document is None:
+            return Response(
+                {"detail": "No such document on this application."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.method == "DELETE":
+            document.delete()  # post_delete removes the file too
+        else:
+            serializer = ApplicationDocumentEditSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            document.title = serializer.validated_data["title"].strip()
+            document.description = serializer.validated_data.get(
+                "description", ""
+            ).strip()
+            document.save(update_fields=["title", "description", "updated_at"])
+
+        application.refresh_from_db()
+        return Response(self.get_serializer(application).data)
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
@@ -556,6 +666,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             changes=diff(before, snapshot(application)),
             note=note,
         )
+        settle_waiting(application, prev_stage, prev_outcome)
 
     @action(detail=True, methods=["get", "post"], url_path="listings")
     def listings(self, request, pk=None):
@@ -611,6 +722,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         log_transition(
             application, prev_stage, prev_outcome, note=request.data.get("note", "")
         )
+        settle_waiting(application, prev_stage, prev_outcome)
 
         # get_queryset() prefetched event_logs, so the instance still holds the
         # pre-transition cache — serializing it would drop the row we just
@@ -619,6 +731,131 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         application._prefetched_objects_cache = {}
         serializer = self.get_serializer(application)
         return Response(serializer.data)
+
+    # The stages that *are* the act of applying — if one of these is the
+    # earliest thing logged, its date is the applied date rather than a week
+    # after it.
+    FIRST_STAGES = {Stage.NOT_SUBMITTED, Stage.APPLIED}
+
+    @action(detail=True, methods=["post"], url_path="waiting")
+    def waiting(self, request, pk=None):
+        """POST/DELETE the "they owe me a reply" flag.
+
+        Body: {"waiting": true|false}. Neither the stage nor the outcome moves
+        — finishing a video interview leaves you *at* the video interview, and
+        still in progress; all that changed is whose court the ball is in.
+        """
+        application = self.get_object()
+        waiting = request.data.get("waiting", True)
+        if not isinstance(waiting, bool):
+            return Response(
+                {"waiting": ["Send true or false."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # You rarely tick "done" the moment you finish — an interview on Friday
+        # gets logged on Monday — so the caller may say when it actually was.
+        # Absent that, now.
+        changed_at_raw = request.data.get("changed_at")
+        changed_at = parse_datetime(changed_at_raw) if changed_at_raw else None
+        if changed_at_raw and changed_at is None:
+            return Response(
+                {"changed_at": ["Give a valid date and time."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if changed_at is not None and timezone.is_naive(changed_at):
+            changed_at = timezone.make_aware(changed_at)
+
+        if waiting and not application.awaiting_response:
+            application.awaiting_response = True
+            application.awaiting_since = changed_at or timezone.now()
+            application.save(
+                update_fields=["awaiting_response", "awaiting_since", "updated_at"]
+            )
+            log_waiting(
+                application,
+                started=True,
+                note=request.data.get("note", ""),
+                changed_at=changed_at,
+            )
+        elif not waiting:
+            end_waiting(
+                application, note=request.data.get("note", ""), changed_at=changed_at
+            )
+
+        application._prefetched_objects_cache = {}
+        return Response(self.get_serializer(application).data)
+
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"events/(?P<event_id>\d+)",
+    )
+    def edit_event(self, request, pk=None, event_id=None):
+        """Correct or remove one history row.
+
+        The log is append-only in the sense that nothing writes to it behind
+        your back — but a stage you dated wrong, or logged twice by accident,
+        is noise rather than history worth preserving. Only the fields a person
+        can actually get wrong are editable: the date and the note.
+
+        Deleting the `created` row is refused — every application has exactly
+        one, and the timeline needs a beginning.
+        """
+        application = self.get_object()
+        event = application.event_logs.filter(pk=event_id).first()
+        if event is None:
+            return Response(
+                {"detail": "No such event on this application."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.method == "DELETE":
+            if event.event_type == EventType.CREATED:
+                return Response(
+                    {"detail": "The creation row can't be deleted."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            event.delete()
+            resync_waiting(application)
+            application._prefetched_objects_cache = {}
+            return Response(self.get_serializer(application).data)
+
+        changed_at_raw = request.data.get("changed_at")
+        if changed_at_raw:
+            changed_at = parse_datetime(changed_at_raw)
+            if changed_at is None:
+                parsed_date = parse_date(changed_at_raw)
+                if parsed_date:
+                    changed_at = datetime.combine(
+                        parsed_date, timezone.localtime(event.changed_at).time()
+                    )
+            if changed_at is None:
+                return Response(
+                    {"changed_at": ["Give a valid date."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if timezone.is_naive(changed_at):
+                changed_at = timezone.make_aware(changed_at)
+            # Two rows on one application may not share a timestamp (the model
+            # enforces it), so nudge clear rather than failing the edit.
+            while (
+                AppsEventLog.objects.filter(
+                    application=application, changed_at=changed_at
+                )
+                .exclude(pk=event.pk)
+                .exists()
+            ):
+                changed_at += timedelta(microseconds=1)
+            event.changed_at = changed_at
+
+        if "note" in request.data:
+            event.note = (request.data.get("note") or "").strip()
+
+        event.save(update_fields=["changed_at", "note"])
+        resync_waiting(application)
+        application._prefetched_objects_cache = {}
+        return Response(self.get_serializer(application).data)
 
     @action(detail=True, methods=["post"], url_path="backfill")
     def backfill(self, request, pk=None):
@@ -643,11 +880,12 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             )
 
         parsed = []
-        # Seeded with applied_at (not None) so the very first move is checked
-        # against it by the same "not before the date before it" rule below —
-        # a stage move can't predate the application that produced it.
-        applied_at_dt = timezone.make_aware(datetime.combine(application.applied_at, time(0, 0)))
-        last_date = applied_at_dt
+        # Deliberately *not* seeded with applied_at. Logging an application you
+        # ran months ago means every move predates the applied date the tracker
+        # stamped when you typed it in today, and rejecting the lot was the
+        # whole reason historical logging felt broken. The moves are the truth
+        # here; `applied_at` is pulled back to fit them below.
+        last_date = None
         for index, move in enumerate(moves):
             stage = move.get("stage")
             outcome = move.get("outcome")
@@ -674,20 +912,55 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 )
             if timezone.is_naive(changed_at):
                 changed_at = timezone.make_aware(changed_at)
-            if changed_at < last_date:
-                reason = (
-                    f"before this application's applied date ({application.applied_at})"
-                    if index == 0
-                    else "before the move before it"
-                )
+            if last_date is not None and changed_at < last_date:
                 return Response(
-                    {"moves": [f"Move {index + 1} is dated {reason}."]},
+                    {"moves": [f"Move {index + 1} is dated before the move before it."]},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             last_date = changed_at
             parsed.append(
                 {"stage": stage, "outcome": outcome, "changed_at": changed_at, "note": move.get("note", "")}
             )
+
+        # Anything logged this way is history, not live tracking — and the
+        # applied date has to sit at or before the earliest thing that
+        # happened, or the timeline reads as effects preceding their cause.
+        earliest = parsed[0]
+        earliest_date = timezone.localtime(earliest["changed_at"]).date()
+        if earliest["stage"] in self.FIRST_STAGES:
+            # The earliest thing you logged *is* the application, so that's the
+            # date exactly — no invented week.
+            applied_at = earliest_date
+        else:
+            # You've logged an assessment or an interview as the first event,
+            # so the application itself predates it. A week is a guess, but a
+            # defensible one, and it beats claiming you applied and sat the
+            # assessment on the same morning.
+            applied_at = earliest_date - timedelta(days=7)
+
+        if applied_at < application.applied_at or not application.is_historical:
+            application.applied_at = min(applied_at, application.applied_at)
+            application.is_historical = True
+            application.save(
+                update_fields=["applied_at", "is_historical", "updated_at"]
+            )
+
+        # The "created" row is stamped when you type the application in, which
+        # for a historical one is months after everything it's about — leaving
+        # the timeline claiming the application was created after it finished.
+        # Pull it back to the applied date so cause precedes effect.
+        created_row = application.event_logs.filter(
+            event_type=EventType.CREATED
+        ).order_by("changed_at").first()
+        if created_row is not None:
+            start = timezone.make_aware(
+                datetime.combine(application.applied_at, time(9, 0))
+            )
+            if start >= earliest["changed_at"]:
+                start = earliest["changed_at"] - timedelta(hours=1)
+            if created_row.changed_at != start:
+                created_row.changed_at = start
+                created_row.save(update_fields=["changed_at"])
 
         for move in parsed:
             prev_stage, prev_outcome = application.stage, application.outcome

@@ -12,6 +12,8 @@
  * either way rather than nagging indefinitely.
  */
 
+import { readMedia } from './mediaSettings'
+
 const REPEATS = 3
 const REPEAT_GAP_MS = 2200
 
@@ -25,7 +27,7 @@ function audioContextClass(): AudioContextClass | undefined {
 }
 
 /** One ding. Returns roughly how long it rings, in ms. */
-function ding(): number {
+function ding(volume: number): number {
   const AudioCtor = audioContextClass()
   if (!AudioCtor) return 0
   const ctx = new AudioCtor()
@@ -61,8 +63,8 @@ function ding(): number {
     overtone.stop(now + start + duration + 0.05)
   }
 
-  bell(1567.98, 0, 0.5, 0.5) // G6
-  bell(2093.0, 0.16, 0.75, 0.42) // C7 — the rising second note
+  bell(1567.98, 0, 0.5, 0.5 * volume) // G6
+  bell(2093.0, 0.16, 0.75, 0.42 * volume) // C7 — the rising second note
 
   const ringMs = 1000
   window.setTimeout(() => void ctx.close(), ringMs)
@@ -77,10 +79,17 @@ export function playNotificationSound(): () => void {
   let timer: number | null = null
   let cancelled = false
 
+  // Read at call time rather than captured at import: the volume may have
+  // changed since the page loaded, and an alert should honour it now.
+  const volume = readMedia().alertVolume
+  // Silence means silence — no point scheduling three repeats of nothing, and
+  // the visual banner still shows either way.
+  if (volume <= 0) return () => {}
+
   function play(remaining: number) {
     if (cancelled) return
     try {
-      ding()
+      ding(volume)
     } catch {
       // Autoplay can be blocked before any user gesture on the page — the
       // visual banner still shows, so there's nothing to recover from.

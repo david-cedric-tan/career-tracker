@@ -13,8 +13,10 @@ import { ScrollArea } from '../ui/ScrollArea'
  * fit, whichever's worse. This stays one row, fixed tile size, and scrolls —
  * with arrow buttons for anyone who'd rather click than drag.
  *
- * Ordered by application count then name, so the panel reads as a ranking.
- * Each tile links to the application list filtered to that company.
+ * Ordering is the API's (see dashboard.views.companies): offers first, then
+ * live applications by how far through the pipeline they are, then closed,
+ * then companies that only rejected you. Each tile links to the application
+ * list filtered to that company.
  */
 export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
@@ -75,7 +77,7 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
             <Link
               to={`/applications?company=${company.id}`}
               state={{ from: '/' }}
-              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}`}
+              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}${company.rejected ? `, ${company.rejected} rejected` : ''}`}
               className={cx(
                 'group relative flex w-20 flex-col items-center justify-center gap-1',
                 'rounded-lg border border-line bg-surface-2 py-1.5 transition-all duration-200',
@@ -108,12 +110,21 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
                 {company.count}
               </span>
 
+              {/* Offer wins the corner when a company has both — the good news
+                  is the more useful thing to see at tile size. */}
               {company.offers > 0 ? (
                 <span
                   className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-good text-white shadow-sm"
                   title={`${company.offers} offer${company.offers === 1 ? '' : 's'}`}
                 >
                   <Icon name="check" size={10} />
+                </span>
+              ) : company.rejected > 0 && company.active === 0 ? (
+                <span
+                  className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-critical text-white shadow-sm"
+                  title={`${company.rejected} rejection${company.rejected === 1 ? '' : 's'}`}
+                >
+                  <Icon name="close" size={10} />
                 </span>
               ) : null}
             </Link>

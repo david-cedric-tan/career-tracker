@@ -14,6 +14,7 @@ from .models import (
     ProfileAddress,
     ProfileAttachment,
     ProfileLink,
+    RefinementNote,
 )
 
 User = get_user_model()
@@ -34,6 +35,9 @@ class UserSerializer(serializers.ModelSerializer):
     )
     school_email = serializers.EmailField(
         source="profile.school_email", required=False, allow_blank=True
+    )
+    personal_email = serializers.EmailField(
+        source="profile.personal_email", required=False, allow_blank=True
     )
     linkedin_url = serializers.URLField(
         source="profile.linkedin_url", required=False, allow_blank=True, max_length=300
@@ -87,6 +91,7 @@ class UserSerializer(serializers.ModelSerializer):
             "custom_wallpaper",
             "mobile_number",
             "school_email",
+            "personal_email",
             "linkedin_url",
             "onboarding_completed",
             "theme_mode",
@@ -351,6 +356,16 @@ class ProfileAttachmentSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
 
+class SectionIconSerializer(serializers.Serializer):
+    """Multipart-only, on its own endpoint, so the JSON section forms stay
+    JSON — the same split the avatar and company logo already use."""
+
+    icon = serializers.ImageField(write_only=True)
+
+    def validate_icon(self, value):
+        return validate_image(value)
+
+
 class ProfileAttachmentUploadSerializer(serializers.Serializer):
     """Multipart-only — classification happens in the view, since it decides
     which storage helper (square crop vs raw) processes the file."""
@@ -372,6 +387,15 @@ def _date_order_validator(start_field, end_field, message):
 
 class EducationSerializer(serializers.ModelSerializer):
     attachments = ProfileAttachmentSerializer(many=True, read_only=True)
+    icon = serializers.SerializerMethodField()
+
+    def get_icon(self, row):
+        """Absolute URL so the SPA can load it from the API origin."""
+        if not row.icon:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(row.icon.url) if request else row.icon.url
+
     is_current = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -379,9 +403,10 @@ class EducationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "school", "degree", "field_of_study",
             "started_on", "ended_on", "is_current", "description",
+            "icon",
             "attachments", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "is_current", "attachments", "created_at", "updated_at"]
+        read_only_fields = ["id", "is_current", "icon", "attachments", "created_at", "updated_at"]
 
     validate = _date_order_validator(
         "started_on", "ended_on", "The end date can’t be before the start date."
@@ -390,6 +415,15 @@ class EducationSerializer(serializers.ModelSerializer):
 
 class CertificationSerializer(serializers.ModelSerializer):
     attachments = ProfileAttachmentSerializer(many=True, read_only=True)
+    icon = serializers.SerializerMethodField()
+
+    def get_icon(self, row):
+        """Absolute URL so the SPA can load it from the API origin."""
+        if not row.icon:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(row.icon.url) if request else row.icon.url
+
     is_expired = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -397,9 +431,10 @@ class CertificationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "issuer", "issued_on", "expires_on",
             "credential_url", "description", "is_expired",
+            "icon",
             "attachments", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "is_expired", "attachments", "created_at", "updated_at"]
+        read_only_fields = ["id", "is_expired", "icon", "attachments", "created_at", "updated_at"]
 
     validate = _date_order_validator(
         "issued_on", "expires_on", "Expiry can’t be before the issue date."
@@ -408,6 +443,15 @@ class CertificationSerializer(serializers.ModelSerializer):
 
 class ExtraCurricularSerializer(serializers.ModelSerializer):
     attachments = ProfileAttachmentSerializer(many=True, read_only=True)
+    icon = serializers.SerializerMethodField()
+
+    def get_icon(self, row):
+        """Absolute URL so the SPA can load it from the API origin."""
+        if not row.icon:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(row.icon.url) if request else row.icon.url
+
     is_current = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -415,9 +459,10 @@ class ExtraCurricularSerializer(serializers.ModelSerializer):
         fields = [
             "id", "organization", "role",
             "started_on", "ended_on", "is_current", "description",
+            "icon",
             "attachments", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "is_current", "attachments", "created_at", "updated_at"]
+        read_only_fields = ["id", "is_current", "icon", "attachments", "created_at", "updated_at"]
 
     validate = _date_order_validator(
         "started_on", "ended_on", "The end date can’t be before the start date."
@@ -426,11 +471,22 @@ class ExtraCurricularSerializer(serializers.ModelSerializer):
 
 class ProfileLinkSerializer(serializers.ModelSerializer):
     category_display = serializers.CharField(source="get_category_display", read_only=True)
+    icon = serializers.SerializerMethodField()
+
+    def get_icon(self, row):
+        """Absolute URL so the SPA can load it from the API origin."""
+        if not row.icon:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(row.icon.url) if request else row.icon.url
+
 
     class Meta:
         model = ProfileLink
-        fields = ["id", "label", "url", "category", "category_display"]
-        read_only_fields = ["id", "category_display"]
+        fields = [
+            "id", "label", "url", "category", "category_display", "position", "icon",
+        ]
+        read_only_fields = ["id", "category_display", "position", "icon"]
 
     def validate_label(self, value):
         value = value.strip()
@@ -440,13 +496,34 @@ class ProfileLinkSerializer(serializers.ModelSerializer):
 
 
 class ProfileAddressSerializer(serializers.ModelSerializer):
+    country_name = serializers.CharField(source="country.name", read_only=True, default=None)
+
     class Meta:
         model = ProfileAddress
-        fields = ["id", "label", "address"]
-        read_only_fields = ["id"]
+        fields = ["id", "label", "address", "country", "country_name"]
+        read_only_fields = ["id", "country_name"]
 
     def validate_label(self, value):
         value = value.strip()
         if not value:
             raise serializers.ValidationError("This field is required.")
+        return value
+
+
+class RefinementNoteSerializer(serializers.ModelSerializer):
+    kind_display = serializers.CharField(source="get_kind_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = RefinementNote
+        fields = [
+            "id", "body", "kind", "kind_display", "status", "status_display",
+            "page", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "kind_display", "status_display", "created_at", "updated_at"]
+
+    def validate_body(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Write something before logging it.")
         return value

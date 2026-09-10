@@ -10,6 +10,7 @@ from datetime import date
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from applications.models import Application, Company
 
@@ -111,10 +112,17 @@ class Person(models.Model):
         MetSourceTag, on_delete=models.SET_NULL, null=True, blank=True, related_name="people"
     )
 
-    companies = models.ManyToManyField(Company, blank=True, related_name="people")
+    companies = models.ManyToManyField(
+        Company, blank=True, related_name="people", through="PersonCompany"
+    )
     applications = models.ManyToManyField(
         Application, blank=True, related_name="people"
     )
+    # Who introduced whom, who works alongside whom. Symmetrical (Django's
+    # default for a self-M2M) because "Andrew knows Daniel" is not a claim that
+    # holds in one direction only — recording it once shows it on both
+    # profiles, with no second row to keep in step.
+    connections = models.ManyToManyField("self", blank=True)
 
     last_meeting_at = models.DateField(null=True, blank=True)
     next_chat_at = models.DateField(null=True, blank=True)
@@ -208,3 +216,74 @@ class ContactMethod(models.Model):
 
     def __str__(self):
         return f"{self.person.full_name} — {self.get_channel_display()}: {self.value}"
+
+
+class PersonCompany(models.Model):
+    """Where a contact works, or worked.
+
+    A through model rather than a plain M2M because "I knew them at Deloitte,
+    they're at EY now" is a normal thing to track, and a flat relation can only
+    say they're attached to both.
+
+    Every field beyond the pair itself is optional on purpose: most contacts get
+    added in a hurry with no dates at all, and that has to keep working. What
+    "past" means is derived from whatever the user did fill in — see `is_past`.
+    """
+
+    person = models.ForeignKey(
+        "Person", on_delete=models.CASCADE, related_name="company_links"
+    )
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name="person_links"
+    )
+    # Their title *at this company* — distinct from Person.title, which is
+    # whatever they do now.
+    title = models.CharField(max_length=255, blank=True)
+    started_on = models.DateField(null=True, blank=True)
+    ended_on = models.DateField(null=True, blank=True)
+    # Null means "never said" — the derivation falls through to the dates.
+    # False is an explicit "they've left" for when the date isn't known.
+    is_current = models.BooleanField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-started_on", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["person", "company"], name="uniq_person_company"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ended_on__isnull=True)
+                | models.Q(started_on__isnull=True)
+                | models.Q(ended_on__gte=models.F("started_on")),
+                name="person_company_ends_after_it_starts",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.person_id} @ {self.company_id}"
+
+    def clean(self):
+        # Catching the contradiction here rather than letting `is_past` silently
+        # pick a winner: if someone ticks "still there" *and* gives a leaving
+        # date in the past, only they know which they meant.
+        if self.is_current and self.ended_on and self.ended_on <= timezone.localdate():
+            raise ValidationError(
+                {"is_current": "This says they still work here, but an end date has passed."}
+            )
+
+    @property
+    def is_past(self):
+        """Whether this contact has moved on from this company.
+
+        Precedence, most explicit first: a leaving date that has arrived, then
+        an explicit `is_current`, then "no idea, assume current". A future end
+        date (someone on notice) still counts as current — they haven't gone yet.
+        """
+        if self.ended_on and self.ended_on <= timezone.localdate():
+            return True
+        if self.is_current is not None:
+            return not self.is_current
+        return False

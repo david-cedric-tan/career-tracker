@@ -322,7 +322,10 @@ export function TodosPage() {
                     setDraggingId(null)
                   }}
                   className={cx(
-                    'group/todo flex items-start gap-3 px-3 py-3 transition-opacity sm:px-4',
+                    // Tighter on the left than the right: the grip glyph is
+                    // drawn inset inside its own icon box, so full padding as
+                    // well left the row looking indented from the card edge.
+                    'group/todo flex items-start gap-2 py-3 pl-1.5 pr-3 transition-opacity sm:pl-2 sm:pr-4',
                     'cursor-grab active:cursor-grabbing',
                     draggingId === todo.id && 'opacity-40',
                   )}
@@ -334,7 +337,9 @@ export function TodosPage() {
                   <span
                     aria-hidden="true"
                     title="Drag to reorder"
-                    className="mt-0.5 shrink-0 text-ink-3 opacity-0 transition-opacity group-hover/todo:opacity-100"
+                    // `-ml-1` claws back the dead space the grip glyph
+                    // carries inside its own 24-unit icon box.
+                    className="-ml-1 mt-0.5 shrink-0 text-ink-3 opacity-0 transition-opacity group-hover/todo:opacity-100"
                   >
                     <Icon name="gripVertical" size={16} />
                   </span>
