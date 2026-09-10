@@ -1,8 +1,8 @@
 """REST API for todos (FR-TODO-*)."""
 
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -24,6 +24,7 @@ class TodoViewSet(viewsets.ModelViewSet):
         "created_at", "-created_at",
         "priority", "-priority",
         "title", "-title",
+        "position", "-position",
     }
 
     def get_queryset(self):
@@ -66,11 +67,49 @@ class TodoViewSet(viewsets.ModelViewSet):
 
         ordering = params.get("ordering")
         if ordering in self.ORDERING_WHITELIST:
-            qs = qs.order_by(ordering)
+            # `position` alone leaves ties in whatever order the database
+            # feels like, which makes a hand-arranged list look unstable.
+            if ordering.endswith("position"):
+                qs = qs.order_by(ordering, "id")
+            else:
+                qs = qs.order_by(ordering)
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        # New todos go to the top of the manual order — a task you just wrote
+        # down is the one you're thinking about. Everything else shifts down
+        # rather than the new row taking a lower number, since `position` is
+        # a positive field with no room below zero.
+        Todo.objects.filter(user=self.request.user).update(position=F("position") + 1)
+        serializer.save(user=self.request.user, position=0)
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """POST {"ids": [...]} — the todos in the order they should sit.
+
+        Only the ids sent are renumbered, and only the caller's own todos, so
+        a drag inside a filtered list can't disturb what isn't on screen.
+        """
+        ids = request.data.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+            return Response(
+                {"ids": ["Send the todo ids as a list, in their new order."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mine = set(
+            Todo.objects.filter(user=request.user, id__in=ids).values_list("id", flat=True)
+        )
+        unknown = [i for i in ids if i not in mine]
+        if unknown:
+            return Response(
+                {"ids": [f"{len(unknown)} of those aren't your todos."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        for index, todo_id in enumerate(ids):
+            Todo.objects.filter(user=request.user, id=todo_id).update(position=index)
+        return Response({"ids": ids})
 
     @action(detail=False, methods=["get"])
     def choices(self, request):

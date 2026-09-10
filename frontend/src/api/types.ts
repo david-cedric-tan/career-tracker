@@ -280,6 +280,8 @@ export type Todo = {
   person_name: string | null
   company: number | null
   company_name: string | null
+  /** Manual order, used only by the Custom sort. */
+  position: number
   is_overdue: boolean
   completed_at: string | null
   created_at: string

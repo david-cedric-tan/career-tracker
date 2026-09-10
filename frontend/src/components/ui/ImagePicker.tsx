@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { formatApiError } from '../../api/client'
 import { cx } from '../../lib/format'
 import { Avatar } from './Avatar'
@@ -39,13 +39,10 @@ export function ImagePicker({
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [dragging, setDragging] = useState(false)
 
-  async function onPick(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Let the same file be re-picked after a failure.
-    event.target.value = ''
+  async function accept(file: File | undefined) {
     if (!file) return
-
     setError('')
     if (!file.type.startsWith('image/')) {
       setError('Pick an image file.')
@@ -66,6 +63,26 @@ export function ImagePicker({
     }
   }
 
+  async function onPick(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Let the same file be re-picked after a failure.
+    event.target.value = ''
+    await accept(file)
+  }
+
+  /** Dropping a logo straight onto the avatar is the obvious gesture. */
+  function onDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    setDragging(false)
+    void accept(event.dataTransfer.files?.[0])
+  }
+
+  function onDragOver(event: DragEvent<HTMLElement>) {
+    // Without preventDefault the browser navigates to the dropped image.
+    event.preventDefault()
+    setDragging(true)
+  }
+
   async function remove() {
     if (!onRemove) return
     setError('')
@@ -80,7 +97,12 @@ export function ImagePicker({
   }
 
   return (
-    <div className={className}>
+    <div
+      className={className}
+      onDragOver={onDragOver}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
       <div className="flex items-center gap-4">
         <button
           type="button"
@@ -90,6 +112,7 @@ export function ImagePicker({
           className={cx(
             'group relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
             shape === 'circle' ? 'rounded-full' : 'rounded-lg',
+            dragging && 'outline-2 outline-offset-2 outline-dashed outline-brand',
           )}
         >
           <Avatar name={name} src={src} size={size} shape={shape} />

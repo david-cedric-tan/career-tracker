@@ -162,6 +162,8 @@ export const todos = {
   choices: () => api<TodoChoices>('/todos/choices/'),
   toggle: (id: number) => api<Todo>(`/todos/${id}/toggle/`, { method: 'POST' }),
   suggestions: () => api<TodoSuggestion[]>('/todos/suggestions/'),
+  reorder: (ids: number[]) =>
+    api<{ ids: number[] }>('/todos/reorder/', { method: 'POST', body: { ids } }),
 }
 
 export const catchups = {

@@ -572,6 +572,11 @@ function AddCompanyModal({
   const [industryIds, setIndustryIds] = useState<number[]>([])
   const [regionIds, setRegionIds] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
+  // A logo picked before the company exists. Uploading needs an id, so it's
+  // held here and sent as soon as the company is created — rather than making
+  // you save, reopen and edit just to add the mark.
+  const [pendingLogo, setPendingLogo] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
 
   const [lastOpen, setLastOpen] = useState(open)
   if (open !== lastOpen) {
@@ -581,6 +586,8 @@ function AddCompanyModal({
       setShortName('')
       setIndustryIds([])
       setRegionIds([])
+      setPendingLogo(null)
+      setLogoPreview(null)
     }
   }
 
@@ -599,6 +606,7 @@ function AddCompanyModal({
           industries: industryIds,
         })
       }
+      if (pendingLogo) await companies.uploadLogo(created.id, pendingLogo)
       notify('Company saved.')
       onSaved()
       onClose()
@@ -625,6 +633,24 @@ function AddCompanyModal({
       }
     >
       <form id="add-company-form" onSubmit={save} className="flex flex-col gap-4">
+        {/* The mark can be chosen now and is uploaded once the company has an
+            id to attach it to — no save-then-reopen round trip. */}
+        <ImagePicker
+          name={name || 'New company'}
+          src={logoPreview}
+          size="lg"
+          shape="square"
+          label="logo"
+          helpText="Optional — drop an image here or pick one. Added when you save."
+          onUpload={async (file) => {
+            setPendingLogo(file)
+            setLogoPreview(URL.createObjectURL(file))
+          }}
+          onRemove={async () => {
+            setPendingLogo(null)
+            setLogoPreview(null)
+          }}
+        />
         <Input
           label="Name"
           required

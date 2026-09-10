@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { formatApiError } from '../../api/client'
 import { cx } from '../../lib/format'
 import { Spinner } from './Button'
@@ -41,12 +41,10 @@ export function FilePicker({
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [dragging, setDragging] = useState(false)
 
-  async function onPick(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
+  async function accept(file: File | undefined) {
     if (!file) return
-
     setError('')
     if (file.size > MAX_BYTES) {
       setError(`That file is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is 10MB.`)
@@ -63,6 +61,26 @@ export function FilePicker({
     }
   }
 
+  async function onPick(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    await accept(file)
+  }
+
+  /** Dropping a CV onto the box is the obvious gesture, so it works whether
+      there's a file attached already (drop to replace) or not. */
+  function onDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    setDragging(false)
+    void accept(event.dataTransfer.files?.[0])
+  }
+
+  function onDragOver(event: DragEvent<HTMLElement>) {
+    // Without preventDefault the browser navigates to the dropped file.
+    event.preventDefault()
+    setDragging(true)
+  }
+
   async function remove() {
     setBusy(true)
     setError('')
@@ -75,25 +93,46 @@ export function FilePicker({
     }
   }
 
+  // `name` without `url` is a file chosen before the record exists — it can be
+  // shown and removed, it just isn't downloadable until it's been sent.
+  const hasFile = Boolean(url || name)
+
   return (
-    <div>
-      {url ? (
-        <div className="flex items-center gap-2.5 rounded-lg border border-line bg-surface-2 p-2.5">
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      {hasFile ? (
+        <div
+          className={cx(
+            'flex items-center gap-2.5 rounded-lg border bg-surface-2 p-2.5 transition-colors',
+            dragging ? 'border-brand bg-brand-soft' : 'border-line',
+          )}
+        >
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-strong">
             {busy ? <Spinner /> : <Icon name="file" size={17} />}
           </span>
 
           <div className="min-w-0 flex-1">
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="block truncate text-[13px] font-medium text-ink hover:text-brand hover:underline"
-            >
-              {name || 'Attachment'}
-            </a>
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="block truncate text-[13px] font-medium text-ink hover:text-brand hover:underline"
+              >
+                {name || 'Attachment'}
+              </a>
+            ) : (
+              <span className="block truncate text-[13px] font-medium text-ink">
+                {name || 'Attachment'}
+              </span>
+            )}
             <p className="text-[11.5px] text-ink-3">
-              {[kind, humanSize(size)].filter(Boolean).join(' · ')}
+              {[kind, humanSize(size), url ? null : 'attached on save']
+                .filter(Boolean)
+                .join(' · ')}
             </p>
           </div>
 
@@ -124,15 +163,18 @@ export function FilePicker({
           onClick={() => inputRef.current?.click()}
           disabled={busy}
           className={cx(
-            'flex w-full items-center gap-2.5 rounded-lg border border-dashed border-line-strong',
-            'bg-surface-2 p-3 text-left transition-colors hover:border-brand hover:bg-brand-soft',
+            'flex w-full items-center gap-2.5 rounded-lg border border-dashed p-3 text-left transition-colors',
+            'hover:border-brand hover:bg-brand-soft',
+            dragging ? 'border-brand bg-brand-soft' : 'border-line-strong bg-surface-2',
           )}
         >
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface text-ink-3">
             {busy ? <Spinner /> : <Icon name="plus" size={17} />}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[13px] font-medium text-ink">Attach a file</span>
+            <span className="block text-[13px] font-medium text-ink">
+              {dragging ? 'Drop it here' : 'Attach a file, or drop one here'}
+            </span>
             <span className="block text-[11.5px] text-ink-3">
               {help ?? 'PDF, Word, Pages, ODT, RTF or text — up to 10MB.'}
             </span>
