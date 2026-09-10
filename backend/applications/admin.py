@@ -5,7 +5,7 @@ Admin panel for the applications app. (To let the models appear on django admin 
 '''
 
 from .models import (
-    Country, State, Location,
+    Country, State, Location, Venue,
     Industry, Company, Role, Resume, JobListing,
     Application, ApplicationJobListing, AppsEventLog,
 )
@@ -37,8 +37,9 @@ class ApplicationAdmin(admin.ModelAdmin):
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ("name", "industry")
+    list_display = ("name",)
     search_fields = ("name",)
+    filter_horizontal = ("industries", "regions")
 
 
 @admin.register(Resume)
@@ -85,6 +86,13 @@ class LocationAdmin(admin.ModelAdmin):
     list_display = ("state", "name")
     search_fields = ("state__name", "name")
     autocomplete_fields = ("state",)
+
+
+@admin.register(Venue)
+class VenueAdmin(admin.ModelAdmin):
+    list_display = ("location", "name")
+    search_fields = ("location__name", "name")
+    autocomplete_fields = ("location",)
 
 
 @admin.register(Role)
