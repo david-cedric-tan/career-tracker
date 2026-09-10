@@ -1,7 +1,15 @@
 asgiref==3.12.1
+crispy-bootstrap5==2026.9
 Django==6.0.7
 django-cors-headers==4.9.0
+django-crispy-forms==2.7
 django-extensions==4.1
 djangorestframework==3.18.0
+et_xmlfile==2.0.0
+openpyxl==3.1.5
+pillow==12.3.0
+psycopg==3.3.5
+psycopg-binary==3.3.5
+pygraphviz==2.0.1
 python-dotenv==1.2.2
 sqlparse==0.5.5

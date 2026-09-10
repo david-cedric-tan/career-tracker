@@ -1,24 +1,8 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as authApi from '../api/auth'
-import { clearToken, getToken, formatApiError, type User } from '../api/client'
-
-type AuthContextValue = {
-  user: User | null
-  loading: boolean
-  login: (username: string, password: string) => Promise<void>
-  register: (payload: authApi.RegisterPayload) => Promise<void>
-  logout: () => Promise<void>
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null)
+import { clearToken, getToken, onUnauthorized } from '../api/client'
+import type { User } from '../api/types'
+import { AuthContext } from './context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -49,6 +33,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // A token revoked server-side (logout elsewhere, expired session) shows up
+  // as a 401 on any call — drop straight back to the login screen.
+  useEffect(() => onUnauthorized(() => setUser(null)), [])
+
   const login = useCallback(async (username: string, password: string) => {
     const data = await authApi.login({ username, password })
     setUser(data.user)
@@ -65,17 +53,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout }),
+    () => ({ user, loading, login, register, logout, setUser }),
     [user, loading, login, register, logout],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
-  return ctx
-}
-
-export { formatApiError }

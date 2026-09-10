@@ -4,7 +4,43 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <meta name="description" content="Track job applications, contacts, resumes and follow-ups in one place." />
+    <title>Career Tracker</title>
+    <script>
+      // Stamp the theme before first paint so a dark/intern reload never
+      // flashes white. Mirrors applyAppearance() in src/lib/appearance.ts.
+      (function () {
+        var themes = ['light', 'dark', 'intern']
+        var themeModes = themes.concat(['dynamic'])
+        var wallpapers = ['pwc', 'city', 'orbit', 'sage', 'custom', 'none']
+        var theme = null
+        var wallpaper = null
+        try {
+          theme = localStorage.getItem('theme')
+          wallpaper = localStorage.getItem('wallpaper')
+        } catch (e) {
+          /* private mode — fall through to the system default */
+        }
+        if (themeModes.indexOf(theme) === -1) {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light'
+        }
+        if (theme === 'dynamic') {
+          // Real sunrise/sunset needs geolocation, which is async and can't
+          // block first paint — use the same fixed-hours fallback the React
+          // provider starts with (lib/sunTimes.ts's isDaytimeFallback), then
+          // let it correct itself once geolocation resolves.
+          var hour = new Date().getHours()
+          theme = hour >= 7 && hour < 19 ? 'light' : 'dark'
+        }
+        document.documentElement.classList.add(theme)
+        // Wallpaper is independent of theme now — mirrors that in
+        // src/lib/appearance.ts's applyAppearance().
+        document.documentElement.dataset.wallpaper =
+          wallpapers.indexOf(wallpaper) === -1 ? 'pwc' : wallpaper
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -3,6 +3,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from django.utils.text import slugify
 
 #Models Code
 '''
@@ -49,6 +50,68 @@ class Stage(models.TextChoices):
     ASSESSMENT_CENTRE = "assessment_centre", "Assessment centre"
     FINAL_INTERVIEW = "final_interview", "Final interview"
     OFFER = "offer", "Offer"
+class ApplicationStage(models.Model):
+    """The pipeline's steps — addable, not a fixed list (FR-REF-07).
+
+    `Application.stage` and the event log keep storing the *key* as a plain
+    string rather than pointing here with a foreign key. An event log is a
+    historical record: renaming or removing a stage today shouldn't rewrite
+    what happened last March, and a backup export stays readable without a
+    join. This table is the authoritative list of what you can move *to*, and
+    `position` is the order the pipeline is drawn and ranked in.
+    """
+
+    key = models.SlugField(max_length=50, unique=True)
+    name = models.CharField(max_length=50)
+    position = models.PositiveSmallIntegerField(default=0)
+    # The seven the app ships with. Renameable and reorderable, but not
+    # deletable — the pipeline always keeps a spine.
+    is_preset = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        creating = self.pk is None
+        if not self.key:
+            base = slugify(self.name).replace("-", "_")[:50] or "stage"
+            # Two differently-punctuated names can slugify the same way, and
+            # `key` is what rows are stored under — so it has to be unique
+            # even when the names only differ cosmetically.
+            key = base
+            suffix = 2
+            taken = ApplicationStage.objects.exclude(pk=self.pk)
+            while taken.filter(key=key).exists():
+                key = f"{base[:46]}_{suffix}"
+                suffix += 1
+            self.key = key
+
+        if not creating:
+            return super().save(*args, **kwargs)
+
+        # Position is server-assigned on create. A new stage is almost always
+        # another round in the funnel — a phone screen, a take-home — so it
+        # slots in just before the last one ("Offer" out of the box) rather
+        # than after it, which would place it past the finish line in the
+        # pipeline chart and in the progress ranking.
+        #
+        # Done here rather than in the viewset because `ensure/` saves the
+        # serializer directly and never reaches `perform_create`.
+        last = ApplicationStage.objects.order_by("-position", "-id").first()
+        if last is None:
+            self.position = 0
+            return super().save(*args, **kwargs)
+
+        self.position = last.position
+        super().save(*args, **kwargs)
+        ApplicationStage.objects.filter(position__gte=self.position).exclude(
+            pk=self.pk
+        ).update(position=models.F("position") + 1)
+
+
 class Outcome(models.TextChoices):
     IN_PROGRESS = "in_progress", "In progress"
     REJECTED = "rejected", "Rejected"
@@ -67,6 +130,17 @@ class WorkArrangement(models.TextChoices):
     PART_TIME = "part_time", "Part-time"
     CASUAL = "casual", "Casual"
     CONTRACT = "contract", "Contract"
+class EventType(models.TextChoices):
+    """What a log row represents. Stage/outcome moves stay distinguishable from
+    ordinary field edits so the dashboard time series can keep counting only
+    real pipeline movement."""
+
+    CREATED = "created", "Created"
+    STAGE = "stage", "Stage change"
+    OUTCOME = "outcome", "Outcome change"
+    EDITED = "edited", "Edited"
+
+
 class ResumeVariantType(models.TextChoices):
     GENERAL = "general", "General"
     COMPANY = "company", "Company-specific"
@@ -115,6 +189,36 @@ class Location(models.Model):
         return self.state.country
 
 
+class Venue(models.Model):
+    """A specific place within a city — "The Pillars, Wynyard" rather than
+    just "Sydney" — for when a city isn't precise enough. Kept separate from
+    Location (which stays purely city-level) so every existing city-only
+    consumer — job listings, the region map, company HQ — keeps working
+    unchanged; a venue is an additional, more precise option wherever "where"
+    is asked, not a replacement for the city catalog.
+    """
+
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, related_name="venues")
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        ordering = ["location__name", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["location", "name"], name="uniq_venue_per_location")
+        ]
+
+    def __str__(self):
+        return f"{self.name}, {self.location.name}"
+
+    @property
+    def state(self):
+        return self.location.state
+
+    @property
+    def country(self):
+        return self.location.state.country
+
+
 #Companies & Job Listings/Roles
 class Industry(models.Model):
     name = models.CharField(max_length=255, unique=True)
@@ -127,9 +231,20 @@ class Industry(models.Model):
 
 class Company(models.Model):
     name = models.CharField(max_length=255)
-    industry = models.ForeignKey(
-            Industry, on_delete=models.SET_NULL, null=True, blank=True, related_name="companies"
-        )
+    # A shorter display name for long official names ("International Business
+    # Machines" -> "IBM") — falls back to `name` wherever it's blank.
+    short_name = models.CharField(max_length=60, blank=True)
+    # A company can genuinely span more than one (e.g. a bank's tech arm is
+    # both Financial services and Technology) — same call as `regions` below:
+    # a company appears in every ring/filter it actually belongs to, not one
+    # arbitrarily-picked "primary" industry.
+    industries = models.ManyToManyField(Industry, blank=True, related_name="companies")
+    # Shared reference data, like the name — one logo per company, not per user.
+    logo = models.ImageField(upload_to="companies/", null=True, blank=True)
+    # Where this company operates — optional, and separate from JobListing's
+    # precise city/state/country: a listing's location is often left blank,
+    # so this is the reliable source for the dashboard's region map.
+    regions = models.ManyToManyField(Country, blank=True, related_name="companies_in_region")
 
     class Meta:
         ordering = ["name"]
@@ -140,6 +255,33 @@ class Company(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CompanyNote(models.Model):
+    """A user's own private notes on a company.
+
+    Company itself is shared reference data (logo, name, regions all visible
+    to everyone who tracks it) — but "recruiter said follow up in March" is
+    one person's private read, not a fact about the company everyone should
+    see. Kept as its own side table rather than a field on Company so it can
+    be user-scoped without dragging user-scoping onto the shared row.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="company_notes"
+    )
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="user_notes")
+    notes = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["user", "company"], name="uniq_company_note_per_user")
+        ]
+
+    def __str__(self):
+        return f"{self.user} — {self.company.name}"
+
 
 class Role(models.Model):
     name = models.CharField(max_length=150, unique=True)
@@ -170,6 +312,12 @@ class Resume(models.Model):
     )
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+
+    # The actual document. Stored under a suffixed name, so `file_name` keeps
+    # what the user called it for display and download.
+    file = models.FileField(upload_to="resumes/", null=True, blank=True)
+    file_name = models.CharField(max_length=255, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -206,6 +354,12 @@ class JobListing(models.Model):
     opened_at = models.DateField(null=True, blank=True)
     closing_at = models.DateField(null=True, blank=True)
     job_url = models.URLField(max_length=255, unique=True, null=True, blank=True)
+    description = models.TextField(blank=True)
+    # Comma-separated — deliberately not a M2M catalog like Role/Location:
+    # skills are free-form per-listing tags, not shared reference data.
+    # Unbounded like `description`: a real ad's requirements section routinely
+    # yields 40+ tags, which a 500-char cap rejected outright at the DB level.
+    skills = models.TextField(blank=True)
 
     class Meta:
         ordering = ["company__name", "role__name"]
@@ -274,6 +428,10 @@ class Application(models.Model):
     # Temporary fallback until existing rows are backfilled into Resume.
     resume_version = models.CharField(max_length=100, blank=True)
     follow_up_date = models.DateField(null=True, blank=True)
+    # FR-APP-REJ-02 — a reminder to reapply (e.g. next year's graduate intake).
+    # Deliberately not restricted to a particular outcome: a withdrawn or
+    # declined application can just as reasonably want a future reminder.
+    reapply_at = models.DateField(null=True, blank=True)
     stage_updated_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
 
@@ -287,10 +445,10 @@ class Application(models.Model):
             models.Index(fields=["stage"]),
         ]
         constraints = [
-            models.CheckConstraint(
-                condition=models.Q(stage__in=[c[0] for c in Stage.choices]),
-                name="valid_stage",
-            ),
+            # No CheckConstraint on `stage`: the valid set lives in
+            # ApplicationStage now and grows when you add one, which a
+            # constraint baked from the enum at migration time can't follow.
+            # The API validates against that table instead.
             models.CheckConstraint(
                 condition=models.Q(outcome__in=[c[0] for c in Outcome.choices]),
                 name="valid_outcome",
@@ -379,15 +537,26 @@ class ApplicationJobListing(models.Model):
 
 
 class AppsEventLog(models.Model):
-    """Append-only audit log of stage transitions. Never update or delete rows."""
+    """Append-only audit log for an application. Never update or delete rows.
+
+    Covers stage/outcome transitions *and* ordinary field edits, so the
+    application's history is the whole story rather than only its pipeline
+    movement. `event_type` keeps the two apart for the dashboard.
+    """
 
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE, related_name="event_logs"
+    )
+    event_type = models.CharField(
+        max_length=20, choices=EventType.choices, default=EventType.EDITED
     )
     prev_stage = models.CharField(max_length=50, choices=Stage.choices, blank=True)
     curr_stage = models.CharField(max_length=50, choices=Stage.choices)
     prev_outcome = models.CharField(max_length=50, choices=Outcome.choices, blank=True)
     curr_outcome = models.CharField(max_length=50, choices=Outcome.choices)
+    # Field-level diff for this save: [{field, label, from, to}, …]. Empty for a
+    # pure stage move; populated whenever other fields moved in the same save.
+    changes = models.JSONField(default=list, blank=True)
     changed_at = models.DateTimeField(default=timezone.now)
     note = models.TextField(blank=True)
 
@@ -396,8 +565,15 @@ class AppsEventLog(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["application", "changed_at"], name="uniq_event_per_app_time"
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(event_type__in=[c[0] for c in EventType.choices]),
+                name="valid_event_type",
+            ),
         ]
+
+    def __str__(self):
+        return f"{self.application_id} {self.get_event_type_display()} @ {self.changed_at}"
 
     def __str__(self):
         return f"{self.application_id}: {self.prev_stage or '—'} → {self.curr_stage}"
