@@ -34,6 +34,7 @@ import type {
   Location,
   NetworkChoices,
   Person,
+  RefinementNote,
   RegionStat,
   Resume,
   Role,
@@ -137,8 +138,46 @@ export const applications = {
     }),
   advance: (id: number, body: { stage?: string; outcome?: string; note?: string }) =>
     api<Application>(`/applications/${id}/advance/`, { method: 'POST', body }),
+  updateEvent: (
+    id: number,
+    eventId: number,
+    body: { changed_at?: string; note?: string },
+  ) =>
+    api<Application>(`/applications/${id}/events/${eventId}/`, {
+      method: 'PATCH',
+      body,
+    }),
+  removeEvent: (id: number, eventId: number) =>
+    api<Application>(`/applications/${id}/events/${eventId}/`, { method: 'DELETE' }),
+  setWaiting: (
+    id: number,
+    waiting: boolean,
+    body: { note?: string; changed_at?: string } = {},
+  ) =>
+    api<Application>(`/applications/${id}/waiting/`, {
+      method: 'POST',
+      body: { waiting, ...body },
+    }),
   backfill: (id: number, moves: HistoricalMove[]) =>
     api<Application>(`/applications/${id}/backfill/`, { method: 'POST', body: { moves } }),
+  addDocument: (id: number, file: File, title: string, description: string) => {
+    const body = new FormData()
+    body.append('file', file)
+    if (title) body.append('title', title)
+    if (description) body.append('description', description)
+    return api<Application>(`/applications/${id}/documents/`, { method: 'POST', body })
+  },
+  updateDocument: (
+    id: number,
+    documentId: number,
+    body: { title: string; description: string },
+  ) =>
+    api<Application>(`/applications/${id}/documents/${documentId}/`, {
+      method: 'PATCH',
+      body,
+    }),
+  removeDocument: (id: number, documentId: number) =>
+    api<Application>(`/applications/${id}/documents/${documentId}/`, { method: 'DELETE' }),
 }
 
 export const applicationListings = crud<ApplicationListingLink>('application-job-listings')
@@ -188,8 +227,13 @@ export const experiences = {
 export const education = sectionWithAttachments<Education>('education')
 export const certifications = sectionWithAttachments<Certification>('certifications')
 export const extracurriculars = sectionWithAttachments<ExtraCurricular>('extracurriculars')
-export const profileLinks = crud<ProfileLink>('auth/links')
+export const profileLinks = {
+  ...crud<ProfileLink>('auth/links'),
+  reorder: (ids: number[]) =>
+    api<{ ids: number[] }>('/auth/links/reorder/', { method: 'POST', body: { ids } }),
+}
 export const profileAddresses = crud<ProfileAddress>('auth/addresses')
+export const refinements = crud<RefinementNote>('auth/refinements')
 
 export type BackupCounts = Record<string, number>
 export type BackupFormat = 'json' | 'xlsx' | 'zip'
@@ -216,11 +260,11 @@ export const backup = {
 }
 
 export const dashboard = {
-  summary: () => api<DashboardSummary>('/dashboard/summary/'),
+  summary: (params?: Query) => api<DashboardSummary>('/dashboard/summary/', { params }),
   timeseries: (params?: Query) => api<Timeseries>('/dashboard/timeseries/', { params }),
   activity: (params?: Query) => api<ActivityItem[]>('/dashboard/activity/', { params }),
   attention: () => api<Attention>('/dashboard/attention/'),
-  companies: () => api<CompanyStat[]>('/dashboard/companies/'),
+  companies: (params?: Query) => api<CompanyStat[]>('/dashboard/companies/', { params }),
   regions: () => api<RegionStat[]>('/dashboard/regions/'),
   /** Every place this account's own notes @mention the given tag — the same
       "strip whitespace" form `MentionTextarea` inserts, e.g. "SarahChen". */

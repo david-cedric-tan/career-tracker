@@ -5,6 +5,7 @@ import { applications as applicationsApi, companies, jobListings, people } from 
 import type { JobListing } from '../api/types'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Badge } from '../components/ui/Badge'
+import { CompanyMark } from '../components/ui/CompanyMark'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { ImagePicker } from '../components/ui/ImagePicker'
@@ -78,6 +79,7 @@ export function CompanyDetailPage() {
 
       <PageHeader
         title={company.short_name || company.name}
+        mark={<CompanyMark name={company.name} logo={company.logo} size={44} />}
         subtitle={
           <span className="flex flex-wrap items-center gap-1.5">
             {company.industry_names.map((name) => (

@@ -13,7 +13,7 @@ export function Card({
   return (
     <section
       className={cx(
-        'rounded-card border border-line bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)] intern:backdrop-blur-xl',
+        'glass-panel rounded-card border border-line bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)] intern:backdrop-blur-xl',
         padded && 'p-4 sm:p-5',
         className,
       )}

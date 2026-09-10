@@ -76,3 +76,20 @@ export const CALENDAR_DOMAIN_META: Record<
   catchup_followup: { label: 'Meeting follow-up', tone: 'neutral', icon: 'coffee' },
   custom: { label: 'Event', tone: 'brand', icon: 'calendar' },
 }
+
+
+/**
+ * The chart colour for a tone.
+ *
+ * Bars and badges share one vocabulary deliberately: a red "Rejected" badge in
+ * the applications table and a red "Rejected" bar on the dashboard are the same
+ * fact, so they should be the same colour rather than each picking its own.
+ */
+export const TONE_COLOR: Record<Tone, string> = {
+  neutral: 'var(--color-line-strong)',
+  brand: 'var(--color-brand)',
+  good: 'var(--color-good)',
+  warning: 'var(--color-warning)',
+  serious: 'var(--color-serious)',
+  critical: 'var(--color-critical)',
+}

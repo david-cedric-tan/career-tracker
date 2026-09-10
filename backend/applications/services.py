@@ -153,3 +153,104 @@ def log_creation(application, note="Application created."):
         changed_at=_free_timestamp(application),
         note=note,
     )
+
+
+def log_waiting(application, started, note="", changed_at=None):
+    """Record the ball moving into (or out of) the employer's court.
+
+    Its own event type rather than a stage or outcome row: waiting is a state
+    layered on top of both, and the dashboard time series counts stage rows as
+    pipeline movement — a "waiting" row is not that.
+    """
+    if changed_at is None:
+        changed_at = _free_timestamp(application)
+    else:
+        # Two rows on one application may not share a timestamp.
+        while AppsEventLog.objects.filter(
+            application=application, changed_at=changed_at
+        ).exists():
+            changed_at += timedelta(microseconds=1)
+
+    return AppsEventLog.objects.create(
+        application=application,
+        event_type=(
+            EventType.WAITING_STARTED if started else EventType.WAITING_ENDED
+        ),
+        prev_stage="",
+        curr_stage=application.stage,
+        prev_outcome="",
+        curr_outcome=application.outcome,
+        changes=[],
+        changed_at=changed_at,
+        note=note or "",
+    )
+
+
+def end_waiting(application, note="", changed_at=None):
+    """Clear the waiting flag and log it, if it was set.
+
+    Called whenever the employer has plainly answered — a stage move or a
+    terminal outcome — so the flag can never outlive the thing it was waiting
+    for. Returns True when a row was written.
+    """
+    if not application.clear_waiting():
+        return False
+    application.save(update_fields=["awaiting_response", "awaiting_since", "updated_at"])
+    log_waiting(application, started=False, note=note, changed_at=changed_at)
+    return True
+
+
+def settle_waiting(application, prev_stage, prev_outcome):
+    """Close an open waiting period once the employer has plainly answered.
+
+    A stage move or a terminal outcome both mean a reply arrived, so the flag
+    should never survive either — otherwise an application sits there claiming
+    it's waiting on a company that already rejected it.
+    """
+    from .models import Outcome
+
+    if not application.awaiting_response:
+        return False
+
+    moved_stage = prev_stage != application.stage
+    went_terminal = (
+        prev_outcome != application.outcome and application.outcome in Outcome.terminal()
+    )
+    if not (moved_stage or went_terminal):
+        return False
+
+    return end_waiting(application)
+
+
+def resync_waiting(application):
+    """Realign `awaiting_since` with the log after a row is edited or deleted.
+
+    The badge reads `awaiting_since` while the timeline reads the log rows, so
+    correcting a "waiting" entry's date has to move both — otherwise the badge
+    goes on quoting the moment you first ticked the box rather than when the
+    stage was actually finished.
+
+    Derived rather than patched in place: if the row that opened the period is
+    deleted outright, there is nothing left saying you're waiting, so the flag
+    goes with it.
+    """
+    if not application.awaiting_response:
+        return False
+
+    latest = (
+        application.event_logs.filter(event_type=EventType.WAITING_STARTED)
+        .order_by("-changed_at")
+        .first()
+    )
+    if latest is None:
+        application.clear_waiting()
+        application.save(
+            update_fields=["awaiting_response", "awaiting_since", "updated_at"]
+        )
+        return True
+
+    if application.awaiting_since != latest.changed_at:
+        application.awaiting_since = latest.changed_at
+        application.save(update_fields=["awaiting_since", "updated_at"])
+        return True
+    return False

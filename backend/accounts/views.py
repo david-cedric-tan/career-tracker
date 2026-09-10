@@ -3,6 +3,7 @@ import secrets
 
 from django.contrib.auth import login, logout
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Max
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
@@ -29,6 +30,7 @@ from .models import (
     ProfileAddress,
     ProfileAttachment,
     ProfileLink,
+    RefinementNote,
 )
 from .serializers import (
     AvatarSerializer,
@@ -41,6 +43,8 @@ from .serializers import (
     ProfileAddressSerializer,
     ProfileAttachmentUploadSerializer,
     ProfileLinkSerializer,
+    RefinementNoteSerializer,
+    SectionIconSerializer,
     RegisterSerializer,
     UserSerializer,
     WallpaperSerializer,
@@ -236,6 +240,44 @@ class ExperienceViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(experience).data)
 
 
+class SectionIconMixin:
+    """Shared `icon/` actions — one identifying image per row.
+
+    Separate from `AttachmentSectionMixin`, which manages a *gallery*: this is
+    the single mark that represents the entry in a list, so it replaces rather
+    than appends, and the previous file is deleted instead of orphaned.
+    """
+
+    icon_name_prefix = "icon"
+
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        parser_classes=[MultiPartParser, FormParser],
+        url_path="icon",
+    )
+    def icon(self, request, pk=None):
+        instance = self.get_object()
+
+        if request.method == "DELETE":
+            instance.icon.delete(save=True)
+            return Response(self.get_serializer(instance).data)
+
+        serializer = SectionIconSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        instance.icon.delete(save=False)  # don't orphan the previous file
+        instance.icon = contain_thumbnail(
+            serializer.validated_data["icon"],
+            size=GALLERY_SIZE,
+            name=f"{self.icon_name_prefix}-{instance.id}",
+        )
+        instance.save(update_fields=["icon"])
+
+        instance.refresh_from_db()
+        return Response(self.get_serializer(instance).data)
+
+
 class AttachmentSectionMixin:
     """Shared `attachments/` actions for a profile section (FR-PROF-13).
 
@@ -304,7 +346,7 @@ class AttachmentSectionMixin:
         return Response(self.get_serializer(instance).data)
 
 
-class EducationViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
+class EducationViewSet(SectionIconMixin, AttachmentSectionMixin, viewsets.ModelViewSet):
     serializer_class = EducationSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = Education.objects.none()
@@ -319,7 +361,7 @@ class EducationViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
 
 
-class CertificationViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
+class CertificationViewSet(SectionIconMixin, AttachmentSectionMixin, viewsets.ModelViewSet):
     serializer_class = CertificationSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = Certification.objects.none()
@@ -334,7 +376,7 @@ class CertificationViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
 
 
-class ExtraCurricularViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
+class ExtraCurricularViewSet(SectionIconMixin, AttachmentSectionMixin, viewsets.ModelViewSet):
     serializer_class = ExtraCurricularSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = ExtraCurricular.objects.none()
@@ -349,13 +391,69 @@ class ExtraCurricularViewSet(AttachmentSectionMixin, viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
 
 
-class ProfileLinkViewSet(viewsets.ModelViewSet):
+class ProfileLinkViewSet(SectionIconMixin, viewsets.ModelViewSet):
     serializer_class = ProfileLinkSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = ProfileLink.objects.none()
 
     def get_queryset(self):
         return ProfileLink.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        # New links go to the bottom, where the add form that made them sits.
+        last = (
+            ProfileLink.objects.filter(user=self.request.user)
+            .aggregate(Max("position"))
+            .get("position__max")
+        )
+        serializer.save(
+            user=self.request.user, position=0 if last is None else last + 1
+        )
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        """POST {"ids": [...]} — the links in the order they should sit."""
+        ids = request.data.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+            return Response(
+                {"ids": ["Send the link ids as a list, in their new order."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mine = set(
+            ProfileLink.objects.filter(user=request.user, id__in=ids).values_list(
+                "id", flat=True
+            )
+        )
+        unknown = [i for i in ids if i not in mine]
+        if unknown:
+            return Response(
+                {"ids": [f"{len(unknown)} of those aren't your links."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        for index, link_id in enumerate(ids):
+            ProfileLink.objects.filter(user=request.user, id=link_id).update(
+                position=index
+            )
+        return Response({"ids": ids})
+
+
+class RefinementNoteViewSet(viewsets.ModelViewSet):
+    """The developer-mode log: the user's own running list of refinements,
+    complaints and bugs. Scoped to the requesting user like every other
+    personal resource here."""
+
+    serializer_class = RefinementNoteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = RefinementNote.objects.none()
+
+    def get_queryset(self):
+        qs = RefinementNote.objects.filter(user=self.request.user)
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)

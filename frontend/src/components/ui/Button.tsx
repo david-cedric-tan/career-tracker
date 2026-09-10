@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { cx } from '../../lib/format'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success'
 type Size = 'sm' | 'md'
 
 const BASE =
@@ -15,6 +15,10 @@ const VARIANTS: Record<Variant, string> = {
     'bg-surface text-ink border border-line hover:bg-surface-2 hover:border-line-strong',
   ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink',
   danger: 'bg-critical/10 text-critical border border-critical/25 hover:bg-critical/20',
+  // The counterpart to `danger`, same shape: a tinted fill with a matching
+  // border, for the one action in a destructive neighbourhood that puts things
+  // back rather than taking them away.
+  success: 'bg-good/10 text-good border border-good/25 hover:bg-good/20',
 }
 
 const SIZES: Record<Size, string> = {

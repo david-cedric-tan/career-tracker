@@ -478,7 +478,13 @@ class HistoricalBackfillTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_backfill_rejects_a_move_dated_before_the_application_itself(self):
+    def test_backfill_pulls_the_applied_date_back_to_fit_the_moves(self):
+        """A move earlier than the applied date used to be rejected.
+
+        For an application logged retrospectively that was always the normal
+        case — you type it in today, so every real move predates the date the
+        tracker stamped. The moves are the truth; `applied_at` moves to fit.
+        """
         app = Application.objects.create(
             user=self.user, company=self.company, applied_at="2025-06-01"
         )
@@ -487,8 +493,11 @@ class HistoricalBackfillTests(APITestCase):
             {"moves": [{"stage": "online_assessment", "changed_at": "2025-05-01"}]},
             format="json",
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("applied date", response.data["moves"][0])
+        self.assertEqual(response.status_code, 200, response.data)
+        # A week before the assessment, since the assessment isn't the act of
+        # applying — see the FIRST_STAGES rule.
+        self.assertEqual(response.data["applied_at"], "2025-04-24")
+        self.assertTrue(response.data["is_historical"])
 
     def test_backfill_rejects_invalid_stage(self):
         app = Application.objects.create(user=self.user, company=self.company)

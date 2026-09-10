@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import type { CompanyRef, Person } from '../../api/types'
 import { cx, initials, relativeDay } from '../../lib/format'
 import { Icon } from '../ui/Icon'
@@ -8,7 +8,6 @@ import {
   connector,
   growthFor,
   ringLayout,
-  ringRadius,
   type RingDims,
 } from '../../lib/ringLayout'
 
@@ -23,7 +22,39 @@ const STATUS_RING: Record<string, string> = {
 }
 
 /** People with no company still need somewhere to live on the canvas. */
-const UNASSIGNED: CompanyRef = { id: -1, name: 'No company', logo: null }
+const UNASSIGNED: CompanyRef = {
+  id: -1,
+  name: 'No company',
+  logo: null,
+  title: '',
+  started_on: null,
+  ended_on: null,
+  is_current: null,
+  is_past: false,
+}
+
+/**
+ * Whether this person has moved on from *this* ring's company.
+ *
+ * Deliberately takes the hub as well as the person: past-ness lives on the
+ * edge, so the same contact reads as past in the ring they left and current in
+ * the one they joined. A hub that isn't a company (the events view) has no
+ * membership to look up, so nobody is past there.
+ */
+function isPastAt(person: Person, hubId: number): boolean {
+  return person.company_details.some((c) => c.id === hubId && c.is_past)
+}
+
+/** The period to show under a past contact's name, where it's known. */
+function pastLabel(person: Person, hubId: number): string | null {
+  const link = person.company_details.find((c) => c.id === hubId)
+  if (!link || !link.is_past) return null
+  if (link.started_on && link.ended_on) {
+    return `${link.started_on.slice(0, 4)}–${link.ended_on.slice(0, 4)}`
+  }
+  if (link.ended_on) return `until ${link.ended_on.slice(0, 4)}`
+  return 'Past'
+}
 
 /**
  * What sits in the middle of a ring. A company brings a logo; an event brings
@@ -73,9 +104,6 @@ function roleMark(person: Person): RoleMark | null {
   const name = person.relationship_display ?? ''
   return ROLE_MARKS.find((mark) => mark.test.test(name)) ?? null
 }
-
-/** Spokes past this get folded into a "+N" node rather than crowding the ring. */
-const MAX_SPOKES = 9
 
 function buildClusters(people: Person[]): Cluster[] {
   const byCompany = new Map<number, Cluster>()
@@ -164,15 +192,9 @@ function ClusterCard({
   hovered: number | null
   onHover: (id: number | null) => void
 }) {
+  const location = useLocation()
   const { hub, people } = cluster
-  const shown = people.slice(0, MAX_SPOKES)
-  const overflow = people.length - shown.length
-  const spokes = shown.length + (overflow > 0 ? 1 : 0)
-
-  const radius = ringRadius(spokes, GROWTH)
-  const layout = useMemo(() => ringLayout(spokes, radius, DIMS), [spokes, radius])
-
-  const overflowPoint = overflow > 0 ? layout.points[shown.length] : null
+  const layout = useMemo(() => ringLayout(people.length, DIMS, GROWTH), [people.length])
 
   return (
     <section
@@ -186,7 +208,11 @@ function ClusterCard({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13.5px] font-semibold text-ink">
             {hub.href ? (
-              <Link to={hub.href} className="hover:underline">
+              <Link
+                to={hub.href}
+                state={{ from: `${location.pathname}${location.search}` }}
+                className="hover:underline"
+              >
                 {hub.name}
               </Link>
             ) : (
@@ -208,31 +234,33 @@ function ClusterCard({
           className="absolute inset-0 size-full"
           aria-hidden="true"
         >
-          {shown.map((person, index) => {
+          {people.map((person, index) => {
             const active = hovered === person.id
+            const past = isPastAt(person, hub.id)
             const edge = connector(layout.hub, layout.points[index], DIMS)
             return (
               <line
                 key={person.id}
                 {...edge}
-                stroke={active ? 'var(--color-brand)' : 'var(--color-line-strong)'}
+                stroke={
+                  active
+                    ? past
+                      ? 'var(--color-critical)'
+                      : 'var(--color-brand)'
+                    : 'var(--color-line-strong)'
+                }
                 strokeWidth={active ? 2 : 1.25}
+                // Dashed for a tie that no longer holds, so the distinction
+                // survives without hovering and without relying on colour.
+                strokeDasharray={past ? '4 3' : undefined}
               />
             )
           })}
-          {overflowPoint ? (
-            <line
-              {...connector(layout.hub, overflowPoint, DIMS)}
-              stroke="var(--color-line-strong)"
-              strokeWidth={1.25}
-              strokeDasharray="3 3"
-            />
-          ) : null}
         </svg>
 
         {/* Hub */}
         <div
-          className="absolute grid place-items-center rounded-full border border-line bg-surface-2 shadow-sm"
+          className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm"
           style={{
             width: HUB,
             height: HUB,
@@ -245,7 +273,7 @@ function ClusterCard({
         </div>
 
         {/* Spokes */}
-        {shown.map((person, index) => {
+        {people.map((person, index) => {
           const { x, y, labelAbove } = layout.points[index]
           return (
             <PersonNode
@@ -255,25 +283,13 @@ function ClusterCard({
               y={y}
               labelAbove={labelAbove}
               active={hovered === person.id}
+              past={isPastAt(person, hub.id)}
+              periodLabel={pastLabel(person, hub.id)}
               onHover={onHover}
             />
           )
         })}
 
-        {overflowPoint ? (
-          <div
-            className="absolute grid place-items-center rounded-full border border-dashed border-line-strong bg-surface-2 text-[12px] font-semibold text-ink-3"
-            style={{
-              width: NODE,
-              height: NODE,
-              left: overflowPoint.x - NODE / 2,
-              top: overflowPoint.y - NODE / 2,
-            }}
-            title={`${overflow} more at ${hub.name}`}
-          >
-            +{overflow}
-          </div>
-        ) : null}
       </RingFrame>
     </section>
   )
@@ -285,6 +301,8 @@ function PersonNode({
   y,
   labelAbove,
   active,
+  past,
+  periodLabel,
   onHover,
 }: {
   person: Person
@@ -292,6 +310,9 @@ function PersonNode({
   y: number
   labelAbove: boolean
   active: boolean
+  /** True only in the rings this person has left — see `isPastAt`. */
+  past: boolean
+  periodLabel: string | null
   onHover: (id: number | null) => void
 }) {
   const due = person.next_chat_at ? relativeDay(person.next_chat_at) : 'No chat scheduled'
@@ -306,11 +327,15 @@ function PersonNode({
       onBlur={() => onHover(null)}
       title={
         `${person.full_name} — ${person.status_display} · ${due}` +
-        (mark ? ` · ${mark.label}` : '')
+        (mark ? ` · ${mark.label}` : '') +
+        (past ? ' · No longer here' : '')
       }
       className={cx(
-        'absolute flex items-center',
+        'absolute flex items-center transition-opacity',
         labelAbove ? 'flex-col-reverse' : 'flex-col',
+        // Dimmed, but recoverable on hover — a past colleague is still worth
+        // reading, just not competing with the people actually there now.
+        past && (active ? 'opacity-100' : 'opacity-45'),
       )}
       style={{
         left: x - LABEL_W / 2,
@@ -345,7 +370,17 @@ function PersonNode({
         {/* Role pip rather than a second coloured ring: the ring already
             carries status, and stacking two colour languages on one circle
             makes both harder to read than an icon that says which it is. */}
-        {mark ? (
+        {past ? (
+          <span
+            className={cx(
+              'absolute -bottom-0.5 -right-0.5 grid size-[18px] place-items-center',
+              'rounded-full border-2 border-surface bg-critical text-white shadow-sm',
+            )}
+            title={`No longer at this company${periodLabel && periodLabel !== 'Past' ? ` (${periodLabel})` : ''}`}
+          >
+            <Icon name="logout" size={9} strokeWidth={2.4} />
+          </span>
+        ) : mark ? (
           <span
             className={cx(
               'absolute -bottom-0.5 -right-0.5 grid size-[18px] place-items-center',
@@ -361,12 +396,21 @@ function PersonNode({
       {/* Names are always rendered, so identity never depends on hover alone. */}
       <span
         className={cx(
-          'w-full truncate text-center text-[10.5px] leading-tight transition-colors',
+          'w-full text-center leading-tight transition-colors',
           labelAbove ? 'mb-0.5' : 'mt-0.5',
-          active ? 'font-semibold text-ink' : 'text-ink-2',
         )}
       >
-        {person.full_name}
+        <span
+          className={cx(
+            'block truncate text-[10.5px]',
+            active ? 'font-semibold text-ink' : 'text-ink-2',
+          )}
+        >
+          {person.full_name}
+        </span>
+        {periodLabel ? (
+          <span className="block truncate text-[9.5px] text-critical">{periodLabel}</span>
+        ) : null}
       </span>
     </Link>
   )
@@ -378,10 +422,19 @@ function RoleLegend({ people }: { people: Person[] }) {
   const present = ROLE_MARKS.filter((mark) =>
     people.some((person) => roleMark(person) === mark),
   )
-  if (!present.length) return null
+  const anyPast = people.some((person) => person.company_details.some((c) => c.is_past))
+  if (!present.length && !anyPast) return null
 
   return (
     <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+      {anyPast ? (
+        <li className="flex items-center gap-1.5 text-[12px] text-ink-3">
+          <span className="grid size-[18px] place-items-center rounded-full border-2 border-surface bg-critical text-white shadow-sm">
+            <Icon name="logout" size={9} strokeWidth={2.4} />
+          </span>
+          No longer here
+        </li>
+      ) : null}
       {present.map((mark) => (
         <li key={mark.label} className="flex items-center gap-1.5 text-[12px] text-ink-3">
           <span
@@ -407,7 +460,9 @@ function HubMark({ hub, size }: { hub: Hub; size: number }) {
         alt=""
         loading="lazy"
         decoding="async"
-        className="object-contain"
+        // Rounded square, not a circle: a company mark reads as an app icon,
+        // and circles crop wordmarks badly.
+        className="rounded-lg object-contain"
         style={{ width: size, height: size }}
       />
     )

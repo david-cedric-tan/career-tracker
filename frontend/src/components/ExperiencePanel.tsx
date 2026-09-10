@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { companies, experiences } from '../api/resources'
 import type { Company, Experience } from '../api/types'
@@ -40,6 +40,23 @@ export function ExperiencePanel() {
     return experiences.list().then(setRows)
   }
 
+  // Sorted here rather than relying on the order the API sent, because rows
+  // edited in place (see `apply`) would otherwise sit in their old slot until
+  // the next full reload — an experience whose dates you just corrected is
+  // exactly the one you expect to jump to its new place.
+  const ordered = useMemo(() => {
+    if (!rows) return null
+    // ISO `YYYY-MM-DD` compares correctly as a string, so no Date parsing.
+    return [...rows].sort(
+      (a, b) =>
+        b.started_on.localeCompare(a.started_on) ||
+        // Still going beats finished when both began the same day.
+        Number(Boolean(a.ended_on)) - Number(Boolean(b.ended_on)) ||
+        (b.ended_on ?? '').localeCompare(a.ended_on ?? '') ||
+        b.id - a.id,
+    )
+  }, [rows])
+
   /** Keep the open gallery in step with the row it came from. */
   function apply(saved: Experience) {
     setRows((current) =>
@@ -69,9 +86,9 @@ export function ExperiencePanel() {
 
       {error ? (
         <p className="mt-3 text-[13px] text-critical">{error}</p>
-      ) : rows === null ? (
+      ) : ordered === null ? (
         <Loading />
-      ) : rows.length === 0 ? (
+      ) : ordered.length === 0 ? (
         <EmptyState
           icon="building"
           title="No experience yet"
@@ -80,7 +97,7 @@ export function ExperiencePanel() {
         />
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
-          {rows.map((experience) => (
+          {ordered.map((experience) => (
             <li key={experience.id}>
               <ExperienceRow
                 experience={experience}
@@ -501,6 +518,8 @@ function ExperienceFormBody({
           options={companyOptions.map((company) => ({
             id: company.id,
             label: company.name,
+            avatar: company.logo,
+            avatarShape: 'square' as const,
           }))}
           onChange={(id) => set('company', id)}
           onCreate={async (name) => {
@@ -522,7 +541,7 @@ function ExperienceFormBody({
           onChange={(event) => set('title', event.target.value)}
         />
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Started"
             type="date"

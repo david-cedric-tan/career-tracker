@@ -6,6 +6,10 @@ import { formatApiError } from '../api/client'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Button, Spinner } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
+import { useDeveloperMode } from '../hooks/useDeveloperMode'
+import { useGlass, writeGlass } from '../lib/glass'
+import { InfoHint } from '../components/ui/InfoHint'
+import type { CSSProperties } from 'react'
 import { Input } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
@@ -36,27 +40,32 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="App preferences — not your profile." />
+      <PageHeader title="My Settings" />
 
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Appearance is by far the tallest card, so the two short display
+            settings that belong with it move over here — otherwise the right
+            column ran a screen longer than the left. */}
         <div className="flex flex-col gap-4">
           <AppearanceCard />
+          <GlassCard />
         </div>
 
         <div className="flex flex-col gap-4">
           <CelebrationsCard />
+          <DeveloperModeCard />
           <BackupPanel />
 
           <Card>
             <CardHeader
-              title="Bring Your Own AI"
+              title={
+                <span className="flex items-center gap-1.5">
+                  Bring Your Own AI
+                  <InfoHint label="Copy a prompt, hand it to any AI along with your spreadsheet or notes, and save what comes back — a JSON file shaped to match applications, todos, catch-ups, contacts and calendar events here." />
+                </span>
+              }
               subtitle="Have an existing tracker? Get its data into a shape this app can use."
             />
-            <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
-              Copy a prompt, hand it to any AI along with your spreadsheet or notes, and
-              save what comes back — a JSON file shaped to match applications, todos,
-              catch-ups, contacts and calendar events here.
-            </p>
             <Button
               className="mt-4 w-full"
               onClick={() => setImportGuideOpen(true)}
@@ -96,13 +105,6 @@ export function SettingsPage() {
             </Button>
 
             <div className="mt-4 border-t border-line pt-4">
-              <p className="text-[12px] font-medium uppercase tracking-wide text-critical">
-                Danger zone
-              </p>
-              <p className="mt-1 text-[12.5px] text-ink-3">
-                Removes every application, contact, catch-up, todo, event, resume and
-                profile entry. Your account stays.
-              </p>
               <Button
                 variant="danger"
                 className="mt-3 w-full"
@@ -151,6 +153,104 @@ function CelebrationsCard() {
           role="switch"
           aria-checked={enabled}
           onClick={() => choose(!enabled)}
+          className={cx(
+            'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+            enabled ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
+          )}
+        >
+          <span
+            className={cx(
+              'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
+              enabled ? 'translate-x-5' : 'translate-x-0',
+            )}
+          />
+        </button>
+      </label>
+    </Card>
+  )
+}
+
+/** Presets, because the useful settings here are a handful of steps rather
+    than a continuum — and each has a name you can reason about. */
+const GLASS_STOPS = [
+  { value: 0, label: 'Off', hint: 'Solid panels' },
+  { value: 0.35, label: 'Light', hint: 'A hint of depth' },
+  { value: 0.65, label: 'Frosted', hint: 'Clearly translucent' },
+  { value: 1, label: 'Liquid', hint: 'Full glass' },
+]
+
+function GlassCard() {
+  const glass = useGlass()
+
+  return (
+    <Card>
+      <CardHeader
+        title="Liquid glass"
+        subtitle="How much the app's panels behave like frosted glass."
+      />
+
+      <div className="mt-4">
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={Math.round(glass * 100)}
+          onChange={(event) => writeGlass(Number(event.target.value) / 100)}
+          aria-label="Glass intensity"
+          style={{ '--fill': `${Math.round(glass * 100)}%` } as CSSProperties}
+          className="glass-slider w-full"
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {GLASS_STOPS.map((stop) => (
+            <button
+              key={stop.label}
+              type="button"
+              onClick={() => writeGlass(stop.value)}
+              aria-pressed={Math.abs(glass - stop.value) < 0.03}
+              title={stop.hint}
+              className={cx(
+                'rounded-lg px-2.5 py-1 text-[12px] font-medium transition-colors',
+                Math.abs(glass - stop.value) < 0.03
+                  ? 'bg-brand-soft text-brand-strong'
+                  : 'bg-surface-2 text-ink-2 hover:text-ink',
+              )}
+            >
+              {stop.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <p className="mt-3 text-[12px] text-ink-3">
+        Applies to cards, the sidebar and the mobile header. Kept per browser —
+        a heavy blur costs more on some machines than others.
+      </p>
+    </Card>
+  )
+}
+
+function DeveloperModeCard() {
+  const [enabled, setEnabled] = useDeveloperMode()
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="flex items-center gap-1.5">
+            Developer mode
+            <InfoHint label="A per-browser setting, so it stays on the machine you turn it on." />
+          </span>
+        }
+        subtitle="Adds a refinement log to every page — jot down bugs, complaints and improvements as you hit them."
+      />
+      <label className="mt-3 flex items-center justify-between gap-3">
+        <span className="text-[13px] text-ink-2">Show the refinement log</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={() => setEnabled(!enabled)}
           className={cx(
             'relative h-6 w-11 shrink-0 rounded-full transition-colors',
             enabled ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
@@ -242,7 +342,7 @@ function AppearanceCard() {
 
   return (
     <Card>
-      <CardHeader title="Appearance" subtitle="Applies to this browser." />
+      <CardHeader title="Appearance" />
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {THEME_MODES.map((option) => (
@@ -270,12 +370,15 @@ function AppearanceCard() {
         ))}
       </div>
 
-      <p className="mt-2 text-[12px] text-ink-3">
-        {THEME_META[theme].hint}
-        {theme === 'dynamic'
-          ? ` Right now: ${resolvedTheme === 'light' ? 'day' : 'night'}.`
-          : ''}
-      </p>
+      {/* Each button carries its own description as hover text, so repeating
+          the active one here was saying it twice. What can't be hovered for is
+          which way dynamic has currently resolved — that's live state, not a
+          description, so it stays. */}
+      {theme === 'dynamic' ? (
+        <p className="mt-2 text-[12px] text-ink-3">
+          Right now: {resolvedTheme === 'light' ? 'day' : 'night'}.
+        </p>
+      ) : null}
 
       <div className="mt-5 border-t border-line pt-4">
         <p className="mb-2 text-[13px] font-medium text-ink-2">Background</p>
@@ -398,8 +501,21 @@ function AppearanceCard() {
           className="hidden"
         />
 
+        {/* Folded away by default. These two are fiddly, set once and then
+            never touched again — leaving them open meant the card was mostly
+            sliders you weren't using. */}
         {activeWallpaperUrl ? (
-          <div className="mt-4 flex flex-col gap-3">
+          <details className="group/adjust mt-4">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12.5px] font-medium text-brand hover:underline">
+              <Icon
+                name="chevronRight"
+                size={13}
+                className="transition-transform group-open/adjust:rotate-90"
+              />
+              Adjust transparency
+              <InfoHint label="The top of the page keeps a little extra cover whatever you pick, so the heading stays readable." />
+            </summary>
+            <div className="mt-3 flex flex-col gap-3">
             <Slider
               label="Blur"
               value={blur}
@@ -423,13 +539,10 @@ function AppearanceCard() {
             >
               Reset to this background’s defaults
             </button>
-          </div>
+            </div>
+          </details>
         ) : null}
 
-        <p className="mt-3 text-[12px] text-ink-3">
-          The top of the page keeps a little extra cover whatever you pick, so the
-          heading stays readable.
-        </p>
       </div>
 
       <PresetGallery preset={preset} onChange={setPreset} />
@@ -463,10 +576,9 @@ function PresetGallery({
 
   return (
     <div className="mt-5 border-t border-line pt-4">
-      <p className="text-[13px] font-medium text-ink-2">Color theme</p>
-      <p className="mt-1 mb-3 text-[12px] text-ink-3">
-        Overrides light/dark/intern with a named palette. Pick "Default" to go back
-        to the theme above.
+      <p className="mb-3 flex items-center gap-1.5 text-[13px] font-medium text-ink-2">
+        Color theme
+        <InfoHint label={'Overrides light/dark/intern with a named palette. Pick "Default" to go back to the theme above.'} />
       </p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         <button
@@ -530,7 +642,7 @@ function FontPicker({ font, onChange }: { font: FontId; onChange: (id: FontId) =
   return (
     <div className="mt-5 border-t border-line pt-4">
       <p className="text-[13px] font-medium text-ink-2">Font</p>
-      <p className="mt-1 mb-3 text-[12px] text-ink-3">The site-wide typeface, in its own face.</p>
+
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {visible.map((id) => {
           const option = FONTS[id]

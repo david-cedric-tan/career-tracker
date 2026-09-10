@@ -1,26 +1,42 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
+import type { CSSProperties } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../auth/context'
 import { OnboardingTour } from '../OnboardingTour'
 import { ReminderScheduler } from '../ReminderScheduler'
 import { NotificationsPanel } from './NotificationsPanel'
+import { NavEffect } from './NavEffect'
+import { hidesIcon } from '../../lib/navFx'
 import { QuickAccessMenu } from './QuickAccessMenu'
+import {
+  MOTION_PROFILE,
+  readMedia,
+  useMediaSettings,
+  writeMedia,
+  type MediaSettings,
+  type MotionLevel,
+} from '../../lib/mediaSettings'
+import { TooltipLayer } from '../ui/TooltipLayer'
 import { cx, displayName } from '../../lib/format'
 import { Avatar } from '../ui/Avatar'
-import { ClockWeather } from '../ui/ClockWeather'
 import { Icon } from '../ui/Icon'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { Wallpaper } from './Wallpaper'
+import { RefinementLog } from '../devmode/RefinementLog'
+import { useDeveloperMode } from '../../hooks/useDeveloperMode'
 
+/** `fx` is the hover animation for each row — matched to the destination, not
+    just "something moves". See NavEffect. */
 const NAV = [
-  { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
-  { to: '/applications', label: 'Applications', icon: 'briefcase' },
-  { to: '/network', label: 'Network', icon: 'users' },
-  { to: '/catchups', label: 'Catch-ups', icon: 'coffee' },
-  { to: '/todos', label: 'Todos', icon: 'checklist' },
-  { to: '/calendar', label: 'Calendar', icon: 'calendar' },
-  { to: '/resumes', label: 'Resumes', icon: 'file' },
-  { to: '/job-directory', label: 'Job Directory', icon: 'library' },
+  { to: '/', label: 'Dashboard', icon: 'dashboard', end: true, fx: 'grid' as const },
+  { to: '/applications', label: 'Applications', icon: 'briefcase', fx: 'case' as const },
+  { to: '/network', label: 'Network', icon: 'users', fx: 'sonar' as const },
+  { to: '/catchups', label: 'Catch-ups', icon: 'coffee', fx: 'steam' as const },
+  { to: '/todos', label: 'Todos', icon: 'checklist', fx: 'ticks' as const },
+  { to: '/calendar', label: 'Calendar', icon: 'calendar', fx: 'swing' as const },
+  { to: '/resumes', label: 'Resumes', icon: 'file', fx: 'write' as const },
+  { to: '/job-directory', label: 'Job Directory', icon: 'library', fx: 'books' as const },
 ]
 
 /**
@@ -28,14 +44,222 @@ const NAV = [
  * profile, while the wordmark goes home. Splitting them keeps each link's
  * destination guessable from what you clicked.
  */
+export const APP_VERSION = '1.1'
+
+/** The making-of, for the credit screen. */
+const CREDITS = [
+  { label: 'Made in', value: 'Sydney, AU' },
+  { label: 'Built with', value: 'React · Django' },
+  { label: 'Made for', value: 'Resilient Individuals' },
+]
+
+/** Staggered so the sky is never empty and never marches in formation. */
+const NATURE_BIRDS = [
+  { top: '18%', duration: 4.2, delay: 0 },
+  { top: '30%', duration: 5.4, delay: 0.9 },
+  { top: '24%', duration: 3.6, delay: 2.1 },
+  { top: '40%', duration: 6.1, delay: 3.2 },
+]
+
+/** The two moods the about screen can be in. */
+const SCENES = {
+  windy: { label: 'Windy', track: '/windy.mp3', icon: 'cloudSnow' },
+  nature: { label: 'Nature', track: '/nature.mp3', icon: 'sun' },
+} as const
+
+type Scene = keyof typeof SCENES
+
+const SCENE_KEY = 'career-tracker:brand-scene'
+const SCENE_EVENT = 'brand-scene-change'
+
+function readScene(): Scene {
+  try {
+    return localStorage.getItem(SCENE_KEY) === 'nature' ? 'nature' : 'windy'
+  } catch {
+    return 'windy'
+  }
+}
+
+function writeScene(scene: Scene) {
+  try {
+    localStorage.setItem(SCENE_KEY, scene)
+  } catch {
+    // The choice still holds for this visit.
+  }
+  // The sidebar and the about screen are separate trees, so a plain setState
+  // in one can't reach the other — switching mood has to repaint the logo
+  // straight away, not on the next reload.
+  window.dispatchEvent(new Event(SCENE_EVENT))
+}
+
+/** The saved mood, kept in step across every component that draws it. */
+function useBrandScene(): Scene {
+  const [scene, setScene] = useState<Scene>(readScene)
+
+  useEffect(() => {
+    const sync = () => setScene(readScene())
+    window.addEventListener(SCENE_EVENT, sync)
+    // `storage` only fires in *other* tabs, so it covers a second window.
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(SCENE_EVENT, sync)
+      window.removeEventListener('storage', sync)
+    }
+  }, [])
+
+  return scene
+}
+
+/** How long the about screen's soundtrack takes to reach full volume. */
+const CREDIT_FADE_MS = 1600
+
+/** How long the scene and its soundtrack take to wind down on leaving. */
+const SETTLE_MS = 2000
+
+/** How long the brand has to be held before the credit appears. */
+const CREDIT_HOLD_MS = 1800
+
 function Brand({ onNavigate }: { onNavigate?: () => void }) {
+  const [credit, setCredit] = useState(false)
+  // Lifted out of the mark so the wordmark shares the same weather: hovering
+  // the icon should blow across the whole logo, not just the square.
+  const scene = useBrandScene()
+  const media = useMediaSettings()
+  const motion = MOTION_PROFILE[media.motion]
+  const [active, setActive] = useState(false)
+  // Kept mounted for a beat after the pointer leaves, so the scene can drift
+  // out instead of vanishing mid-frame.
+  const [settling, setSettling] = useState(false)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const settleTimer = useRef<number | null>(null)
+  const fade = useRef<number | null>(null)
+  const startTimer = useRef<number | null>(null)
+  const runTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+      if (startTimer.current !== null) window.clearTimeout(startTimer.current)
+      if (runTimer.current !== null) window.clearTimeout(runTimer.current)
+      if (fade.current !== null) window.clearInterval(fade.current)
+      audio.current?.pause()
+      audio.current = null
+    },
+    [],
+  )
+
+  function startWeather() {
+    // `off` means the logo simply doesn't do this.
+    if (media.motion === 'off') return
+    if (startTimer.current !== null) window.clearTimeout(startTimer.current)
+    // The delay is what separates the levels: low makes you rest on the logo,
+    // high fires on contact.
+    if (motion.delayMs > 0) {
+      startTimer.current = window.setTimeout(runWeather, motion.delayMs)
+      return
+    }
+    runWeather()
+  }
+
+  function runWeather() {
+    if (settleTimer.current !== null) window.clearTimeout(settleTimer.current)
+    if (runTimer.current !== null) window.clearTimeout(runTimer.current)
+    if (fade.current !== null) window.clearInterval(fade.current)
+    setSettling(false)
+
+    // Low and medium stop on their own; high runs until the pointer leaves.
+    if (Number.isFinite(motion.runMs)) {
+      runTimer.current = window.setTimeout(stopWeather, motion.runMs)
+    }
+    setActive(true)
+    if (!audio.current) {
+      audio.current = new Audio()
+      audio.current.loop = true
+      audio.current.volume = 0.35
+    }
+    // Re-read every time: the mood may have been switched on the about screen
+    // since the last hover.
+    const track = SCENES[scene].track
+    if (!audio.current.src.endsWith(track)) audio.current.src = track
+    audio.current.volume = media.musicVolume
+    if (media.musicVolume <= 0) return
+    // Rejects when the browser hasn't seen a gesture yet, or the file is
+    // missing. Silence is a fine outcome — the scene carries it either way.
+    void audio.current.play().catch(() => {})
+  }
+
+  function stopWeather() {
+    if (startTimer.current !== null) window.clearTimeout(startTimer.current)
+    if (runTimer.current !== null) window.clearTimeout(runTimer.current)
+    setActive(false)
+    setSettling(true)
+    settleTimer.current = window.setTimeout(() => setSettling(false), SETTLE_MS)
+
+    // Ramp the volume down rather than cutting it: a loop that stops dead is
+    // far more noticeable than one that ebbs away, and the scene is still
+    // drifting out over the same couple of seconds.
+    const element = audio.current
+    if (!element) return
+    if (fade.current !== null) window.clearInterval(fade.current)
+    const steps = SETTLE_MS / 50
+    let step = 0
+    fade.current = window.setInterval(() => {
+      step += 1
+      element.volume = Math.max(0, media.musicVolume * (1 - step / steps))
+      if (step >= steps) {
+        if (fade.current !== null) window.clearInterval(fade.current)
+        fade.current = null
+        element.pause()
+        element.currentTime = 0
+      }
+    }, 50)
+  }
+  const timer = useRef<number | null>(null)
+  // A completed hold has to swallow the click that follows it, or letting go
+  // would navigate away from the thing that just appeared.
+  const fired = useRef(false)
+
+  const cancel = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current)
+      timer.current = null
+    }
+  }, [])
+
+  useEffect(() => cancel, [cancel])
+
+  const hold = {
+    onPointerDown: () => {
+      fired.current = false
+      cancel()
+      timer.current = window.setTimeout(() => {
+        fired.current = true
+        setCredit(true)
+        navigator.vibrate?.(20)
+      }, CREDIT_HOLD_MS)
+    },
+    onPointerUp: cancel,
+    onPointerLeave: cancel,
+    // Any real movement is a drag or a scroll, not a hold.
+    onPointerMove: cancel,
+    onClick: (event: MouseEvent<HTMLAnchorElement>) => {
+      if (fired.current) {
+        event.preventDefault()
+        fired.current = false
+        return
+      }
+      onNavigate?.()
+    },
+  }
+
   return (
     <div className="flex items-center gap-2.5">
-      <Link
-        to="/profile"
-        onClick={onNavigate}
-        aria-label="Your profile"
-        title="Your profile"
+      {credit ? <BrandCredit onClose={() => setCredit(false)} /> : null}
+      <button
+        type="button"
+        onClick={() => setCredit(true)}
+        aria-label="About Career Tracker"
+        title="About Career Tracker"
         className="group/climb shrink-0 rounded-lg transition-opacity hover:opacity-90"
       >
         {/* <span className="relative grid size-8 place-items-center overflow-hidden rounded-lg bg-brand text-white shadow-sm">
@@ -64,24 +288,565 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
             <line x1="12" y1="15" x2="15.5" y2="20" />
           </svg>
         </span> */}
-      <span className="relative grid size-10 place-items-center overflow-hidden rounded-lg bg-brand shadow-sm">
-        <img
-          src="/fuji_1.svg"
-          alt=""
-          className="size-9 object-contain"   /* almost as big as the box */
+      <BrandMark
+          scene={scene}
+          active={active}
+          settling={settling}
+          onEnter={startWeather}
+          onLeave={stopWeather}
         />
-      </span>
-      </Link>
+      </button>
 
       <Link
         to="/"
-        onClick={onNavigate}
+        {...hold}
         title="Dashboard"
-        className="text-lg font-extrabold uppercase tracking-wide text-ink transition-colors hover:text-brand"
+        // `nowrap` + `leading-none`: in the 256px sidebar this wrapped to two
+        // lines, and since the scene fills the link's box, the grass ended up
+        // stranded at the bottom of a tall box with a gap above it. One tight
+        // line means the weather hugs the letters.
+        className="relative select-none overflow-hidden whitespace-nowrap rounded px-1 py-1 text-[17px] font-extrabold uppercase leading-none tracking-normal text-ink transition-colors hover:text-brand"
       >
-        Career Tracker
+        {/* The weather runs across the wordmark too, driven by the icon's
+            hover — the logo is one object, so half of it reacting looked like
+            a bug rather than a flourish. */}
+        {scene === 'nature' ? (
+          <NatureScene active={active} settling={settling} wide />
+        ) : (
+          <BrandClouds active={active} settling={settling} wide />
+        )}
+        <span className={cx('relative z-10 inline-block', active && scene === 'windy' && 'word-blown')}>
+          Career Tracker
+        </span>
       </Link>
     </div>
+  )
+}
+
+/**
+ * The mountain mark, with weather.
+ *
+ * Hovering drifts clouds across the peak and plays a loop of wind. The audio
+ * is created on the first hover rather than at mount — browsers block
+ * autoplay until a user gesture, and building it upfront would mean an
+ * <audio> element on every page load that may never be used.
+ */
+function BrandMark({
+  scene,
+  active,
+  settling,
+  onEnter,
+  onLeave,
+}: {
+  scene: Scene
+  active: boolean
+  settling: boolean
+  onEnter: () => void
+  onLeave: () => void
+}) {
+  return (
+    <span
+      onPointerEnter={onEnter}
+      onPointerLeave={onLeave}
+      onFocus={onEnter}
+      onBlur={onLeave}
+      className={cx(
+        'relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg shadow-sm',
+        'transition-colors duration-700',
+        scene === 'nature' ? 'bg-emerald-600' : 'bg-brand',
+      )}
+    >
+      <img src="/fuji_1.svg" alt="" className="relative z-10 size-9 object-contain" />
+      {scene === 'nature' ? (
+        <NatureScene active={active} settling={settling} />
+      ) : (
+        <BrandClouds active={active} settling={settling} />
+      )}
+    </span>
+  )
+}
+
+/**
+ * Three cloud bands at different speeds and heights, so the drift reads as
+ * weather rather than as one shape sliding past.
+ *
+ * Shared by the sidebar mark and the credit page: same effect, different size,
+ * and the bands are sized in percentages so they scale with whatever box they
+ * are dropped into.
+ */
+function BrandClouds({
+  active,
+  settling = false,
+  thickness = 3,
+  wide = false,
+}: {
+  active: boolean
+  /** Winding down — still moving, on its way out. */
+  settling?: boolean
+  thickness?: number
+  /** Wider boxes (the wordmark) need faster bands to cross in the same time. */
+  wide?: boolean
+}) {
+  const speed = wide ? 0.55 : 1
+  if (!active && !settling) return null
+  return (
+    <span
+      aria-hidden="true"
+      className={cx(
+        'brand-clouds',
+        wide && 'is-wide',
+        active && 'is-windy',
+        settling && 'is-settling',
+      )}
+    >
+      {/* Ice and a lake along the base — the cold half of the weather, and
+          what makes the windy scene a place rather than just moving air. The
+          snowman is square-only: at wordmark height it was a smudge sitting
+          against the letters rather than a figure. */}
+      <span className="ice-shelf" />
+      <span className="ice-lake" />
+      {wide ? null : (
+        <span className="snowman">
+          <span className="snowman-head" />
+        </span>
+      )}
+      <span
+        className="brand-cloud"
+        style={{ top: '22%', height: thickness, animationDuration: `${3.4 * speed}s` }}
+      />
+      <span
+        className="brand-cloud"
+        style={{
+          top: '46%',
+          height: thickness,
+          animationDuration: `${4.6 * speed}s`,
+          animationDelay: '0.6s',
+        }}
+      />
+      <span
+        className="brand-cloud"
+        style={{
+          top: '66%',
+          height: thickness,
+          animationDuration: `${5.8 * speed}s`,
+          animationDelay: '1.2s',
+        }}
+      />
+    </span>
+  )
+}
+
+/**
+ * The easter egg behind a long hold on the brand.
+ *
+ * Long enough that nobody trips it reaching for the dashboard link, short
+ * enough to survive being told it's there.
+ */
+function BrandCredit({ onClose }: { onClose: () => void }) {
+  const scene = useBrandScene()
+  const media = useMediaSettings()
+  const [tuning, setTuning] = useState(false)
+  // Starts playing on open. Getting here took a deliberate click on the logo,
+  // so the soundtrack is the point rather than an ambush — but it eases in
+  // rather than arriving at full volume.
+  const [playing, setPlaying] = useState(true)
+  const audio = useRef<HTMLAudioElement | null>(null)
+  const fade = useRef<number | null>(null)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  // One element reused across scenes: swapping `src` keeps a single audio
+  // object rather than leaving the previous track alive and overlapping.
+  useEffect(() => {
+    const element = audio.current ?? new Audio()
+    audio.current = element
+    element.loop = true
+    if (element.src !== new URL(SCENES[scene].track, location.href).href) {
+      element.src = SCENES[scene].track
+    }
+
+    if (fade.current !== null) window.clearInterval(fade.current)
+
+    if (!playing) {
+      element.pause()
+      return
+    }
+
+    // Ramp up from silence so the loop arrives rather than starts.
+    element.volume = 0
+    if (media.musicVolume <= 0) return
+    void element.play().catch(() => setPlaying(false))
+    const steps = CREDIT_FADE_MS / 50
+    let step = 0
+    fade.current = window.setInterval(() => {
+      step += 1
+      element.volume = Math.min(media.musicVolume, media.musicVolume * (step / steps))
+      if (step >= steps && fade.current !== null) {
+        window.clearInterval(fade.current)
+        fade.current = null
+      }
+    }, 50)
+
+    return () => {
+      if (fade.current !== null) window.clearInterval(fade.current)
+      fade.current = null
+    }
+  }, [scene, playing, media.musicVolume])
+
+  useEffect(
+    () => () => {
+      audio.current?.pause()
+      audio.current = null
+    },
+    [],
+  )
+
+  const nature = scene === 'nature'
+
+  // Rendered into <body> rather than where it sits in the tree. On mobile the
+  // brand lives inside the sticky header, which has its own `backdrop-blur` —
+  // and a parent with `backdrop-filter` becomes the backdrop root for its
+  // descendants, so this overlay's blur had nothing behind it to sample and
+  // simply did nothing.
+  return createPortal(
+    <div
+      role="dialog"
+      aria-label="About Career Tracker"
+      onClick={onClose}
+      className={cx(
+        'brand-credit fixed inset-0 z-[90] grid cursor-pointer place-items-center overflow-y-auto p-6 backdrop-blur-md',
+        nature ? 'bg-emerald-950/55' : 'bg-slate-950/55',
+      )}
+    >
+      {/* Clicks inside shouldn't dismiss — the vinyl and the scene switch both
+          live here, and closing on every tap would make them unusable. */}
+      <div
+        onClick={(event) => event.stopPropagation()}
+        // Capped on mobile so the message and the credits share one column
+        // width — left to shrink-wrap, each block sized to its own longest
+        // line and they never lined up.
+        className="flex w-full max-w-sm cursor-default flex-col items-center gap-5 text-center sm:max-w-none"
+      >
+        <span
+          className={cx(
+            'brand-credit-mark relative grid size-32 place-items-center overflow-hidden rounded-3xl shadow-2xl',
+            nature ? 'bg-emerald-600' : 'bg-brand',
+          )}
+        >
+          {nature ? <NatureScene /> : null}
+          <img src="/fuji_1.svg" alt="" className="relative z-10 size-28 object-contain" />
+          {/* Always moving here — the mark is the subject of this screen, so
+              there's no hover to wait for. */}
+          {nature ? null : <BrandClouds active thickness={5} />}
+        </span>
+
+        <div className="space-y-1.5">
+          <p className="text-[22px] font-bold tracking-tight text-white">Career Tracker</p>
+          <p className="text-[12px] font-medium uppercase tracking-[0.2em] text-white/55">
+            Version {APP_VERSION}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[15px] font-medium text-white/90">
+            Created with love by{' '}
+            <span className="font-semibold text-white">@DavidCedricTan</span>
+          </p>
+          <p className="text-[19px] font-semibold tracking-tight text-white">
+            Keep Trying and Never Give Up.
+          </p>
+        </div>
+
+        <dl className="grid w-full grid-cols-1 gap-x-8 gap-y-2.5 rounded-xl border border-white/15 bg-white/5 px-5 py-3 text-center sm:w-auto sm:grid-cols-3 sm:text-left">
+          {CREDITS.map((row) => (
+            <div key={row.label}>
+              <dt className="text-[10px] uppercase tracking-wide text-white/45">{row.label}</dt>
+              <dd className="text-[12.5px] font-medium text-white/90">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <Vinyl
+          scene={scene}
+          playing={playing}
+          onToggle={() => setPlaying((value) => !value)}
+          onSwitch={writeScene}
+          tuning={tuning}
+          onTune={() => setTuning((value) => !value)}
+        />
+
+        {tuning ? <MediaPanel media={media} /> : null}
+
+        {/* Set apart from the controls above it — at the old spacing it read
+            as part of the settings row rather than as the way out. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className={cx(
+            'mt-9 grid size-12 place-items-center rounded-full text-white/50',
+            'transition-colors hover:bg-white/15 hover:text-white',
+            'focus-visible:bg-white/15 focus-visible:text-white',
+          )}
+        >
+          <Icon name="close" size={22} />
+        </button>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/**
+ * The record. Tapping it starts and stops both the track and the spin; the
+ * label beside it switches scene.
+ *
+ * A vinyl rather than a play button because the spin *is* the state readout —
+ * you can tell from across the room whether it's running, with no icon to
+ * decode.
+ */
+function Vinyl({
+  scene,
+  playing,
+  onToggle,
+  onSwitch,
+  tuning,
+  onTune,
+}: {
+  scene: Scene
+  playing: boolean
+  onToggle: () => void
+  onSwitch: (next: Scene) => void
+  tuning: boolean
+  onTune: () => void
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-pressed={playing}
+          aria-label={playing ? 'Pause the soundtrack' : 'Play the soundtrack'}
+          className={cx('vinyl', playing && 'is-spinning', `vinyl-${scene}`)}
+        >
+          <span className="vinyl-groove" />
+          <span className="vinyl-groove vinyl-groove-2" />
+          <span className="vinyl-label">
+            {/* A tiny scene on the label, so the record says which mood it's
+                playing rather than relying on the text beside it. */}
+            {scene === 'nature' ? (
+              <>
+                <span className="vinyl-sun" />
+                <span className="vinyl-bird" />
+                <span className="vinyl-bird vinyl-bird-2" />
+              </>
+            ) : null}
+            <span className="vinyl-hole" />
+          </span>
+          {/* Counter-spins, so the transport icon stays upright on a turning
+              record — and it's what tells you the disc is a button at all. */}
+          <span className={cx('vinyl-transport', playing && 'is-spinning')}>
+            <Icon name={playing ? 'pause' : 'play'} size={15} />
+          </span>
+        </button>
+
+        <div className="text-left">
+          <p className="text-[13px] font-semibold text-white">
+            {playing ? 'Now playing' : 'Paused'}
+          </p>
+          <p className="text-[11px] text-white/50">
+            {SCENES[scene].label} · tap the record to {playing ? 'pause' : 'play'}
+          </p>
+        </div>
+      </div>
+
+      {/* A two-way switch rather than a cycle button: both moods are visible,
+          so you can see what you'd be switching *to* before committing. */}
+      <div
+        aria-label="Soundtrack and scene"
+        className="inline-flex rounded-full border border-white/20 bg-white/10 p-0.5"
+      >
+        {(Object.keys(SCENES) as Scene[]).map((option) => (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={scene === option}
+            onClick={() => onSwitch(option)}
+            className={cx(
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-medium transition-colors',
+              scene === option
+                ? 'bg-white text-slate-900'
+                : 'text-white/70 hover:text-white',
+            )}
+          >
+            <Icon name={SCENES[option].icon} size={13} />
+            {SCENES[option].label}
+          </button>
+        ))}
+
+        {/* Same pill, narrower slot — it's a mode of this control rather than
+            a separate button, and an icon alone needs no label to explain it
+            once it sits beside two that do. */}
+        <span className="mx-0.5 my-1 w-px bg-white/20" aria-hidden="true" />
+        <button
+          type="button"
+          onClick={onTune}
+          aria-pressed={tuning}
+          aria-label="Sound and motion settings"
+          title="Sound and motion"
+          className={cx(
+            'grid w-8 place-items-center rounded-full transition-colors',
+            tuning ? 'bg-white text-slate-900' : 'text-white/70 hover:text-white',
+          )}
+        >
+          <Icon name="settings" size={13} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The mixing desk behind the vinyl's gear.
+ *
+ * Music and alerts are separate faders on purpose: turning the soundtrack down
+ * to concentrate shouldn't also mute the thing that tells you a deadline is
+ * today.
+ */
+function MediaPanel({ media }: { media: MediaSettings }) {
+  function update(patch: Partial<MediaSettings>) {
+    writeMedia({ ...readMedia(), ...patch })
+  }
+
+  return (
+    <div className="media-panel w-72 rounded-xl border border-white/15 bg-white/10 p-4 text-left backdrop-blur">
+      <Fader
+        label="Music"
+        hint="Logo and this screen"
+        value={media.musicVolume}
+        onChange={(musicVolume) => update({ musicVolume })}
+      />
+      <Fader
+        label="Alerts"
+        hint="Reminder chimes"
+        value={media.alertVolume}
+        onChange={(alertVolume) => update({ alertVolume })}
+        className="mt-3"
+      />
+
+      <p className="mt-4 text-[10px] uppercase tracking-wide text-white/45">Logo animation</p>
+      <div className="mt-1.5 grid grid-cols-4 gap-1">
+        {(Object.keys(MOTION_PROFILE) as MotionLevel[]).map((level) => (
+          <button
+            key={level}
+            type="button"
+            onClick={() => update({ motion: level })}
+            aria-pressed={media.motion === level}
+            title={MOTION_PROFILE[level].hint}
+            className={cx(
+              'rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors',
+              media.motion === level
+                ? 'bg-white text-slate-900'
+                : 'bg-white/10 text-white/70 hover:text-white',
+            )}
+          >
+            {MOTION_PROFILE[level].label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[10.5px] text-white/50">{MOTION_PROFILE[media.motion].hint}</p>
+    </div>
+  )
+}
+
+function Fader({
+  label,
+  hint,
+  value,
+  onChange,
+  className,
+}: {
+  label: string
+  hint: string
+  value: number
+  onChange: (value: number) => void
+  className?: string
+}) {
+  return (
+    <label className={cx('block', className)}>
+      <span className="flex items-baseline justify-between">
+        <span className="text-[12px] font-medium text-white">{label}</span>
+        <span className="text-[10.5px] tabular-nums text-white/50">
+          {value <= 0 ? 'Muted' : `${Math.round(value * 100)}%`}
+        </span>
+      </span>
+      <span className="mb-1 block text-[10px] text-white/45">{hint}</span>
+      {/* The fill is drawn from a custom property rather than a second
+          element: a native range can't be split into "before the thumb" and
+          "after" any other way, and the pseudo-elements inherit it fine. */}
+      <input
+        type="range"
+        min={0}
+        max={100}
+        value={Math.round(value * 100)}
+        onChange={(event) => onChange(Number(event.target.value) / 100)}
+        style={{ '--fill': `${Math.round(value * 100)}%` } as CSSProperties}
+        className="media-fader w-full"
+      />
+    </label>
+  )
+}
+
+/** Sun, drifting birds and a strip of grass — the nature counterpart to the
+    cloud bands. */
+function NatureScene({
+  active = true,
+  settling = false,
+  wide = false,
+}: {
+  active?: boolean
+  settling?: boolean
+  wide?: boolean
+}) {
+  const speed = wide ? 0.6 : 1
+  if (!active && !settling) return null
+  return (
+    <span
+      aria-hidden="true"
+      className={cx(
+        'nature-scene',
+        wide && 'is-wide',
+        active && 'is-out',
+        settling && 'is-settling',
+      )}
+    >
+      <span className="nature-sun" />
+      {NATURE_BIRDS.map((bird, index) => (
+        <span
+          key={index}
+          className="nature-bird"
+          style={{
+            top: bird.top,
+            animationDuration: `${bird.duration * speed}s`,
+            animationDelay: `${bird.delay}s`,
+          }}
+        >
+          <span />
+        </span>
+      ))}
+      <span className="nature-grass" />
+      {/* Flanking the peak rather than in front of it — the mountain is the
+          logo, and trees across its face would read as clutter. */}
+      <span className="nature-tree nature-tree-left" />
+      <span className="nature-tree nature-tree-right" />
+    </span>
   )
 }
 
@@ -96,14 +861,28 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cx(
-              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+              'qa-fx-host flex items-center gap-3 rounded-lg px-3 py-2',
+              'text-sm font-medium transition-colors duration-150',
               isActive
                 ? 'bg-brand-soft text-brand-strong'
-                : 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+                : 'text-ink-2 hover:bg-brand-soft hover:text-brand-strong',
             )
           }
         >
-          <Icon name={item.icon} />
+          {/* The effect layers position themselves against this box, so the
+              sonar rings and shimmer stay icon-sized rather than sweeping the
+              whole row. Hover is detected on the row above it. */}
+          <span className="relative grid size-5 shrink-0 place-items-center">
+            <NavEffect fx={item.fx} />
+            <Icon
+              name={item.icon}
+              className={cx(
+                'relative',
+                item.fx === 'swing' && 'qa-swing nav-delayed',
+                hidesIcon(item.fx) && 'nav-icon-swap',
+              )}
+            />
+          </span>
           {item.label}
         </NavLink>
       ))}
@@ -166,6 +945,8 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
 export function AppLayout() {
   const { user } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [developerMode] = useDeveloperMode()
+  const [logOpen, setLogOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   // Clock/weather is a dashboard-only flourish — every other page just gets
@@ -244,7 +1025,7 @@ export function AppLayout() {
           above <main>, which is a later sibling and would otherwise paint
           over them at the default stacking order. Still under the mobile
           drawer's z-50. */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 shrink-0 flex-col border-r border-line bg-surface px-3 py-4 intern:backdrop-blur-xl lg:flex">
+      <aside className="glass-panel fixed inset-y-0 left-0 z-40 hidden w-64 shrink-0 flex-col border-r border-line bg-surface px-3 py-4 intern:backdrop-blur-xl lg:flex">
         <div className="px-2 pb-5">
           <Brand />
         </div>
@@ -292,7 +1073,7 @@ export function AppLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-line bg-surface/85 px-3 py-2.5 backdrop-blur intern:bg-surface lg:hidden">
+        <header className="glass-panel sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-line bg-surface/85 px-3 py-2.5 backdrop-blur intern:bg-surface lg:hidden">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}
@@ -301,11 +1082,14 @@ export function AppLayout() {
           >
             <Icon name="menu" />
           </button>
-          <Brand />
-          <div className="flex items-center gap-2">
-            {isDashboard ? <ClockWeather compact /> : null}
-            <ThemeToggle />
+          {/* Centred by giving it the space between the two controls and
+              letting it own the middle. The clock is gone from this bar — at
+              this width it squeezed the wordmark, and the phone already shows
+              the time in its own status bar a few pixels above. */}
+          <div className="flex min-w-0 flex-1 justify-center">
+            <Brand />
           </div>
+          <ThemeToggle />
         </header>
 
         {/* Theme toggle, pinned to the viewport's top-right corner. `fixed`
@@ -339,6 +1123,23 @@ export function AppLayout() {
       <QuickAccessMenu hidden={tourOpen} />
       <OnboardingTour open={tourOpen} onClose={() => setTourOpen(false)} mode={tourMode} />
       <ReminderScheduler />
+      <TooltipLayer />
+
+      {developerMode && !tourOpen ? (
+        logOpen ? (
+          <RefinementLog onClose={() => setLogOpen(false)} />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setLogOpen(true)}
+            title="Refinement log"
+            aria-label="Open the refinement log"
+            className="fixed bottom-4 right-4 z-40 grid size-11 place-items-center rounded-full border border-line bg-surface text-ink-2 shadow-lg transition-colors hover:text-brand"
+          >
+            <Icon name="checklist" size={18} />
+          </button>
+        )
+      ) : null}
     </>
   )
 }

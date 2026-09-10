@@ -5,13 +5,7 @@ import { cx, initials } from '../../lib/format'
 import { STAGE_TONE } from '../../lib/tones'
 import { Icon } from '../ui/Icon'
 import { RingFrame } from '../ui/RingFrame'
-import {
-  connector,
-  growthFor,
-  ringLayout,
-  ringRadius,
-  type RingDims,
-} from '../../lib/ringLayout'
+import { connector, growthFor, ringLayout, type RingDims } from '../../lib/ringLayout'
 
 const NO_REGION = 'No region tagged'
 
@@ -23,8 +17,6 @@ const HUB = DIMS.hub
 const NODE = DIMS.node
 const LABEL = DIMS.label
 const LABEL_W = DIMS.labelW
-/** Spokes past this get folded into a "+N" node rather than crowding the ring. */
-const MAX_SPOKES = 8
 /** Past this a ring takes two columns, so a busy group gets the room its
     extra radius needs instead of being shrunk back into a narrow card. */
 const WIDE_CLUSTER = 4
@@ -107,14 +99,7 @@ export function ApplicationBubbleView({
 function ClusterCard({ cluster }: { cluster: Cluster }) {
   const location = useLocation()
   const { label, rows } = cluster
-  const shown = rows.slice(0, MAX_SPOKES)
-  const overflow = rows.length - shown.length
-  const spokes = shown.length + (overflow > 0 ? 1 : 0)
-
-  const radius = ringRadius(spokes, GROWTH)
-  const layout = useMemo(() => ringLayout(spokes, radius, DIMS), [spokes, radius])
-
-  const overflowPoint = overflow > 0 ? layout.points[shown.length] : null
+  const layout = useMemo(() => ringLayout(rows.length, DIMS, GROWTH), [rows.length])
 
   return (
     <section
@@ -139,7 +124,7 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
           className="absolute inset-0 size-full"
           aria-hidden="true"
         >
-          {shown.map((row, index) => (
+          {rows.map((row, index) => (
             <line
               key={row.id}
               {...connector(layout.hub, layout.points[index], DIMS)}
@@ -147,18 +132,10 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
               strokeWidth={1.25}
             />
           ))}
-          {overflowPoint ? (
-            <line
-              {...connector(layout.hub, overflowPoint, DIMS)}
-              stroke="var(--color-line-strong)"
-              strokeWidth={1.25}
-              strokeDasharray="3 3"
-            />
-          ) : null}
         </svg>
 
         <div
-          className="absolute grid place-items-center rounded-full border border-line bg-surface-2 shadow-sm"
+          className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm"
           style={{
             width: HUB,
             height: HUB,
@@ -170,7 +147,7 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
           <Icon name="briefcase" size={22} className="text-ink-3" />
         </div>
 
-        {shown.map((row, index) => {
+        {rows.map((row, index) => {
           const { x, y, labelAbove } = layout.points[index]
           return (
             <Link
@@ -186,10 +163,20 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
               }}
             >
               <span
-                className="grid place-items-center rounded-full bg-brand-soft text-[11px] font-semibold text-brand-strong ring-2 ring-surface transition-all hover:ring-brand"
+                className="grid place-items-center overflow-hidden rounded-xl bg-brand-soft text-[11px] font-semibold text-brand-strong ring-2 ring-surface transition-all hover:ring-brand"
                 style={{ width: NODE, height: NODE }}
               >
-                {initials(row.company_name)}
+                {row.company_logo ? (
+                  <img
+                    src={row.company_logo}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="size-full object-contain p-1"
+                  />
+                ) : (
+                  <span aria-hidden="true">{initials(row.company_name)}</span>
+                )}
               </span>
               <span className="w-full truncate text-center text-[10px] leading-tight text-ink-2">
                 {row.company_name}
@@ -198,20 +185,6 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
           )
         })}
 
-        {overflowPoint ? (
-          <div
-            className="absolute grid place-items-center rounded-full border border-dashed border-line-strong bg-surface-2 text-[11px] font-semibold text-ink-3"
-            style={{
-              width: NODE,
-              height: NODE,
-              left: overflowPoint.x - NODE / 2,
-              top: overflowPoint.y - NODE / 2,
-            }}
-            title={`${overflow} more in ${label}`}
-          >
-            +{overflow}
-          </div>
-        ) : null}
       </RingFrame>
     </section>
   )

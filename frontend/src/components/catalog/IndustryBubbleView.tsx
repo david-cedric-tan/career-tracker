@@ -4,13 +4,7 @@ import type { Company, Industry, JobListing } from '../../api/types'
 import { cx, initials } from '../../lib/format'
 import { Icon } from '../ui/Icon'
 import { RingFrame } from '../ui/RingFrame'
-import {
-  connector,
-  growthFor,
-  ringLayout,
-  ringRadius,
-  type RingDims,
-} from '../../lib/ringLayout'
+import { connector, growthFor, ringLayout, type RingDims } from '../../lib/ringLayout'
 
 const UNASSIGNED: Industry = { id: -1, name: 'No industry set' }
 
@@ -22,8 +16,6 @@ const HUB = DIMS.hub
 const NODE = DIMS.node
 const LABEL = DIMS.label
 const LABEL_W = DIMS.labelW
-/** Spokes past this get folded into a "+N" node rather than crowding the ring. */
-const MAX_SPOKES = 8
 /** Past this an industry takes two columns — a ring with eight companies in
     it needs the room, and shrinking it back into a narrow card was what made
     the busy industries unreadable. */
@@ -126,14 +118,8 @@ export function IndustryBubbleView({
 
 function IndustryCard({ cluster }: { cluster: Cluster }) {
   const { industry, companies, roleNames } = cluster
-  const shown = companies.slice(0, MAX_SPOKES)
-  const overflow = companies.length - shown.length
-  const spokes = shown.length + (overflow > 0 ? 1 : 0)
+  const layout = useMemo(() => ringLayout(companies.length, DIMS, GROWTH), [companies.length])
 
-  const radius = ringRadius(spokes, GROWTH)
-  const layout = useMemo(() => ringLayout(spokes, radius, DIMS), [spokes, radius])
-
-  const overflowPoint = overflow > 0 ? layout.points[shown.length] : null
   const shownRoles = roleNames.slice(0, 6)
   const roleOverflow = roleNames.length - shownRoles.length
 
@@ -162,7 +148,7 @@ function IndustryCard({ cluster }: { cluster: Cluster }) {
           className="absolute inset-0 size-full"
           aria-hidden="true"
         >
-          {shown.map((company, index) => (
+          {companies.map((company, index) => (
             <line
               key={company.id}
               {...connector(layout.hub, layout.points[index], DIMS)}
@@ -170,18 +156,10 @@ function IndustryCard({ cluster }: { cluster: Cluster }) {
               strokeWidth={1.25}
             />
           ))}
-          {overflowPoint ? (
-            <line
-              {...connector(layout.hub, overflowPoint, DIMS)}
-              stroke="var(--color-line-strong)"
-              strokeWidth={1.25}
-              strokeDasharray="3 3"
-            />
-          ) : null}
         </svg>
 
         <div
-          className="absolute grid place-items-center rounded-full border border-line bg-surface-2 shadow-sm"
+          className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm"
           style={{
             width: HUB,
             height: HUB,
@@ -193,7 +171,7 @@ function IndustryCard({ cluster }: { cluster: Cluster }) {
           <Icon name="building" size={22} className="text-ink-3" />
         </div>
 
-        {shown.map((company, index) => {
+        {companies.map((company, index) => {
           const { x, y, labelAbove } = layout.points[index]
           return (
             <Link
@@ -211,7 +189,7 @@ function IndustryCard({ cluster }: { cluster: Cluster }) {
               }}
             >
               <span
-                className="grid place-items-center overflow-hidden rounded-full bg-brand-soft text-[11px] font-semibold text-brand-strong ring-2 ring-surface"
+                className="grid place-items-center overflow-hidden rounded-xl bg-brand-soft text-[11px] font-semibold text-brand-strong ring-2 ring-surface"
                 style={{ width: NODE, height: NODE }}
               >
                 {company.logo ? (
@@ -227,20 +205,6 @@ function IndustryCard({ cluster }: { cluster: Cluster }) {
           )
         })}
 
-        {overflowPoint ? (
-          <div
-            className="absolute grid place-items-center rounded-full border border-dashed border-line-strong bg-surface-2 text-[11px] font-semibold text-ink-3"
-            style={{
-              width: NODE,
-              height: NODE,
-              left: overflowPoint.x - NODE / 2,
-              top: overflowPoint.y - NODE / 2,
-            }}
-            title={`${overflow} more in ${industry.name}`}
-          >
-            +{overflow}
-          </div>
-        ) : null}
       </RingFrame>
 
       {shownRoles.length > 0 ? (

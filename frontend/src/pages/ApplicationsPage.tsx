@@ -3,10 +3,14 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { applications, companies, countries } from '../api/resources'
 import type { Application, ApplicationSummary } from '../api/types'
 import { ApplicationBubbleView } from '../components/applications/ApplicationBubbleView'
+import { DeadlineStat } from '../components/applications/DeadlineStat'
+import { WaitingBadge } from '../components/applications/WaitingBadge'
+import { CompanyMark } from '../components/ui/CompanyMark'
 import { ApplicationForm } from '../components/ApplicationForm'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Badge } from '../components/ui/Badge'
 import { OUTCOME_TONE, stageTone } from '../lib/tones'
+import { outcomeHint, stageHint } from '../lib/badgeHints'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Select } from '../components/ui/Field'
@@ -56,6 +60,7 @@ export function ApplicationsPage() {
   const outcome = params.get('outcome') ?? ''
   const company = params.get('company') ?? ''
   const region = params.get('region') ?? ''
+  const awaiting = params.get('awaiting') ?? ''
   const ordering = params.get('ordering') ?? '-applied_at'
   const view: View = VIEWS.some((v) => v.value === params.get('view'))
     ? (params.get('view') as View)
@@ -75,10 +80,11 @@ export function ApplicationsPage() {
         outcome,
         company,
         region,
+        awaiting,
         ordering,
         search: debouncedSearch,
       }),
-    [stage, outcome, company, region, ordering, debouncedSearch],
+    [stage, outcome, company, region, awaiting, ordering, debouncedSearch],
   )
 
   function setParam(key: string, value: string) {
@@ -88,7 +94,7 @@ export function ApplicationsPage() {
     setParams(next, { replace: true })
   }
 
-  const activeFilters = [stage, outcome, company, region].filter(Boolean).length
+  const activeFilters = [stage, outcome, company, region, awaiting].filter(Boolean).length
   const rows = list.data ?? []
 
   return (
@@ -307,15 +313,30 @@ export function ApplicationsPage() {
                   {rows.map((row) => (
                     <tr key={row.id} className="transition-colors hover:bg-surface-2">
                       <td className="px-4 py-3">
-                        <Link
-                          to={`/applications/${row.id}`}
-                          className="font-medium text-ink hover:text-brand"
-                        >
-                          {row.company_name}
-                        </Link>
-                        {row.resume_label ? (
-                          <p className="mt-0.5 text-[11.5px] text-ink-3">{row.resume_label}</p>
-                        ) : null}
+                        <div className="flex items-center gap-2.5">
+                          {/* The mark links to the company, the name to the
+                              application — two different destinations, so they
+                              stay two separate targets. */}
+                          <Link
+                            to={`/job-directory/companies/${row.company}`}
+                            state={{ from: `${location.pathname}${location.search}` }}
+                            title={`Open ${row.company_name}`}
+                            className="shrink-0 rounded-md transition-opacity hover:opacity-80"
+                          >
+                            <CompanyMark name={row.company_name} logo={row.company_logo} size={32} />
+                          </Link>
+                          <div className="min-w-0">
+                            <Link
+                              to={`/applications/${row.id}`}
+                              className="font-medium text-ink hover:text-brand"
+                            >
+                              {row.company_name}
+                            </Link>
+                            {row.resume_label ? (
+                              <p className="mt-0.5 text-[11.5px] text-ink-3">{row.resume_label}</p>
+                            ) : null}
+                          </div>
+                        </div>
                       </td>
                       <td className="max-w-56 px-4 py-3 text-[13px] text-ink-2">
                         {row.role_names.length ? (
@@ -323,14 +344,38 @@ export function ApplicationsPage() {
                         ) : (
                           <span className="text-ink-3">—</span>
                         )}
+                        <DeadlineStat deadline={row.deadline} className="mt-1.5" />
                       </td>
                       <td className="px-4 py-3">
-                        <Badge tone={stageTone(row.stage)}>{row.stage_display}</Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge tone={OUTCOME_TONE[row.outcome] ?? 'neutral'}>
-                          {row.outcome_display}
+                        <Badge
+                          tone={stageTone(row.stage)}
+                          title={stageHint(row.stage_display, row.stage_updated_at)}
+                        >
+                          {row.stage_display}
                         </Badge>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {/* "In progress" is what waiting *means*, so showing
+                              both just says it twice. Any other outcome still
+                              shows — "Rejected" beside a stale waiting badge
+                              would be worth seeing. */}
+                          {row.awaiting_response ? (
+                            <WaitingBadge since={row.awaiting_since} days={row.awaiting_days} />
+                          ) : null}
+                          {row.awaiting_response && row.outcome === 'in_progress' ? null : (
+                            <Badge
+                              tone={OUTCOME_TONE[row.outcome] ?? 'neutral'}
+                              title={outcomeHint(
+                                row.outcome_display,
+                                row.outcome,
+                                row.outcome_changed_at,
+                              )}
+                            >
+                              {row.outcome_display}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-[13px] tabular-nums text-ink-2">
                         {formatDate(row.applied_at)}
@@ -364,7 +409,8 @@ function MobileRow({ row }: { row: ApplicationSummary | Application }) {
       className="block rounded-card border border-line bg-surface p-3.5 transition-colors hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <CompanyMark name={row.company_name} logo={row.company_logo} size={32} />
+        <div className="min-w-0 flex-1">
           <p className="truncate font-medium text-ink">{row.company_name}</p>
           <p className="mt-0.5 truncate text-[12.5px] text-ink-3">
             {row.role_names.length ? row.role_names.join(', ') : 'No roles linked'}
@@ -373,8 +419,24 @@ function MobileRow({ row }: { row: ApplicationSummary | Application }) {
         <Icon name="chevronRight" size={16} className="mt-1 text-ink-3" />
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <Badge tone={stageTone(row.stage)}>{row.stage_display}</Badge>
-        <Badge tone={OUTCOME_TONE[row.outcome] ?? 'neutral'}>{row.outcome_display}</Badge>
+        <Badge
+          tone={stageTone(row.stage)}
+          title={stageHint(row.stage_display, row.stage_updated_at)}
+        >
+          {row.stage_display}
+        </Badge>
+        {row.awaiting_response ? (
+          <WaitingBadge since={row.awaiting_since} days={row.awaiting_days} />
+        ) : null}
+        {row.awaiting_response && row.outcome === 'in_progress' ? null : (
+          <Badge
+            tone={OUTCOME_TONE[row.outcome] ?? 'neutral'}
+            title={outcomeHint(row.outcome_display, row.outcome, row.outcome_changed_at)}
+          >
+            {row.outcome_display}
+          </Badge>
+        )}
+        <DeadlineStat deadline={row.deadline} />
         <span className="ml-auto text-[11.5px] text-ink-3">{formatDate(row.applied_at)}</span>
       </div>
     </Link>

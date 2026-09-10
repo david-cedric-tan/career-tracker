@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMeasure } from '../../hooks/useMeasure'
-import { cx, formatShortDate } from '../../lib/format'
+import { cx, formatPeriodLabel } from '../../lib/format'
 
 export type Series = { key: string; label: string; color: string; values: number[] }
 
@@ -105,7 +105,7 @@ export function TrendChart({
                   textAnchor={index === 0 ? 'start' : index === lastIndex ? 'end' : 'middle'}
                   className="fill-[var(--color-ink-3)] text-[10px]"
                 >
-                  {formatShortDate(label)}
+                  {formatPeriodLabel(label)}
                 </text>
               ) : null,
             )}
@@ -174,7 +174,7 @@ export function TrendChart({
                 left: Math.min(Math.max(x(hover), 84), Math.max(width - 84, 84)),
               }}
             >
-              <p className="mb-1 font-semibold text-ink">{formatShortDate(labels[hover])}</p>
+              <p className="mb-1 font-semibold text-ink">{formatPeriodLabel(labels[hover])}</p>
               {series.map((entry) => (
                 <p key={entry.key} className="flex items-center gap-1.5 text-ink-2">
                   <span
@@ -239,7 +239,7 @@ export function TrendTable({
         <tbody>
           {labels.map((label, index) => (
             <tr key={label} className="border-b border-line/60 last:border-0">
-              <td className="py-1.5 pr-3 text-ink-2">{formatShortDate(label)}</td>
+              <td className="py-1.5 pr-3 text-ink-2">{formatPeriodLabel(label)}</td>
               {series.map((entry) => (
                 <td
                   key={entry.key}

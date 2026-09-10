@@ -15,6 +15,7 @@ import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Icon } from './ui/Icon'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
+import { ConfirmDelete } from './ui/ConfirmDelete'
 
 type Props = {
   open: boolean
@@ -88,6 +89,7 @@ export function CalendarEventForm(props: Props) {
 
 function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultDate }: Props) {
   const { notify } = useToast()
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [form, setForm] = useState(() => ({
     title: existing?.title ?? '',
     date: existing?.date ?? defaultDate ?? today(),
@@ -218,7 +220,11 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
       footer={
         <>
           {existing ? (
-            <Button variant="danger" onClick={() => void remove()} className="mr-auto">
+            <Button
+              variant="danger"
+              onClick={() => setConfirmDelete(true)}
+              className="mr-auto"
+            >
               Delete
             </Button>
           ) : null}
@@ -283,7 +289,7 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
               onChange={(event) => set('date', event.target.value)}
             />
             {!form.all_day ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Input
                   label="Start"
                   type="time"
@@ -436,6 +442,8 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
                 id: entry.id,
                 label: entry.short_name || entry.name,
                 hint: entry.industry_names[0],
+                avatar: entry.logo,
+                avatarShape: 'square' as const,
               }))}
               placeholder="Info session, site tour…"
             />
@@ -477,6 +485,14 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
           </label>
         ) : null}
       </form>
+
+      <ConfirmDelete
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={remove}
+        kind="event"
+        name={existing?.title ?? null}
+      />
     </Modal>
   )
 }

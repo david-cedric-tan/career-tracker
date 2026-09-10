@@ -758,10 +758,33 @@ function ListingsTab() {
   const [formOpen, setFormOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const list = useResource(() => jobListings.list(), [])
+  const listingChoices = useResource(() => applications.choices(), [])
+  const [search, setSearch] = useState('')
+  const [roleType, setRoleType] = useState('')
+  const [arrangement, setArrangement] = useState('')
+  const [openOnly, setOpenOnly] = useState(false)
 
   // The onboarding tour's "try it" action for this tab — `?new=1` opens the
   // same form the "New job listing" button does.
   useAutoOpenFromQuery('new', () => setFormOpen(true))
+
+  const today = new Date().toISOString().slice(0, 10)
+  const filtered = (list.data ?? []).filter((listing: JobListing) => {
+    const needle = search.trim().toLowerCase()
+    const matchesSearch =
+      !needle ||
+      [
+        listing.role_name,
+        listing.company_name,
+        listing.location_name ?? '',
+        listing.skills,
+      ].some((field) => field.toLowerCase().includes(needle))
+    const matchesRoleType = !roleType || listing.role_type === roleType
+    const matchesArrangement = !arrangement || listing.work_arrangement === arrangement
+    // A listing with no closing date never expires, so it counts as open.
+    const matchesOpen = !openOnly || !listing.closing_at || listing.closing_at >= today
+    return matchesSearch && matchesRoleType && matchesArrangement && matchesOpen
+  })
 
   return (
     <>
@@ -785,6 +808,48 @@ function ListingsTab() {
           </div>
         </div>
 
+        <div className="grid gap-2 px-4 pb-4 sm:grid-cols-[1fr_11rem_11rem_auto] sm:px-5">
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search role, company, location or skill…"
+            aria-label="Search job listings"
+          />
+          <Select
+            value={roleType}
+            onChange={(event) => setRoleType(event.target.value)}
+            aria-label="Filter by role type"
+          >
+            <option value="">All role types</option>
+            {(listingChoices.data?.role_type ?? []).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </Select>
+          <Select
+            value={arrangement}
+            onChange={(event) => setArrangement(event.target.value)}
+            aria-label="Filter by work arrangement"
+          >
+            <option value="">All arrangements</option>
+            {(listingChoices.data?.work_arrangement ?? []).map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </Select>
+          <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-[13px] text-ink-2">
+            <input
+              type="checkbox"
+              checked={openOnly}
+              onChange={(event) => setOpenOnly(event.target.checked)}
+              className="size-4 accent-[var(--color-brand)]"
+            />
+            Still open
+          </label>
+        </div>
+
         {list.initial ? (
           <Loading />
         ) : !list.data?.length ? (
@@ -792,6 +857,12 @@ function ListingsTab() {
             icon="briefcase"
             title="No listings yet"
             description="Listings can also be created straight from the application form."
+          />
+        ) : !filtered.length ? (
+          <EmptyState
+            icon="search"
+            title="Nothing matches those filters"
+            description="Try a different search term or clear the filters."
           />
         ) : (
           <div className="overflow-x-auto border-t border-line">
@@ -806,7 +877,7 @@ function ListingsTab() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {list.data.map((listing: JobListing) => (
+                {filtered.map((listing: JobListing) => (
                   <tr
                     key={listing.id}
                     onClick={() =>
@@ -818,20 +889,24 @@ function ListingsTab() {
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1.5">
+                        {/* The name is plain text — the row itself already
+                            opens the listing, and colouring the whole title as
+                            a link made it hard to read. Only the icon goes out
+                            to the posting. */}
+                        <span className="font-medium text-ink">{listing.role_name}</span>
                         {listing.job_url ? (
                           <a
                             href={listing.job_url}
                             target="_blank"
                             rel="noreferrer noopener"
                             onClick={(event) => event.stopPropagation()}
-                            className="inline-flex items-center gap-1 font-medium text-brand hover:underline"
+                            title="Open the original posting"
+                            aria-label={`Open the original posting for ${listing.role_name}`}
+                            className="inline-flex shrink-0 items-center rounded p-0.5 text-ink-3 transition-colors hover:text-brand"
                           >
-                            {listing.role_name}
                             <Icon name="link" size={13} />
                           </a>
-                        ) : (
-                          <span className="font-medium text-ink">{listing.role_name}</span>
-                        )}
+                        ) : null}
                         {listing.linkedin_application_count > 0 ? (
                           <span
                             title={`${listing.linkedin_application_count} LinkedIn application${listing.linkedin_application_count === 1 ? '' : 's'}`}

@@ -9,8 +9,8 @@ the application's current state.
 from datetime import date, datetime, time, timedelta
 
 from django.conf import settings
-from django.db.models import Count, F, Q
-from django.db.models.functions import TruncMonth, TruncWeek
+from django.db.models import Count, F, Min, Q
+from django.db.models.functions import TruncMonth, TruncQuarter
 from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -34,29 +34,53 @@ from todos.models import Todo, TodoStatus
 
 
 def _period(request):
-    """`week` (default) or `month` — FR-DASH-06."""
-    value = request.query_params.get("period", "week")
-    return value if value in {"week", "month"} else "week"
+    """`all` (default), `month` or `quarter` — FR-DASH-06.
+
+    Weeks were the finest grain here and turned out to be the wrong one: a
+    graduate hiring cycle moves over seasons, so a weekly chart was mostly
+    empty buckets with the occasional spike, which reads as noise rather than
+    as a trend.
+    """
+    value = request.query_params.get("period", "all")
+    return value if value in {"month", "quarter", "all"} else "all"
+
+
+def _window_start(period, today):
+    """The earliest date the dashboard's period covers, or None for all time.
+
+    Matched to what the trend chart draws, so the counters and the chart are
+    always describing the same stretch of time — a summary that silently
+    counted everything while the chart showed a year would make the two
+    disagree for no visible reason.
+    """
+    if period == "all":
+        return None
+    return _step_back_months(today, 24 if period == "quarter" else 12)
+
+
+def _step_back_months(today, months):
+    """The first of the month `months` before `today`."""
+    year, month = today.year, today.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    return today.replace(year=year, month=month, day=1)
 
 
 def _bucket_starts(period, buckets, today):
-    """Every bucket start in range, so empty weeks render as zeros not gaps."""
-    if period == "week":
-        start = today - timedelta(days=today.weekday())
-        return [start - timedelta(weeks=i) for i in range(buckets - 1, -1, -1)]
-
-    starts = []
-    year, month = today.year, today.month
-    for _ in range(buckets):
-        starts.append(today.replace(year=year, month=month, day=1))
-        month -= 1
-        if month == 0:
-            month, year = 12, year - 1
-    return list(reversed(starts))
+    """Every bucket start in range, so empty months render as zeros not gaps."""
+    step = 3 if period == "quarter" else 1
+    if period == "quarter":
+        # Snap to the quarter this date falls in, so buckets line up with
+        # calendar quarters rather than counting back from an arbitrary month.
+        today = today.replace(month=((today.month - 1) // 3) * 3 + 1, day=1)
+    return [
+        _step_back_months(today, index * step) for index in range(buckets - 1, -1, -1)
+    ]
 
 
 def _trunc(period):
-    return TruncWeek if period == "week" else TruncMonth
+    return TruncQuarter if period == "quarter" else TruncMonth
 
 
 def stage_rows():
@@ -82,9 +106,29 @@ def summary(request):
     soon = today + timedelta(days=7)
 
     applications = Application.objects.filter(user=user)
+    period = _period(request)
+    since = _window_start(period, today)
+    if since is not None:
+        applications = applications.filter(applied_at__gte=since)
     stages = stage_rows()
     stage_counts = dict(
         applications.values_list("stage").annotate(n=Count("id")).values_list("stage", "n")
+    )
+    # Rejections keep the stage they got to, so this reads as "where do things
+    # fall over" rather than just how many died overall.
+    stage_rejections = dict(
+        applications.filter(outcome=Outcome.REJECTED)
+        .values_list("stage")
+        .annotate(n=Count("id"))
+        .values_list("stage", "n")
+    )
+    # Where the ball is in their court right now — the same state the
+    # applications list flags amber, counted per stage.
+    stage_awaiting = dict(
+        applications.filter(awaiting_response=True)
+        .values_list("stage")
+        .annotate(n=Count("id"))
+        .values_list("stage", "n")
     )
     outcome_counts = dict(
         applications.values_list("outcome")
@@ -97,6 +141,7 @@ def summary(request):
 
     return Response(
         {
+            "period": period,
             "applications": {
                 "total": applications.count(),
                 "active": applications.filter(outcome=Outcome.IN_PROGRESS).count(),
@@ -115,6 +160,8 @@ def summary(request):
                         "value": value,
                         "label": label,
                         "count": stage_counts.get(value, 0),
+                        "rejected": stage_rejections.get(value, 0),
+                        "awaiting": stage_awaiting.get(value, 0),
                     }
                     for value, label in [(row.key, row.name) for row in stages]
                 ],
@@ -166,9 +213,23 @@ def timeseries(request):
         buckets = 12
 
     today = timezone.localdate()
-    starts = _bucket_starts(period, buckets, today)
+    if period == "all":
+        # "All" has no fixed length — it runs from the first thing logged to
+        # now, and drops to quarters once a monthly chart would be too dense
+        # to read.
+        earliest = Application.objects.filter(user=user).aggregate(
+            first=Min("applied_at")
+        )["first"] or today
+        months = (today.year - earliest.year) * 12 + (today.month - earliest.month) + 1
+        grain = "quarter" if months > 24 else "month"
+        span = months if grain == "month" else (months + 2) // 3
+        buckets = min(max(span, 2), 52)
+    else:
+        grain = period
+
+    starts = _bucket_starts(grain, buckets, today)
     since = starts[0]
-    trunc = _trunc(period)
+    trunc = _trunc(grain)
 
     def zeroed():
         return {start.isoformat(): 0 for start in starts}
@@ -235,6 +296,9 @@ def timeseries(request):
     return Response(
         {
             "period": period,
+            # What the buckets actually are — "all" resolves to one or the
+            # other, and the axis labels need to know which.
+            "grain": grain,
             "buckets": [
                 {
                     "start": start.isoformat(),
@@ -376,38 +440,108 @@ def activity(request):
 def companies(request):
     """FR-DASH-09..11 — every company the user has applied to, with counts.
 
-    Ordered by application count then name, so the panel reads as a ranking
-    rather than an arbitrary list.
+    Ordered so the panel reads as "where do things actually stand": offers
+    first, then live applications ranked by how far through the pipeline they
+    are, then everything closed, and finally the companies that only ever
+    rejected you. Within a band, the most recently applied-to company leads.
+
+    The stage ranking comes from `ApplicationStage.position` rather than a
+    hardcoded list, because stages are user-addable and reorderable — a
+    pipeline someone rearranged should rank by *their* order, not ours.
     """
-    rows = (
-        Application.objects.filter(user=request.user)
-        .values("company_id", "company__name", "company__short_name", "company__logo")
-        .annotate(
-            count=Count("id"),
-            active=Count("id", filter=Q(outcome=Outcome.IN_PROGRESS)),
-            offers=Count(
-                "id", filter=Q(outcome__in=[Outcome.OFFER_RECEIVED, Outcome.ACCEPTED])
-            ),
+    stage_positions = dict(ApplicationStage.objects.values_list("key", "position"))
+
+    # Scoped to the same window as the rest of the dashboard, so the panel
+    # lists the companies behind the numbers beside it rather than every
+    # company you've ever applied to.
+    rows = Application.objects.filter(user=request.user)
+    since = _window_start(_period(request), timezone.localdate())
+    if since is not None:
+        rows = rows.filter(applied_at__gte=since)
+
+    tally = {}
+    for row in rows.values(
+        "company_id",
+        "company__name",
+        "company__short_name",
+        "company__logo",
+        "outcome",
+        "stage",
+        "applied_at",
+    ):
+        entry = tally.get(row["company_id"])
+        if entry is None:
+            entry = {
+                "id": row["company_id"],
+                "name": row["company__name"],
+                "short_name": row["company__short_name"] or "",
+                "logo": row["company__logo"],
+                "count": 0,
+                "active": 0,
+                "offers": 0,
+                "rejected": 0,
+                "stage_rank": -1,
+                "last_applied": None,
+            }
+            tally[row["company_id"]] = entry
+
+        entry["count"] += 1
+        if row["outcome"] == Outcome.IN_PROGRESS:
+            entry["active"] += 1
+            # Only live applications set the stage rank — how far a rejected
+            # application got is history, not where the company stands now.
+            entry["stage_rank"] = max(
+                entry["stage_rank"], stage_positions.get(row["stage"], 0)
+            )
+        elif row["outcome"] in (Outcome.OFFER_RECEIVED, Outcome.ACCEPTED):
+            entry["offers"] += 1
+        elif row["outcome"] == Outcome.REJECTED:
+            entry["rejected"] += 1
+
+        entry["last_applied"] = (
+            row["applied_at"]
+            if entry["last_applied"] is None
+            else max(entry["last_applied"], row["applied_at"])
         )
-        .order_by("-count", "company__name")
+
+    def band(entry):
+        if entry["offers"]:
+            return 0
+        if entry["active"]:
+            return 1
+        # Nothing but rejections goes to the very end; a company that merely
+        # ghosted or that you withdrew from still ranks above that.
+        if entry["rejected"] == entry["count"]:
+            return 3
+        return 2
+
+    ordered = sorted(
+        tally.values(),
+        key=lambda entry: (
+            band(entry),
+            -entry["stage_rank"],
+            -entry["last_applied"].toordinal(),
+            entry["name"].lower(),
+        ),
     )
 
     return Response(
         [
             {
-                "id": row["company_id"],
-                "name": row["company__name"],
-                "short_name": row["company__short_name"] or "",
+                "id": entry["id"],
+                "name": entry["name"],
+                "short_name": entry["short_name"],
                 "logo": (
-                    request.build_absolute_uri(f"{settings.MEDIA_URL}{row['company__logo']}")
-                    if row["company__logo"]
+                    request.build_absolute_uri(f"{settings.MEDIA_URL}{entry['logo']}")
+                    if entry["logo"]
                     else None
                 ),
-                "count": row["count"],
-                "active": row["active"],
-                "offers": row["offers"],
+                "count": entry["count"],
+                "active": entry["active"],
+                "offers": entry["offers"],
+                "rejected": entry["rejected"],
             }
-            for row in rows
+            for entry in ordered
         ]
     )
 
@@ -788,7 +922,7 @@ def mentions(request):
             {
                 "domain": "person_notes",
                 "id": person.id,
-                "title": f"{person.full_name}’s notes",
+                "title": f"{person.full_name}’s profile notes",
                 "snippet": _snippet(person.notes, needle),
                 "url": f"/network/{person.id}",
             }

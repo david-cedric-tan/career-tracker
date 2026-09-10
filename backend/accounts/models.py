@@ -26,6 +26,10 @@ class Profile(models.Model):
     # different purposes (auth vs "how a recruiter reaches me").
     mobile_number = models.CharField(max_length=32, blank=True)
     school_email = models.EmailField(blank=True)
+    # A third address, kept apart from both the login email and the school/work
+    # one: the address you'd actually want a recruiter to use after you
+    # graduate and the university mailbox stops being read.
+    personal_email = models.EmailField(blank=True)
     linkedin_url = models.URLField(max_length=300, blank=True)
 
     # A user's own photo for Intern mode, alongside the built-in presets.
@@ -197,6 +201,10 @@ class Education(models.Model):
     ended_on = models.DateField(null=True, blank=True)
     description = models.TextField(blank=True)
     attachments = GenericRelation(ProfileAttachment)
+    # A small identifying mark — a university crest, an issuer's logo, a club
+    # badge. Separate from `attachments`, which is a gallery of evidence: this
+    # is the one image that represents the entry in a list.
+    icon = models.ImageField(upload_to="section_icons/", null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -232,6 +240,10 @@ class Certification(models.Model):
     credential_url = models.URLField(max_length=300, blank=True)
     description = models.TextField(blank=True)
     attachments = GenericRelation(ProfileAttachment)
+    # A small identifying mark — a university crest, an issuer's logo, a club
+    # badge. Separate from `attachments`, which is a gallery of evidence: this
+    # is the one image that represents the entry in a list.
+    icon = models.ImageField(upload_to="section_icons/", null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -269,6 +281,10 @@ class ExtraCurricular(models.Model):
     ended_on = models.DateField(null=True, blank=True)
     description = models.TextField(blank=True)
     attachments = GenericRelation(ProfileAttachment)
+    # A small identifying mark — a university crest, an issuer's logo, a club
+    # badge. Separate from `attachments`, which is a gallery of evidence: this
+    # is the one image that represents the entry in a list.
+    icon = models.ImageField(upload_to="section_icons/", null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -313,9 +329,16 @@ class ProfileLink(models.Model):
     category = models.CharField(
         max_length=20, choices=LinkCategory.choices, default=LinkCategory.OTHER
     )
+    position = models.PositiveIntegerField(default=0)
+    # An optional favicon-ish mark, so a list of links is scannable by sight
+    # rather than by reading every label.
+    icon = models.ImageField(upload_to="section_icons/", null=True, blank=True)
 
     class Meta:
-        ordering = ["category", "label"]
+        # Hand-arranged order wins; `id` breaks ties so a list that has never
+        # been dragged (every position still 0) stays stable rather than
+        # coming back in whatever order the database feels like.
+        ordering = ["position", "id"]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(category__in=[c[0] for c in LinkCategory.choices]),
@@ -337,9 +360,61 @@ class ProfileAddress(models.Model):
     )
     label = models.CharField(max_length=100)
     address = models.TextField()
+    # Optional, and deliberately not parsed out of `address`: guessing a
+    # country from free text is wrong often enough to be worse than asking.
+    # Drawn from the same catalog the region map uses.
+    country = models.ForeignKey(
+        "applications.Country",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="profile_addresses",
+    )
 
     class Meta:
         ordering = ["label"]
 
     def __str__(self):
         return self.label
+
+
+class RefinementKind(models.TextChoices):
+    IMPROVEMENT = "improvement", "Improvement"
+    BUG = "bug", "Bug"
+    COMPLAINT = "complaint", "Complaint"
+
+
+class RefinementStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    DONE = "done", "Done"
+
+
+class RefinementNote(models.Model):
+    """One logged refinement, complaint or bug the user wants to come back to.
+
+    Kept per user rather than as a global backlog: this is a private notebook
+    for "the thing that annoyed me just now", written in the moment and
+    reviewed later, not a shared issue tracker.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="refinements"
+    )
+    body = models.TextField()
+    kind = models.CharField(
+        max_length=20, choices=RefinementKind.choices, default=RefinementKind.IMPROVEMENT
+    )
+    status = models.CharField(
+        max_length=10, choices=RefinementStatus.choices, default=RefinementStatus.OPEN
+    )
+    # Where the user was when they logged it, so a note like "this is confusing"
+    # is still actionable a fortnight later.
+    page = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return self.body[:60]

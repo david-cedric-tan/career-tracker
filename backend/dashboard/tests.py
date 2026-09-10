@@ -68,7 +68,7 @@ class DashboardApiTests(APITestCase):
         todo.save()
 
         response = self.client.get(
-            "/api/dashboard/timeseries/", {"period": "week", "buckets": 6}
+            "/api/dashboard/timeseries/", {"period": "month", "buckets": 6}
         )
         self.assertEqual(response.status_code, 200)
         buckets = response.data["buckets"]
@@ -79,12 +79,48 @@ class DashboardApiTests(APITestCase):
         self.assertEqual(latest["stage_advances"], 1)
         self.assertEqual(latest["todos_completed"], 1)
 
-    def test_monthly_period_is_supported(self):
+    def test_quarterly_period_is_supported(self):
         response = self.client.get(
-            "/api/dashboard/timeseries/", {"period": "month", "buckets": 3}
+            "/api/dashboard/timeseries/", {"period": "quarter", "buckets": 3}
         )
-        self.assertEqual(response.data["period"], "month")
+        self.assertEqual(response.data["period"], "quarter")
         self.assertEqual(len(response.data["buckets"]), 3)
+
+        # Buckets land on real calendar quarters, three months apart.
+        starts = [row["start"] for row in response.data["buckets"]]
+        self.assertTrue(all(start[5:7] in {"01", "04", "07", "10"} for start in starts), starts)
+
+    def test_an_unknown_period_falls_back_to_all(self):
+        response = self.client.get(
+            "/api/dashboard/timeseries/", {"period": "week", "buckets": 3}
+        )
+        self.assertEqual(response.data["period"], "all")
+
+    def test_all_time_is_the_default(self):
+        self.assertEqual(
+            self.client.get("/api/dashboard/timeseries/").data["period"], "all"
+        )
+        self.assertEqual(self.client.get("/api/dashboard/summary/").data["period"], "all")
+
+    def test_a_period_narrows_the_summary_and_company_panel(self):
+        from datetime import date
+
+        old = Company.objects.create(name="Ancient Co")
+        Application.objects.create(
+            user=self.user, company=old, applied_at=date(2020, 1, 1)
+        )
+        Application.objects.create(user=self.user, company=self.company)
+
+        everything = self.client.get("/api/dashboard/summary/", {"period": "all"}).data
+        recent = self.client.get("/api/dashboard/summary/", {"period": "month"}).data
+        self.assertEqual(everything["applications"]["total"], 2)
+        self.assertEqual(recent["applications"]["total"], 1)
+
+        names = [
+            r["name"]
+            for r in self.client.get("/api/dashboard/companies/", {"period": "month"}).data
+        ]
+        self.assertNotIn("Ancient Co", names)
 
     def test_activity_feed_merges_domains_and_links_back(self):
         app = Application.objects.create(user=self.user, company=self.company)
@@ -136,18 +172,69 @@ class CompanyPanelTests(APITestCase):
         self.ey = Company.objects.create(name="EY")
         self.canva = Company.objects.create(name="Canva")
 
-    def test_ranked_by_count_then_name(self):
-        for _ in range(3):
-            Application.objects.create(user=self.user, company=self.ey)
-        Application.objects.create(user=self.user, company=self.canva)
+    def names(self):
+        return [row["name"] for row in self.client.get("/api/dashboard/companies/").data]
+
+    def test_only_the_requesting_users_companies_are_listed(self):
+        Application.objects.create(user=self.user, company=self.ey)
         Application.objects.create(user=self.other, company=self.canva)
 
         response = self.client.get("/api/dashboard/companies/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            [(row["name"], row["count"]) for row in response.data],
-            [("EY", 3), ("Canva", 1)],  # other user's row excluded
+        self.assertEqual([(row["name"], row["count"]) for row in response.data], [("EY", 1)])
+
+    def test_offers_lead_and_all_rejected_companies_go_last(self):
+        offer = Company.objects.create(name="Offer Co")
+        ghosted = Company.objects.create(name="Ghosted Co")
+        Application.objects.create(
+            user=self.user, company=offer, outcome=Outcome.OFFER_RECEIVED
         )
+        Application.objects.create(user=self.user, company=self.ey)
+        Application.objects.create(
+            user=self.user, company=ghosted, outcome=Outcome.GHOSTED
+        )
+        Application.objects.create(
+            user=self.user, company=self.canva, outcome=Outcome.REJECTED
+        )
+
+        self.assertEqual(self.names(), ["Offer Co", "EY", "Ghosted Co", "Canva"])
+
+    def test_live_applications_rank_by_stage_hierarchy(self):
+        late = Company.objects.create(name="Late")
+        Application.objects.create(user=self.user, company=self.ey, stage=Stage.APPLIED)
+        Application.objects.create(
+            user=self.user, company=late, stage=Stage.FINAL_INTERVIEW
+        )
+
+        self.assertEqual(self.names(), ["Late", "EY"])
+
+    def test_same_stage_breaks_by_most_recent_application(self):
+        Application.objects.create(
+            user=self.user, company=self.ey, applied_at=date(2026, 1, 1)
+        )
+        Application.objects.create(
+            user=self.user, company=self.canva, applied_at=date(2026, 6, 1)
+        )
+
+        self.assertEqual(self.names(), ["Canva", "EY"])
+
+    def test_one_live_application_outranks_a_pile_of_rejections(self):
+        Application.objects.create(
+            user=self.user, company=self.ey, outcome=Outcome.REJECTED
+        )
+        Application.objects.create(user=self.user, company=self.ey)
+        for _ in range(3):
+            Application.objects.create(
+                user=self.user, company=self.canva, outcome=Outcome.REJECTED
+            )
+
+        self.assertEqual(self.names(), ["EY", "Canva"])
+
+    def test_rejected_count_is_exposed(self):
+        Application.objects.create(
+            user=self.user, company=self.ey, outcome=Outcome.REJECTED
+        )
+        self.assertEqual(self.client.get("/api/dashboard/companies/").data[0]["rejected"], 1)
 
     def test_counts_split_active_and_offers(self):
         Application.objects.create(user=self.user, company=self.ey)
@@ -399,7 +486,7 @@ class StageAdvanceWeightingTests(APITestCase):
         log_transition(big_jump, Stage.APPLIED, Outcome.IN_PROGRESS)
 
         response = self.client.get(
-            "/api/dashboard/timeseries/", {"period": "week", "buckets": 4}
+            "/api/dashboard/timeseries/", {"period": "month", "buckets": 4}
         )
         latest = response.data["buckets"][-1]
         # Applied(1) -> Final interview(5) is 4 pipeline steps, not "1 move".
@@ -417,7 +504,7 @@ class StageAdvanceWeightingTests(APITestCase):
         log_transition(app, Stage.FINAL_INTERVIEW, Outcome.IN_PROGRESS)
 
         response = self.client.get(
-            "/api/dashboard/timeseries/", {"period": "week", "buckets": 4}
+            "/api/dashboard/timeseries/", {"period": "month", "buckets": 4}
         )
         latest = response.data["buckets"][-1]
         # +4 for the forward jump, +0 for the backward correction — never negative.
@@ -452,7 +539,7 @@ class MentionsTests(APITestCase):
         response = self.client.get("/api/dashboard/mentions/", {"tag": "AndrewChen"})
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["domain"], "person_notes")
-        self.assertEqual(response.data[0]["title"], "Daniel Johnson’s notes")
+        self.assertEqual(response.data[0]["title"], "Daniel Johnson’s profile notes")
 
     def test_finds_a_mention_in_a_company_note(self):
         from applications.models import CompanyNote

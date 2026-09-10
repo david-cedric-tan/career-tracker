@@ -13,6 +13,8 @@ export type User = {
   custom_wallpaper: string | null
   mobile_number: string
   school_email: string
+  /** Optional third address, separate from the login and school/work ones. */
+  personal_email: string
   linkedin_url: string
   onboarding_completed: boolean
   /** Appearance — blank/null until the user picks something, meaning "use the frontend default". */
@@ -86,11 +88,44 @@ export type Company = {
   region_names: string[]
 }
 
-/** A person's company as embedded in the network payload, for the graph view. */
+/**
+ * A person's company as embedded in the network payload, for the graph view.
+ *
+ * Carries the membership's own facts, not just the company's: someone can be
+ * past at one company and current at another, so `is_past` describes this
+ * pairing rather than the person.
+ */
 export type CompanyRef = {
   id: number
   name: string
   logo: string | null
+  /** Their title at this company, if recorded. */
+  title: string
+  started_on: string | null
+  ended_on: string | null
+  /** Null when never stated — `is_past` is the derived answer to use. */
+  is_current: boolean | null
+  is_past: boolean
+}
+
+/** A person this contact is linked to, as embedded in the person payload. */
+export type PersonConnection = {
+  id: number
+  full_name: string
+  title: string
+  relationship_display: string | null
+  photo: string | null
+  /** Current employers only — past ones aren't shown on the tile. */
+  company_names: string[]
+}
+
+/** Write shape for one "worked here" row. Everything but `company` optional. */
+export type PersonCompanyInput = {
+  company: number
+  title?: string
+  started_on?: string | null
+  ended_on?: string | null
+  is_current?: boolean | null
 }
 
 /* ---------------------------------------------------------------- resumes */
@@ -152,7 +187,13 @@ export type ApplicationListingLink = {
   effective_outcome: string
 }
 
-export type EventType = 'created' | 'stage' | 'outcome' | 'edited'
+export type EventType =
+  | 'created'
+  | 'stage'
+  | 'outcome'
+  | 'edited'
+  | 'waiting_started'
+  | 'waiting_ended'
 
 /** One field that moved in a save, rendered for display by the API. */
 export type FieldChange = {
@@ -185,6 +226,8 @@ export type ApplicationSummary = {
   id: number
   company: number
   company_name: string
+  /** Absolute URL of the company's brand mark, or null. */
+  company_logo: string | null
   stage: string
   stage_display: string
   outcome: string
@@ -197,15 +240,41 @@ export type ApplicationSummary = {
   resume_label: string | null
   listing_count: number
   role_names: string[]
+  /** Whether the employer currently owes the next move. Neither a stage nor
+      an outcome — a temporary state layered on top of both. */
+  awaiting_response: boolean
+  awaiting_since: string | null
+  awaiting_days: number | null
+  /** Logged retrospectively, so its applied date was derived, not observed. */
+  is_historical: boolean
+  /** Soonest closing date across this application's listings, or null. */
+  deadline: string | null
+  /** When the stage last moved, and when the outcome was decided. */
+  stage_updated_at: string | null
+  outcome_changed_at: string | null
   updated_at: string
+}
+
+export type ApplicationDocument = {
+  id: number
+  title: string
+  description: string
+  /** Absolute URL of the stored file. */
+  file: string
+  /** "PDF" | "Word" | … , or null for images. */
+  file_kind: string | null
+  kind: 'image' | 'document'
+  original_name: string
+  position: number
+  created_at: string
 }
 
 export type Application = ApplicationSummary & {
   resume_version: string
-  stage_updated_at: string | null
   notes: string
   listing_links: ApplicationListingLink[]
   event_logs: EventLog[]
+  documents: ApplicationDocument[]
   created_at: string
 }
 
@@ -243,6 +312,11 @@ export type Person = {
   companies: number[]
   company_names: string[]
   company_details: CompanyRef[]
+  /** Write-only: the richer alternative to `companies`, carrying dates. */
+  company_memberships?: PersonCompanyInput[]
+  /** Symmetrical — linking A to B shows on both profiles. */
+  connections: number[]
+  connection_details: PersonConnection[]
   catchup_count: number
   applications?: number[]
   application_labels?: { id: number; label: string }[]
@@ -301,9 +375,18 @@ export type TodoSuggestion = {
 
 /* ------------------------------------------------------------- dashboard */
 
-export type CountBucket = { value: string; label: string; count: number }
+export type CountBucket = {
+  value: string
+  label: string
+  count: number
+  /** Only sent for stage buckets: how many ended in a rejection, and how
+      many are currently waiting on the employer. */
+  rejected?: number
+  awaiting?: number
+}
 
 export type DashboardSummary = {
+  period: 'month' | 'quarter' | 'all'
   applications: {
     total: number
     active: number
@@ -330,7 +413,12 @@ export type TimeseriesBucket = {
   todos_completed: number
 }
 
-export type Timeseries = { period: 'week' | 'month'; buckets: TimeseriesBucket[] }
+export type Timeseries = {
+  period: 'month' | 'quarter' | 'all'
+  /** What the buckets actually are — "all" resolves to one or the other. */
+  grain: 'month' | 'quarter'
+  buckets: TimeseriesBucket[]
+}
 
 export type ActivityItem = {
   domain: 'application' | 'todo' | 'network' | 'catchup'
@@ -414,6 +502,7 @@ export type CompanyStat = {
   count: number
   active: number
   offers: number
+  rejected: number
 }
 
 /* ------------------------------------------------------ dashboard region */
@@ -482,6 +571,7 @@ export type ProfileLink = {
   url: string
   category: string
   category_display: string
+  position: number
 }
 
 export type ProfileAddress = {
@@ -636,4 +726,19 @@ export type Mention = {
   title: string
   snippet: string
   url: string
+}
+
+/* ------------------------------------------------------ developer mode */
+
+export type RefinementNote = {
+  id: number
+  body: string
+  kind: 'improvement' | 'bug' | 'complaint'
+  kind_display: string
+  status: 'open' | 'done'
+  status_display: string
+  /** The route the note was written on, for context when reviewing later. */
+  page: string
+  created_at: string
+  updated_at: string
 }

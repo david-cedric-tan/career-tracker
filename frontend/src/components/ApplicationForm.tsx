@@ -200,7 +200,12 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
           required
           value={form.company}
           error={errors.company}
-          options={companyOptions.map((company) => ({ id: company.id, label: company.name }))}
+          options={companyOptions.map((company) => ({
+            id: company.id,
+            label: company.name,
+            avatar: company.logo,
+            avatarShape: 'square' as const,
+          }))}
           onChange={(id) => {
             set('company', id)
             setListingIds([])

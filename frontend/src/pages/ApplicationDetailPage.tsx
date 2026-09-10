@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { formatApiError } from '../api/client'
 import {
@@ -14,8 +14,10 @@ import { useCelebrate } from '../celebrate/context'
 import { movedForward } from '../lib/pipeline'
 import { ApplicationHistory } from '../components/ApplicationHistory'
 import { PageHeader } from '../components/layout/PageHeader'
+import { Avatar } from '../components/ui/Avatar'
 import { Badge } from '../components/ui/Badge'
 import { OUTCOME_TONE, PRIORITY_TONE, stageTone } from '../lib/tones'
+import { outcomeHint, stageHint } from '../lib/badgeHints'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
@@ -25,6 +27,10 @@ import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
 import { ErrorState, Loading } from '../components/ui/States'
 import { useToast } from '../components/ui/toast-context'
+import { DocumentGallery } from '../components/applications/DocumentGallery'
+import { DeadlineStat } from '../components/applications/DeadlineStat'
+import { GhostingHint, WaitingBadge } from '../components/applications/WaitingBadge'
+import { CompanyMark } from '../components/ui/CompanyMark'
 import { useResource } from '../hooks/useResource'
 import { listPath } from '../lib/listState'
 import { cx, formatDate, formatDateTime, relativeDay, today } from '../lib/format'
@@ -44,6 +50,7 @@ export function ApplicationDetailPage() {
   const [editing, setEditing] = useState(false)
   const [advancing, setAdvancing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [stageDone, setStageDone] = useState<'done' | 'reply' | null>(null)
 
   const choices = useResource(() => applications.choices(), [])
   const detail = useResource(() => applications.get(applicationId), [applicationId])
@@ -64,6 +71,18 @@ export function ApplicationDetailPage() {
 
   const application = detail.data
   const [relatedPeople, relatedTodos] = related.data ?? [[], []]
+
+  async function setWaiting(
+    waiting: boolean,
+    body: { note?: string; changed_at?: string } = {},
+  ) {
+    try {
+      detail.setData(await applications.setWaiting(applicationId, waiting, body))
+      notify(waiting ? 'Marked as waiting for a response.' : 'Waiting cleared.')
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+    }
+  }
 
   async function remove() {
     try {
@@ -87,19 +106,67 @@ export function ApplicationDetailPage() {
 
       <PageHeader
         title={application.company_name}
+        mark={
+          <CompanyMark
+            name={application.company_name}
+            logo={application.company_logo}
+            size={44}
+          />
+        }
         subtitle={
           <span className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={stageTone(application.stage)}>
+            <Badge
+              tone={stageTone(application.stage)}
+              title={stageHint(application.stage_display, application.stage_updated_at)}
+            >
               {application.stage_display}
             </Badge>
-            <Badge tone={OUTCOME_TONE[application.outcome] ?? 'neutral'}>
-              {application.outcome_display}
-            </Badge>
-            <span className="text-ink-3">Applied {formatDate(application.applied_at)}</span>
+            {application.awaiting_response ? (
+              <WaitingBadge
+                since={application.awaiting_since}
+                days={application.awaiting_days}
+              />
+            ) : null}
+            {application.awaiting_response && application.outcome === 'in_progress' ? null : (
+              <Badge
+                tone={OUTCOME_TONE[application.outcome] ?? 'neutral'}
+                title={outcomeHint(
+                  application.outcome_display,
+                  application.outcome,
+                  application.outcome_changed_at,
+                )}
+              >
+                {application.outcome_display}
+              </Badge>
+            )}
+            <DeadlineStat deadline={application.deadline} />
+            <span className="text-ink-3">
+              {/* A historical application's applied date was derived from the
+                  moves you logged, not observed — saying so beats presenting a
+                  guess as a fact. */}
+              {application.is_historical ? 'Logged from ' : 'Applied '}
+              {formatDate(application.applied_at)}
+            </span>
           </span>
         }
         action={
           <>
+            {application.awaiting_response ? (
+              <Button
+                onClick={() => setStageDone('reply')}
+                icon={<Icon name="mail" size={15} />}
+              >
+                Got a reply
+              </Button>
+            ) : (
+              <Button
+                onClick={() => setStageDone('done')}
+                icon={<Icon name="check" size={15} />}
+                title={`Mark ${application.stage_display} done and wait on them`}
+              >
+                Mark stage done
+              </Button>
+            )}
             <Button onClick={() => setAdvancing(true)} icon={<Icon name="arrowRight" size={15} />}>
               Move stage
             </Button>
@@ -185,6 +252,10 @@ export function ApplicationDetailPage() {
               />
               <Detail label="Created" value={formatDate(application.created_at.slice(0, 10))} />
             </dl>
+
+            {application.awaiting_response ? (
+              <GhostingHint days={application.awaiting_days} />
+            ) : null}
 
             {application.notes ? (
               <div className="mt-4 rounded-lg border border-line bg-surface-2 p-3">
@@ -286,12 +357,18 @@ export function ApplicationDetailPage() {
             )}
           </Card>
 
+          <DocumentGallery application={application} onChanged={detail.setData} />
+
           <Card>
             <CardHeader
               title="History"
               subtitle="Append-only — every edit, stage move and outcome change is kept"
             />
-            <ApplicationHistory logs={application.event_logs} />
+            <ApplicationHistory
+              logs={application.event_logs}
+              applicationId={application.id}
+              onChanged={detail.setData}
+            />
           </Card>
         </div>
 
@@ -315,8 +392,10 @@ export function ApplicationDetailPage() {
                   <li key={person.id}>
                     <Link
                       to={`/network/${person.id}`}
-                      className="-mx-2 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-surface-2"
+                      state={{ from: `${location.pathname}${location.search}` }}
+                      className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-surface-2"
                     >
+                      <Avatar name={person.full_name} src={person.photo} size="sm" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13.5px] font-medium text-ink">
                           {person.full_name}
@@ -397,6 +476,15 @@ export function ApplicationDetailPage() {
           </Card>
         </div>
       </div>
+
+      {stageDone ? (
+        <StageDoneModal
+          started={stageDone === 'done'}
+          stageLabel={application.stage_display}
+          onClose={() => setStageDone(null)}
+          onConfirm={(body) => setWaiting(stageDone === 'done', body)}
+        />
+      ) : null}
 
       <ApplicationForm
         open={editing}
@@ -836,6 +924,92 @@ function AdvanceDialog({
           </>
         )}
       </div>
+    </Modal>
+  )
+}
+
+/** `datetime-local` value for "now", in the viewer's own timezone. */
+function nowLocalInput(): string {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return (
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+    `T${pad(now.getHours())}:${pad(now.getMinutes())}`
+  )
+}
+
+/**
+ * When a stage was finished, or when the reply landed.
+ *
+ * Defaults to now but stays editable: an interview on Friday afternoon
+ * routinely gets logged on Monday morning, and the timeline orders entries by
+ * this timestamp — so guessing "now" would file it after things that actually
+ * happened later.
+ */
+function StageDoneModal({
+  started,
+  stageLabel,
+  onClose,
+  onConfirm,
+}: {
+  started: boolean
+  stageLabel: string
+  onClose: () => void
+  onConfirm: (body: { note?: string; changed_at?: string }) => Promise<void>
+}) {
+  const [when, setWhen] = useState(nowLocalInput)
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await onConfirm({ note, changed_at: new Date(when).toISOString() })
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={started ? `Mark ${stageLabel} done?` : 'Got a reply?'}
+      description={
+        started
+          ? 'The stage and outcome stay as they are — this only records that the next move is theirs.'
+          : 'This closes the waiting period. Move the stage separately if things progressed.'
+      }
+      footer={
+        <>
+          <Button type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" form="stage-done-form" variant="primary" loading={saving}>
+            {started ? 'Mark done' : 'Log reply'}
+          </Button>
+        </>
+      }
+    >
+      <form id="stage-done-form" onSubmit={submit} className="flex flex-col gap-4">
+        <Input
+          label={started ? 'Finished at' : 'Reply received at'}
+          type="datetime-local"
+          required
+          autoFocus
+          value={when}
+          onChange={(event) => setWhen(event.target.value)}
+          help="Defaults to now — change it if it happened earlier."
+        />
+        <Input
+          label="Note"
+          placeholder={started ? 'How it went, who you spoke to…' : 'What they said…'}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+      </form>
     </Modal>
   )
 }

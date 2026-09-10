@@ -88,7 +88,7 @@ export function RegisterPage() {
           error={errors.email}
           onChange={update('email')}
         />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input
             label="First name"
             autoComplete="given-name"

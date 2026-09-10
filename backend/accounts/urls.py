@@ -13,6 +13,7 @@ from .views import (
     LogoutView,
     ProfileAddressViewSet,
     ProfileLinkViewSet,
+    RefinementNoteViewSet,
     RegisterView,
     WallpaperView,
 )
@@ -24,6 +25,7 @@ router.register(r"certifications", CertificationViewSet, basename="certification
 router.register(r"extracurriculars", ExtraCurricularViewSet, basename="extracurricular")
 router.register(r"links", ProfileLinkViewSet, basename="profilelink")
 router.register(r"addresses", ProfileAddressViewSet, basename="profileaddress")
+router.register(r"refinements", RefinementNoteViewSet, basename="refinementnote")
 
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),

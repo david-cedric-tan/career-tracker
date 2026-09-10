@@ -8,9 +8,11 @@ import type {
   MetSourceTag,
   NetworkChoices,
   Person,
+  PersonCompanyInput,
   RelationshipTag,
 } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
+import { Avatar } from './ui/Avatar'
 import { Button } from './ui/Button'
 import { ImagePicker } from './ui/ImagePicker'
 import { Combobox, MultiSelect } from './ui/Combobox'
@@ -56,7 +58,34 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
     existing?.relationship ?? null,
   )
   const [sourceId, setSourceId] = useState<number | null>(existing?.source ?? null)
-  const [companyIds, setCompanyIds] = useState<number[]>(() => existing?.companies ?? [])
+  // The memberships *are* the company selection — the multi-select below reads
+  // its ids off them and writes back, so picking a company and dating it are
+  // the same piece of state rather than two that can drift apart.
+  const [memberships, setMemberships] = useState<PersonCompanyInput[]>(() =>
+    (existing?.company_details ?? []).map((company) => ({
+      company: company.id,
+      title: company.title,
+      started_on: company.started_on,
+      ended_on: company.ended_on,
+      is_current: company.is_current,
+    })),
+  )
+  const companyIds = memberships.map((entry) => entry.company)
+
+  /** Keeps the dates already entered for companies that stay selected. */
+  function setCompanyIds(ids: number[]) {
+    setMemberships((previous) =>
+      ids.map((id) => previous.find((entry) => entry.company === id) ?? { company: id }),
+    )
+  }
+
+  function setMembership(companyId: number, patch: Partial<PersonCompanyInput>) {
+    setMemberships((previous) =>
+      previous.map((entry) =>
+        entry.company === companyId ? { ...entry, ...patch } : entry,
+      ),
+    )
+  }
   const [applicationIds, setApplicationIds] = useState<number[]>(
     () => existing?.applications ?? [],
   )
@@ -82,6 +111,10 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
   const [sourceOptions, setSourceOptions] = useState<MetSourceTag[]>([])
   const [companyOptions, setCompanyOptions] = useState<Company[]>([])
   const [applicationOptions, setApplicationOptions] = useState<ApplicationSummary[]>([])
+  const [peopleOptions, setPeopleOptions] = useState<Person[]>([])
+  const [connectionIds, setConnectionIds] = useState<number[]>(
+    () => existing?.connections ?? [],
+  )
 
   useEffect(() => {
     void Promise.all([
@@ -89,11 +122,13 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
       applications.list(),
       relationships.list(),
       metSources.list(),
-    ]).then(([companyRows, applicationRows, relationshipRows, sourceRows]) => {
+      people.list(),
+    ]).then(([companyRows, applicationRows, relationshipRows, sourceRows, peopleRows]) => {
       setCompanyOptions(companyRows)
       setApplicationOptions(applicationRows)
       setRelationshipOptions(relationshipRows)
       setSourceOptions(sourceRows)
+      setPeopleOptions(peopleRows)
     })
   }, [])
 
@@ -125,7 +160,8 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
       last_meeting_at: form.last_meeting_at || null,
       next_chat_at: form.next_chat_at || null,
       cadence_months: form.cadence_months ? Number(form.cadence_months) : null,
-      companies: companyIds,
+      company_memberships: memberships,
+      connections: connectionIds,
       applications: applicationIds,
       contacts: contacts.filter((contact) => contact.value.trim()),
     }
@@ -378,10 +414,116 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
         <div className="grid gap-4 sm:grid-cols-2">
           <MultiSelect
             label="Companies"
-            options={companyOptions.map((company) => ({ id: company.id, label: company.name }))}
+            options={companyOptions.map((company) => ({
+              id: company.id,
+              label: company.name,
+              avatar: company.logo,
+              avatarShape: 'square' as const,
+            }))}
             value={companyIds}
             onChange={setCompanyIds}
             emptyText="No companies yet."
+          />
+        </div>
+
+        {memberships.length ? (
+          <div className="rounded-lg border border-line bg-surface-2 p-3">
+            <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+              Where they work, or worked
+            </p>
+            {/* All optional. Left blank, a company just reads as "current" —
+                which is how every contact added before this existed behaves. */}
+            <ul className="flex flex-col gap-2.5">
+              {memberships.map((entry) => {
+                const company = companyOptions.find((option) => option.id === entry.company)
+                const stillHere = entry.is_current !== false && !entry.ended_on
+                return (
+                  <li key={entry.company} className="rounded-lg border border-line bg-surface p-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Avatar
+                          name={company?.name ?? 'Company'}
+                          src={company?.logo}
+                          size="xs"
+                          shape="square"
+                        />
+                        <span className="truncate text-[13px] font-medium text-ink">
+                          {company?.name ?? 'Company'}
+                        </span>
+                      </span>
+                      <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11.5px] text-ink-2">
+                        <input
+                          type="checkbox"
+                          checked={stillHere}
+                          onChange={(event) =>
+                            setMembership(entry.company, {
+                              is_current: event.target.checked,
+                              // Ticking "still here" clears a leaving date that
+                              // would otherwise override it.
+                              ended_on: event.target.checked ? null : entry.ended_on,
+                            })
+                          }
+                          className="size-3.5 accent-[var(--color-brand)]"
+                        />
+                        Still here
+                      </label>
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <Input
+                        aria-label="Their title here"
+                        placeholder="Title (optional)"
+                        value={entry.title ?? ''}
+                        onChange={(event) =>
+                          setMembership(entry.company, { title: event.target.value })
+                        }
+                      />
+                      <Input
+                        type="date"
+                        aria-label="Started"
+                        value={entry.started_on ?? ''}
+                        onChange={(event) =>
+                          setMembership(entry.company, { started_on: event.target.value || null })
+                        }
+                      />
+                      <Input
+                        type="date"
+                        aria-label="Left"
+                        value={entry.ended_on ?? ''}
+                        onChange={(event) =>
+                          setMembership(entry.company, {
+                            ended_on: event.target.value || null,
+                            // A leaving date and "still here" contradict; the
+                            // date the user just typed is the newer intent.
+                            is_current: event.target.value ? false : entry.is_current,
+                          })
+                        }
+                      />
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <MultiSelect
+            label="Connected to"
+            options={peopleOptions
+              // Nobody is connected to themselves, so the person being edited
+              // is never offered as an option.
+              .filter((option) => option.id !== existing?.id)
+              // Face and name only — the roles here run long enough to crowd
+              // the name out of the row, and the photo identifies someone
+              // faster than their job title does anyway.
+              .map((option) => ({
+                id: option.id,
+                label: option.full_name,
+                avatar: option.photo,
+              }))}
+            value={connectionIds}
+            onChange={setConnectionIds}
+            emptyText="No other contacts yet."
           />
           <MultiSelect
             label="Relevant applications"
@@ -397,7 +539,7 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
         </div>
 
         <MentionTextarea
-          label="Notes"
+          label="Profile notes"
           value={form.notes}
           error={errors.notes}
           onChange={(value) => set('notes', value)}

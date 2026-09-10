@@ -1,5 +1,7 @@
+from django.utils import timezone
 from rest_framework import serializers
 
+from applications.models import Company
 from config.images import validate_image
 
 from .models import (
@@ -8,6 +10,7 @@ from .models import (
     ContactMethod,
     MetSourceTag,
     Person,
+    PersonCompany,
     PersonStatus,
     RelationshipTag,
 )
@@ -49,6 +52,32 @@ class NestedContactMethodSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "channel_display"]
 
 
+class NestedPersonCompanySerializer(serializers.ModelSerializer):
+    """One "worked here" row, written inline as part of a Person.
+
+    Everything but `company` is optional — most contacts are added with no
+    dates, and that has to keep working.
+    """
+
+    company = serializers.PrimaryKeyRelatedField(queryset=Company.objects.all())
+
+    class Meta:
+        model = PersonCompany
+        fields = ["company", "title", "started_on", "ended_on", "is_current"]
+
+    def validate(self, attrs):
+        started, ended = attrs.get("started_on"), attrs.get("ended_on")
+        if started and ended and ended < started:
+            raise serializers.ValidationError(
+                {"ended_on": "They can't have left before they started."}
+            )
+        if attrs.get("is_current") and ended and ended <= timezone.localdate():
+            raise serializers.ValidationError(
+                {"is_current": "This says they still work here, but an end date has passed."}
+            )
+        return attrs
+
+
 class PersonSerializer(serializers.ModelSerializer):
     contact_methods = NestedContactMethodSerializer(many=True, read_only=True)
     # Accepted on write so the SPA can save a person and their channels in one
@@ -60,8 +89,21 @@ class PersonSerializer(serializers.ModelSerializer):
         source="relationship.name", read_only=True, default=None
     )
     source_display = serializers.CharField(source="source.name", read_only=True, default=None)
+    # Declared explicitly because DRF makes an M2M with a `through` model
+    # read-only by default — without this the existing "just send company ids"
+    # write path would be silently ignored rather than failing loudly.
+    companies = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Company.objects.all(), required=False
+    )
     company_names = serializers.SerializerMethodField()
     company_details = serializers.SerializerMethodField()
+    connection_details = serializers.SerializerMethodField()
+    # The plain `companies` id list still works and is what the quick-add path
+    # sends. This is the richer alternative: when present it wins, carrying
+    # each membership's dates with it.
+    company_memberships = NestedPersonCompanySerializer(
+        many=True, write_only=True, required=False
+    )
     application_labels = serializers.SerializerMethodField()
     preferred_contact_display = serializers.SerializerMethodField()
     photo = serializers.SerializerMethodField()
@@ -78,6 +120,8 @@ class PersonSerializer(serializers.ModelSerializer):
             "relationship", "relationship_display",
             "source", "source_display",
             "companies", "company_names", "company_details",
+            "company_memberships",
+            "connections", "connection_details",
             "applications", "application_labels",
             "last_meeting_at",
             "next_chat_at",
@@ -92,7 +136,8 @@ class PersonSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id", "status_display", "relationship_display", "source_display",
-            "company_names", "company_details", "application_labels",
+            "company_names", "company_details", "connection_details",
+            "application_labels",
             "contact_methods", "preferred_contact_display", "photo",
             "catchup_count", "created_at", "updated_at",
         ]
@@ -126,21 +171,76 @@ class PersonSerializer(serializers.ModelSerializer):
         return [c.name for c in obj.companies.all()]
 
     def get_company_details(self, obj):
-        """Name + logo per company, so the bubble view can render hubs without
-        a second round-trip to the catalog."""
+        """Name + logo per company, plus the membership's own dates, so the
+        bubble view can render hubs — and tell current from past — without a
+        second round-trip to the catalog.
+
+        Read off `company_links` rather than `companies`: past-ness lives on
+        the edge, not the person, so the same contact can be current at one
+        company and gone from another.
+        """
         request = self.context.get("request")
         return [
             {
-                "id": c.id,
-                "name": c.name,
+                "id": link.company.id,
+                "name": link.company.name,
                 "logo": (
-                    request.build_absolute_uri(c.logo.url)
-                    if c.logo and request
-                    else (c.logo.url if c.logo else None)
+                    request.build_absolute_uri(link.company.logo.url)
+                    if link.company.logo and request
+                    else (link.company.logo.url if link.company.logo else None)
+                ),
+                "title": link.title,
+                "started_on": link.started_on,
+                "ended_on": link.ended_on,
+                "is_current": link.is_current,
+                "is_past": link.is_past,
+            }
+            for link in obj.company_links.all()
+        ]
+
+    def get_connection_details(self, obj):
+        """The people this contact is linked to, with enough to render a row:
+        who they are, their face, and what they do."""
+        request = self.context.get("request")
+        return [
+            {
+                "id": other.id,
+                "full_name": other.full_name,
+                "title": other.title,
+                "relationship_display": other.relationship.name if other.relationship else None,
+                # Where they are now, for the tile's hover — past employers are
+                # history the card has no room to explain.
+                "company_names": [
+                    link.company.name
+                    for link in other.company_links.all()
+                    if not link.is_past
+                ],
+                "photo": (
+                    request.build_absolute_uri(other.photo.url)
+                    if other.photo and request
+                    else (other.photo.url if other.photo else None)
                 ),
             }
-            for c in obj.companies.all()
+            for other in obj.connections.all()
         ]
+
+    def validate_connections(self, people):
+        """Only your own contacts, and never yourself.
+
+        Without the ownership check a valid person id from another account
+        could be linked in by guessing it, which would then render that
+        stranger's name and photo on this profile.
+        """
+        request = self.context.get("request")
+        if request is not None:
+            outsiders = [p for p in people if p.user_id != request.user.id]
+            if outsiders:
+                raise serializers.ValidationError(
+                    "Those aren't people in your network."
+                )
+        if self.instance is not None and any(p.pk == self.instance.pk for p in people):
+            raise serializers.ValidationError("A contact can't be connected to themselves.")
+        return people
 
     def get_application_labels(self, obj):
         return [
@@ -187,17 +287,47 @@ class PersonSerializer(serializers.ModelSerializer):
             seen.add(key)
             ContactMethod.objects.create(person=person, **entry)
 
+    def _sync_company_memberships(self, person, memberships):
+        """Replace the person's company rows with exactly what was sent.
+
+        Existing rows are updated in place rather than deleted and recreated,
+        so `created_at` (and any row id a client is holding) survives an edit
+        that only moved a date.
+        """
+        seen = set()
+        for entry in memberships:
+            company = entry["company"]
+            PersonCompany.objects.update_or_create(
+                person=person,
+                company=company,
+                defaults={
+                    "title": entry.get("title", ""),
+                    "started_on": entry.get("started_on"),
+                    "ended_on": entry.get("ended_on"),
+                    "is_current": entry.get("is_current"),
+                },
+            )
+            seen.add(company.pk)
+        person.company_links.exclude(company_id__in=seen).delete()
+
     def create(self, validated_data):
         contacts = validated_data.pop("contacts", None)
         companies = validated_data.pop("companies", [])
+        memberships = validated_data.pop("company_memberships", None)
+        connections = validated_data.pop("connections", [])
         applications = validated_data.pop("applications", [])
 
         person = Person(**validated_data)
         person.apply_cadence_default()  # FR-NET-10
         person.save()
 
-        person.companies.set(companies)
+        # The richer shape wins when both arrive — it carries the dates.
+        if memberships is not None:
+            self._sync_company_memberships(person, memberships)
+        else:
+            person.companies.set(companies)
         person.applications.set(applications)
+        person.connections.set(connections)
         if contacts is not None:
             self._sync_contacts(person, contacts)
         return person
@@ -205,6 +335,8 @@ class PersonSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         contacts = validated_data.pop("contacts", None)
         companies = validated_data.pop("companies", None)
+        memberships = validated_data.pop("company_memberships", None)
+        connections = validated_data.pop("connections", None)
         applications = validated_data.pop("applications", None)
 
         # Switching a contact to "never" should stop the reminder they already
@@ -231,10 +363,20 @@ class PersonSerializer(serializers.ModelSerializer):
         instance.apply_cadence_default()
         instance.save()
 
-        if companies is not None:
-            instance.companies.set(companies)
+        if memberships is not None:
+            self._sync_company_memberships(instance, memberships)
+        elif companies is not None:
+            # Plain id list: keep whatever dates the surviving rows already had
+            # rather than wiping them, so a quick edit elsewhere in the form
+            # can't silently erase someone's history.
+            instance.companies.add(*[c for c in companies])
+            instance.company_links.exclude(
+                company_id__in=[c.pk for c in companies]
+            ).delete()
         if applications is not None:
             instance.applications.set(applications)
+        if connections is not None:
+            instance.connections.set(connections)
         if contacts is not None:
             self._sync_contacts(instance, contacts)
         return instance

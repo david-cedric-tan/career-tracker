@@ -39,8 +39,8 @@ export type WallpaperMeta = {
 
 export const WALLPAPER_META: Record<Wallpaper, WallpaperMeta> = {
   pwc: {
-    label: 'PwC lock screen',
-    description: 'The house gradient — white into rose and orange.',
+    label: 'Ember Dawn',
+    description: 'White warming into rose and orange.',
     url: pwcLockscreen,
     blur: 30,
     opacity: 82,

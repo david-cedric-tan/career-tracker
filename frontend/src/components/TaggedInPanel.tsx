@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { dashboard } from '../api/resources'
 import { Card, CardHeader } from './ui/Card'
 import { Icon } from './ui/Icon'
@@ -23,6 +23,7 @@ const DOMAIN_ICON: Record<string, string> = {
  */
 export function TaggedInPanel({ tag }: { tag: string }) {
   const mentions = useResource(() => dashboard.mentions(tag), [tag])
+  const location = useLocation()
 
   if (mentions.initial) {
     return (
@@ -46,6 +47,10 @@ export function TaggedInPanel({ tag }: { tag: string }) {
           <li key={`${mention.domain}-${mention.id}`}>
             <Link
               to={mention.url}
+              // Follows a mention from wherever this panel is embedded, so the
+              // destination's back button returns here rather than to whatever
+              // list that page defaults to.
+              state={{ from: `${location.pathname}${location.search}` }}
               className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-surface-2"
             >
               <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-surface-2 text-ink-3">

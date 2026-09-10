@@ -5,6 +5,7 @@ import { cx } from '../lib/format'
 import { downloadFile } from '../lib/download'
 import { Button, Spinner } from './ui/Button'
 import { Card, CardHeader } from './ui/Card'
+import { InfoHint } from './ui/InfoHint'
 import { Icon } from './ui/Icon'
 import { Modal } from './ui/Modal'
 import { useResource } from '../hooks/useResource'
@@ -125,7 +126,12 @@ export function BackupPanel() {
     <Card>
       <CardHeader
         title="Backup & Restore"
-        subtitle="Export everything, or rebuild this account from a file."
+        subtitle={
+          <span className="flex items-center gap-1.5">
+            Export everything, or rebuild this account from a file.
+            <InfoHint label="All three import back into this app. The .zip is the complete disaster-recovery copy — data plus every resume, photo and logo it references; the .xlsx/.json are data only, with just each file's name so you know what to re-attach." />
+          </span>
+        }
       />
 
       <div className="mt-3">
@@ -145,29 +151,10 @@ export function BackupPanel() {
         ) : null}
       </div>
 
-      {/* Two even rows rather than a ragged wrap: the full export and the
-          restore that reads it sit together on top, the two data-only
-          formats pair off underneath. */}
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => void download('zip')}
-          disabled={busy}
-          icon={<Icon name="library" size={14} />}
-        >
-          Full Data + Resources (.zip)
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => inputRef.current?.click()}
-          disabled={busy}
-          icon={busy ? undefined : <Icon name="logout" size={14} className="rotate-180" />}
-          loading={busy}
-        >
-          Restore…
-        </Button>
+        {/* Everyday exports first — these are what you reach for week to week.
+            The full archive and the restore that reads it are the rarer, more
+            consequential pair, so they sit together underneath. */}
         <Button
           size="sm"
           onClick={() => void download('xlsx')}
@@ -184,14 +171,26 @@ export function BackupPanel() {
         >
           Data only (.json)
         </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => void download('zip')}
+          disabled={busy}
+          icon={<Icon name="library" size={14} />}
+        >
+          Full Data + Resources (.zip)
+        </Button>
+        <Button
+          size="sm"
+          variant="success"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          icon={busy ? undefined : <Icon name="logout" size={14} className="rotate-180" />}
+          loading={busy}
+        >
+          Restore…
+        </Button>
       </div>
-
-      <p className="mt-2 text-[11.5px] text-ink-3">
-        All three import back into this app. The .zip is the complete
-        disaster-recovery copy — data plus every resume, photo and logo it
-        references; the .xlsx/.json are data only, with just each file's name
-        so you know what to re-attach.
-      </p>
 
       <input
         ref={inputRef}
