@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { cx } from '../../lib/format'
 import { Icon } from '../ui/Icon'
+import { useDeveloperMode } from '../../hooks/useDeveloperMode'
 
 /** `fx` names the hover animation themed to what each shortcut creates —
     see the `qa-*` block in index.css. */
@@ -10,8 +11,12 @@ const SHORTCUTS = [
   { key: 'lead', label: 'New lead', icon: 'users', fx: 'sonar', to: '/network?new=1' },
   { key: 'coffee', label: 'Coffee chat', icon: 'coffee', fx: 'steam', to: '/catchups?new=1' },
   { key: 'event', label: 'Add event', icon: 'calendar', fx: 'swing', to: '/calendar?new=1' },
-  { key: 'resume', label: 'Add resume', icon: 'file', fx: 'write', to: '/resumes?new=1' },
+  { key: 'resume', label: 'Add resume', icon: 'file', fx: 'write', to: '/files?tab=resumes&new=1' },
+  { key: 'file', label: 'Add file', icon: 'paperclip', fx: 'write', to: '/files?new=1' },
   { key: 'listing', label: 'Add job listing', icon: 'library', fx: 'shimmer', to: '/job-directory?tab=listings&new=1' },
+  // Not a create-form: opens the refinement log window in place. Only
+  // offered while developer mode is on (see `useDeveloperMode`).
+  { key: 'refine', label: 'Talk to a Dev', icon: 'devChat', fx: 'sonar', to: '' },
 ] as const
 
 type ShortcutFx = (typeof SHORTCUTS)[number]['fx']
@@ -52,10 +57,22 @@ function ShortcutEffect({ fx }: { fx: ShortcutFx }) {
  * that create-form via `useAutoOpenFromQuery` — the same mechanism the
  * onboarding tour's "try it" actions use, so no new plumbing per page.
  */
-export function QuickAccessMenu({ hidden = false }: { hidden?: boolean }) {
+export function QuickAccessMenu({
+  hidden = false,
+  onOpenChange,
+  onOpenRefinementLog,
+}: {
+  hidden?: boolean
+  onOpenRefinementLog?: () => void
+  /** Fires when the menu opens or closes, so whatever else lives in this
+      corner can step aside while the shortcuts are fanned out. */
+  onOpenChange?: (open: boolean) => void
+}) {
   const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState(false)
   const navigate = useNavigate()
+  const [developerMode] = useDeveloperMode()
+  const shortcuts = developerMode ? SHORTCUTS : SHORTCUTS.filter((item) => item.key !== 'refine')
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -74,6 +91,10 @@ export function QuickAccessMenu({ hidden = false }: { hidden?: boolean }) {
     }
   }, [open])
 
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
+
   if (hidden) return null
 
   return (
@@ -91,14 +112,14 @@ export function QuickAccessMenu({ hidden = false }: { hidden?: boolean }) {
     >
       <div className="relative flex flex-col items-end">
         <ul className="mb-3 flex flex-col items-end gap-2.5">
-          {SHORTCUTS.map((item, index) => (
+          {shortcuts.map((item, index) => (
             <li
               key={item.key}
               className={cx(
                 'flex items-center gap-2.5 transition-all duration-100 ease-out',
                 open ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0',
               )}
-              style={{ transitionDelay: open ? `${(SHORTCUTS.length - index) * 12}ms` : '0ms' }}
+              style={{ transitionDelay: open ? `${(shortcuts.length - index) * 12}ms` : '0ms' }}
             >
               <span className="rounded-md bg-ink px-2 py-1 text-[11.5px] font-medium text-surface shadow-sm">
                 {item.label}
@@ -108,7 +129,8 @@ export function QuickAccessMenu({ hidden = false }: { hidden?: boolean }) {
                 tabIndex={open ? 0 : -1}
                 onClick={() => {
                   setOpen(false)
-                  navigate(item.to)
+                  if (item.key === 'refine') onOpenRefinementLog?.()
+                  else navigate(item.to)
                 }}
                 aria-label={item.label}
                 className="qa-fx-host relative grid size-11 shrink-0 place-items-center overflow-visible rounded-full border border-line bg-surface text-ink shadow-md transition-colors hover:border-brand-ring hover:bg-brand-soft hover:text-brand-strong"

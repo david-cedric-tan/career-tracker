@@ -45,12 +45,12 @@ User
 '''
 # ENUMS 
 class Stage(models.TextChoices):
-    NOT_SUBMITTED = "not_submitted", "Not submitted"
+    NOT_SUBMITTED = "not_submitted", "Not Submitted"
     APPLIED = "applied", "Applied"
-    ONLINE_ASSESSMENT = "online_assessment", "Online assessment"
-    VIDEO_INTERVIEW = "video_interview", "Video interview"
-    ASSESSMENT_CENTRE = "assessment_centre", "Assessment centre"
-    FINAL_INTERVIEW = "final_interview", "Final interview"
+    ONLINE_ASSESSMENT = "online_assessment", "Online Assessment"
+    VIDEO_INTERVIEW = "video_interview", "Video Interview"
+    ASSESSMENT_CENTRE = "assessment_centre", "Assessment Center"
+    FINAL_INTERVIEW = "final_interview", "Final Interview"
     OFFER = "offer", "Offer"
 class ApplicationStage(models.Model):
     """The pipeline's steps — addable, not a fixed list (FR-REF-07).
@@ -115,9 +115,9 @@ class ApplicationStage(models.Model):
 
 
 class Outcome(models.TextChoices):
-    IN_PROGRESS = "in_progress", "In progress"
+    IN_PROGRESS = "in_progress", "In Progress"
     REJECTED = "rejected", "Rejected"
-    OFFER_RECEIVED = "offer_received", "Offer received"
+    OFFER_RECEIVED = "offer_received", "Offer Received"
     ACCEPTED = "accepted", "Accepted"
     DECLINED = "declined", "Declined"
     WITHDRAWN = "withdrawn", "Withdrawn"
@@ -141,10 +141,10 @@ class RoleType(models.TextChoices):
     VACATIONER = "vacationer", "Vacationer / Internship"
     GRADUATE = "graduate", "Graduate"
     UNDERGRADUATE = "undergraduate", "Undergraduate"
-    SIDE_JOB = "side_job", "Side job"
+    SIDE_JOB = "side_job", "Side Job"
 class WorkArrangement(models.TextChoices):
-    FULL_TIME = "full_time", "Full-time"
-    PART_TIME = "part_time", "Part-time"
+    FULL_TIME = "full_time", "Full-Time"
+    PART_TIME = "part_time", "Part-Time"
     CASUAL = "casual", "Casual"
     CONTRACT = "contract", "Contract"
 class EventType(models.TextChoices):
@@ -153,20 +153,24 @@ class EventType(models.TextChoices):
     real pipeline movement."""
 
     CREATED = "created", "Created"
-    STAGE = "stage", "Stage change"
-    OUTCOME = "outcome", "Outcome change"
+    STAGE = "stage", "Stage Change"
+    OUTCOME = "outcome", "Outcome Change"
     EDITED = "edited", "Edited"
     # Waiting is neither a stage nor an outcome — it's who owes the next move.
     # Added rather than folded into STAGE so the time series keeps counting
     # only real pipeline movement, and so the timeline can draw it softer.
-    WAITING_STARTED = "waiting_started", "Waiting for response"
-    WAITING_ENDED = "waiting_ended", "Response received"
+    WAITING_STARTED = "waiting_started", "Waiting For Response"
+    WAITING_ENDED = "waiting_ended", "Response Received"
+    # Finished a stage on your side (submitted OA, left the interview, …)
+    # before the ball is in their court. Distinct from waiting_started so the
+    # timeline can show a green tick, then a temporary waiting row.
+    STAGE_DONE = "stage_done", "Stage Completed"
 
 
 class ResumeVariantType(models.TextChoices):
     GENERAL = "general", "General"
-    COMPANY = "company", "Company-specific"
-    ROLE = "role", "Role-specific"
+    COMPANY = "company", "Company-Specific"
+    ROLE = "role", "Role-Specific"
 
 ###Location/country/state
 class Country(models.Model):
@@ -277,6 +281,11 @@ class Company(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def display_name(self):
+        """What the UI shows for this company — the short form when one is set."""
+        return self.short_name or self.name
 
 
 class CompanyNote(models.Model):
@@ -642,25 +651,44 @@ class AppsEventLog(models.Model):
         return f"{self.application_id}: {self.prev_stage or '—'} → {self.curr_stage}"
 
 
-class ApplicationDocument(models.Model):
-    """A supporting file the user attached to one application (cover letter,
-    take-home task, portfolio piece, the offer PDF).
+class LibraryDocument(models.Model):
+    """A supporting file in the user's File Directory.
 
-    Separate from `Resume`, which is a reusable artefact shared across
-    applications: these belong to exactly one application and carry their own
-    title and description, so the gallery can label them without opening them.
+    Optionally linked to one application (cover letter, take-home, offer PDF).
+    When `application` is null the file is general and filtered by `tags`.
+    Separate from `Resume`, which is a reusable CV variant with its own
+    targets and active/archive flag.
     """
 
-    application = models.ForeignKey(
-        Application, on_delete=models.CASCADE, related_name="documents"
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="library_documents",
     )
-    file = models.FileField(upload_to="application_documents/")
+    application = models.ForeignKey(
+        Application,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="library_documents",
+    )
+    # A file can also belong to a company without any application — prep
+    # notes for a firm you haven't applied to yet, say.
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="library_documents",
+    )
+    file = models.FileField(upload_to="library_documents/")
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     # The name it was uploaded under, kept so a download is recognisable even
     # though storage renames the file.
     original_name = models.CharField(max_length=255, blank=True)
     kind = models.CharField(max_length=10)
+    tags = models.JSONField(default=list, blank=True)
     position = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -669,12 +697,11 @@ class ApplicationDocument(models.Model):
         ordering = ["position", "id"]
 
     def __str__(self):
-        return self.title or self.original_name or f"Document {self.pk}"
+        return self.title or self.original_name or f"Library document {self.pk}"
 
 
-@receiver(post_delete, sender=ApplicationDocument)
-def delete_application_document_file(sender, instance, **kwargs):
-    """Removing the row removes the file — a post_delete signal so deleting the
-    whole application cleans up storage too, not just rows."""
+@receiver(post_delete, sender=LibraryDocument)
+def delete_library_document_file(sender, instance, **kwargs):
+    """Removing the row removes the file from storage."""
     if instance.file:
         instance.file.delete(save=False)

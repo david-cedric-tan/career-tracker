@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { applications, companies, metSources, people, relationships } from '../api/resources'
 import type {
@@ -12,15 +12,18 @@ import type {
   RelationshipTag,
 } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
+import { useFormDirty } from '../hooks/useFormDirty'
 import { Avatar } from './ui/Avatar'
 import { Button } from './ui/Button'
 import { ImagePicker } from './ui/ImagePicker'
 import { Combobox, MultiSelect } from './ui/Combobox'
+import { ClearableDate } from './ui/ClearableDate'
 import { Input, Select } from './ui/Field'
 import { MentionTextarea } from './ui/Mention'
 import { Icon } from './ui/Icon'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
+import { companyLabel, companyOption } from '../lib/company'
 
 type Props = {
   open: boolean
@@ -36,6 +39,8 @@ function initialForm(existing?: Person | null) {
     title: existing?.title ?? '',
     status: existing?.status ?? 'lead',
     last_meeting_at: existing?.last_meeting_at ?? '',
+    last_messaged_at: existing?.last_messaged_at ?? '',
+    last_message_channel: existing?.last_message_channel ?? '',
     next_chat_at: existing?.next_chat_at ?? '',
     // != null, not a truthy check: 0 is a real setting ("don't schedule")
     // and would otherwise load back as the default.
@@ -106,6 +111,17 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
   const [error, setError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const dirty = useFormDirty({
+    form,
+    relationshipId,
+    sourceId,
+    memberships,
+    applicationIds,
+    contacts,
+    photoUrl,
+    pendingPhoto: pendingPhoto?.name ?? null,
+  })
+  const guardedCloseRef = useRef<(() => void) | null>(null)
 
   const [relationshipOptions, setRelationshipOptions] = useState<RelationshipTag[]>([])
   const [sourceOptions, setSourceOptions] = useState<MetSourceTag[]>([])
@@ -158,6 +174,8 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
       relationship: relationshipId,
       source: sourceId,
       last_meeting_at: form.last_meeting_at || null,
+      last_messaged_at: form.last_messaged_at || null,
+      last_message_channel: form.last_messaged_at ? form.last_message_channel : '',
       next_chat_at: form.next_chat_at || null,
       cadence_months: form.cadence_months ? Number(form.cadence_months) : null,
       company_memberships: memberships,
@@ -197,12 +215,14 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
     <Modal
       open={open}
       onClose={onClose}
+      dirty={dirty}
+      guardedCloseRef={guardedCloseRef}
       size="lg"
       title={existing ? 'Edit contact' : 'Add a contact'}
       description="Leave the next chat blank and it defaults to three months after the last meeting."
       footer={
         <>
-          <Button type="button" onClick={onClose}>
+          <Button type="button" onClick={() => guardedCloseRef.current?.()}>
             Cancel
           </Button>
           <Button type="submit" form="person-form" variant="primary" loading={saving}>
@@ -223,11 +243,7 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
           src={photoUrl}
           size="lg"
           label="photo"
-          helpText={
-            existing
-              ? 'Shown wherever this contact appears.'
-              : 'Uploaded once you save this contact.'
-          }
+          helpText={existing ? undefined : 'Uploaded once you save this contact.'}
           onUpload={async (file) => {
             if (existing) {
               const saved = await people.uploadPhoto(existing.id, file)
@@ -305,25 +321,46 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Last meeting"
-            type="date"
+          <ClearableDate
+            label="Last met"
             value={form.last_meeting_at}
             error={errors.last_meeting_at}
-            onChange={(event) => set('last_meeting_at', event.target.value)}
+            onChange={(next) => set('last_meeting_at', next)}
+            help="In person, on a call or at an event — messages don't count."
           />
-          <Input
+          <ClearableDate
             label="Next chat"
-            type="date"
             value={form.next_chat_at}
             error={errors.next_chat_at}
-            onChange={(event) => set('next_chat_at', event.target.value)}
+            onChange={(next) => set('next_chat_at', next)}
             help={
               form.cadence_months === '0'
                 ? 'No catch-up is scheduled for this contact unless you name a date here.'
                 : `Blank = last meeting + ${form.cadence_months || 3} month${(Number(form.cadence_months) || 3) === 1 ? '' : 's'}.`
             }
           />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <ClearableDate
+            label="Last messaged"
+            value={form.last_messaged_at}
+            error={errors.last_messaged_at}
+            onChange={(next) => set('last_messaged_at', next)}
+          />
+          <Select
+            label="Via"
+            value={form.last_message_channel}
+            disabled={!form.last_messaged_at}
+            onChange={(event) => set('last_message_channel', event.target.value)}
+          >
+            <option value="">—</option>
+            {choices?.message_channel.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label}
+              </option>
+            ))}
+          </Select>
         </div>
 
         <Select
@@ -414,12 +451,7 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
         <div className="grid gap-4 sm:grid-cols-2">
           <MultiSelect
             label="Companies"
-            options={companyOptions.map((company) => ({
-              id: company.id,
-              label: company.name,
-              avatar: company.logo,
-              avatarShape: 'square' as const,
-            }))}
+            options={companyOptions.map(companyOption)}
             value={companyIds}
             onChange={setCompanyIds}
             emptyText="No companies yet."
@@ -447,8 +479,11 @@ function PersonFormBody({ open, onClose, onSaved, choices, existing }: Props) {
                           size="xs"
                           shape="square"
                         />
-                        <span className="truncate text-[13px] font-medium text-ink">
-                          {company?.name ?? 'Company'}
+                        <span
+                          className="truncate text-[13px] font-medium text-ink"
+                          title={company?.name}
+                        >
+                          {company ? companyLabel(company) : 'Company'}
                         </span>
                       </span>
                       <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11.5px] text-ink-2">

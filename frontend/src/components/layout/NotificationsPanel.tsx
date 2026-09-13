@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { dashboard } from '../../api/resources'
-import type { Attention } from '../../api/types'
+import { dashboard, refinements } from '../../api/resources'
+import type { Attention, RefinementNote } from '../../api/types'
 import { useAuth } from '../../auth/context'
 import {
-  clearFiredAlerts,
   dismissFiredAlert,
   readFiredAlerts,
   subscribeFiredAlerts,
@@ -14,17 +13,38 @@ import { useResource } from '../../hooks/useResource'
 import { Icon } from '../ui/Icon'
 import { Loading } from '../ui/States'
 
+type Feed = 'normal' | 'tickets'
+
 type Item = {
   key: string
   icon: string
   title: string
   meta: string
-  /** ISO date for a due-soon item; ISO timestamp for a fired alert. */
+  /** ISO date for a due-soon item; ISO timestamp for a fired alert / ticket. */
   date: string
-  to: string
+  to?: string
+  ticketId?: number
   /** A fired reminder is history, not something coming up — it dismisses
       out of its own store rather than the due-soon dismissal map. */
-  kind: 'attention' | 'alert'
+  kind: 'attention' | 'alert' | 'ticket'
+}
+
+const FEED_KEY = 'notificationsFeed'
+
+function readFeed(): Feed {
+  try {
+    return localStorage.getItem(FEED_KEY) === 'tickets' ? 'tickets' : 'normal'
+  } catch {
+    return 'normal'
+  }
+}
+
+function writeFeed(feed: Feed) {
+  try {
+    localStorage.setItem(FEED_KEY, feed)
+  } catch {
+    /* preference only */
+  }
 }
 
 /** Flattens the four attention buckets into one dated, sorted feed. */
@@ -71,6 +91,56 @@ function toItems(data: Attention | null): Item[] {
   return items.sort((a, b) => a.date.localeCompare(b.date))
 }
 
+/** Ticket rows that need this viewer's attention — fix replies, chat, or
+ *  (for the developer) brand-new filings they've never opened. */
+function toTicketItems(notes: RefinementNote[] | null): Item[] {
+  if (!notes) return []
+  const items: Item[] = []
+  for (const note of notes) {
+    if (!note.needs_attention) continue
+    const snippet = note.body.trim().slice(0, 48) || `Ticket #${note.id}`
+    const fixedUnseen =
+      note.is_mine && Boolean(note.resolution) && !note.resolution_seen_at
+    const unreadChat = note.unread_count > 0
+    let title: string
+    let meta: string
+    let icon: string
+    let date: string
+
+    if (fixedUnseen) {
+      title = snippet
+      meta = `Fixed · ${note.resolved_by_name ?? 'Developer'}`
+      icon = 'check'
+      date = note.resolved_at ?? note.updated_at
+    } else if (unreadChat && note.last_message) {
+      title = snippet
+      meta = note.is_mine
+        ? `Reply · ${note.last_message.author}`
+        : `Message · ${note.last_message.author}`
+      icon = 'mail'
+      date = note.last_message.created_at
+    } else if (!note.is_mine) {
+      title = snippet
+      meta = `New ticket · ${note.author} · ${note.kind_display}`
+      icon = 'tools'
+      date = note.created_at
+    } else {
+      continue
+    }
+
+    items.push({
+      key: `ticket-${note.id}`,
+      kind: 'ticket',
+      icon,
+      title,
+      meta,
+      date,
+      ticketId: note.id,
+    })
+  }
+  return items.sort((a, b) => b.date.localeCompare(a.date))
+}
+
 function isOverdue(date: string) {
   return new Date(`${date}T12:00:00`) < new Date(new Date().toDateString())
 }
@@ -105,14 +175,22 @@ function writeJson(key: string, value: unknown) {
 /**
  * The bell in the sidebar, between the profile card and Settings.
  *
- * It reads the same "needs attention" feed the dashboard panel does rather
- * than inventing a second notion of what's urgent — the difference is that
- * this one is reachable from every page, and remembers what you've already
- * looked at.
+ * Two feeds share the same panel: everyday due-soon / reminder alerts, and
+ * ticket traffic (fix replies and chat for reporters; new filings and user
+ * messages for the developer). A header icon flips between them.
  */
-export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) {
+export function NotificationsPanel({
+  onNavigate,
+  onOpenTicket,
+}: {
+  onNavigate?: () => void
+  /** Opens the refinement log — optionally focused on one ticket. */
+  onOpenTicket?: (ticketId?: number) => void
+}) {
   const { user } = useAuth()
+  const isAccountDeveloper = Boolean(user?.is_developer)
   const [open, setOpen] = useState(false)
+  const [feed, setFeed] = useState<Feed>(readFeed)
   const [seen, setSeen] = useState<string[]>(() => readJson(seenKey(user?.id), []))
   // key -> the date it was dismissed *for*. Storing the date means a
   // rescheduled follow-up comes back rather than staying hidden forever
@@ -121,6 +199,12 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
     readJson(dismissedKey(user?.id), {}),
   )
   const attention = useResource(() => dashboard.attention(), [])
+  // Always load tickets so the badge can include them even on the Normal tab.
+  // Developers see everyone's; everyone else sees their own.
+  const tickets = useResource(
+    () => refinements.list(isAccountDeveloper ? { scope: 'all' } : { scope: 'mine' }),
+    [isAccountDeveloper, user?.id],
+  )
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   // A different account's read state is not this account's — re-read rather
@@ -138,38 +222,65 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
   const [firedTick, setFiredTick] = useState(0)
   useEffect(() => subscribeFiredAlerts(() => setFiredTick((n) => n + 1)), [])
 
+  const reloadTickets = tickets.reload
+  useEffect(() => {
+    if (!open) return
+    const timer = window.setInterval(() => reloadTickets(), 15_000)
+    return () => window.clearInterval(timer)
+  }, [open, reloadTickets])
+
   const fired: Item[] = useMemo(
     () =>
       readFiredAlerts(user?.id).map((alert) => ({
         key: `alert-${alert.id}`,
         kind: 'alert' as const,
-        icon: 'bell',
+        icon: alert.ticketId ? 'tools' : 'bell',
         title: alert.title,
         meta: alert.subtitle,
         date: alert.firedAt,
-        to: alert.to,
+        to: alert.to || undefined,
+        ticketId: alert.ticketId,
       })),
     // firedTick is the subscription's signal that localStorage changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user?.id, firedTick],
   )
 
-  const items = useMemo(
+  // Ticket traffic — filings, messages, status moves, fixes — lives on the
+  // Tickets feed only; the everyday feed stays about your own pipeline.
+  const normalItems = useMemo(
     () => [
-      // Something that already went off outranks something merely due soon.
-      ...fired,
+      ...fired.filter((item) => item.ticketId == null),
       ...toItems(attention.data).filter((item) => dismissed[item.key] !== item.date),
     ],
     [fired, attention.data, dismissed],
   )
-  const unread = items.filter((item) => !seen.includes(item.key))
+  const ticketItems = useMemo(
+    () =>
+      [
+        ...fired.filter((item) => item.ticketId != null),
+        ...toTicketItems(tickets.data).filter((item) => dismissed[item.key] !== item.date),
+      ].sort((a, b) => b.date.localeCompare(a.date)),
+    [fired, tickets.data, dismissed],
+  )
+  const items = feed === 'tickets' ? ticketItems : normalItems
+  const unreadNormal = normalItems.filter((item) => !seen.includes(item.key))
+  const unreadTickets = ticketItems.filter((item) => !seen.includes(item.key))
+  // Badge on the closed bell covers both feeds so a ticket reply isn't invisible
+  // while you're parked on Normal.
+  const badgeCount = unreadNormal.length + unreadTickets.length
+
+  function chooseFeed(next: Feed) {
+    setFeed(next)
+    writeFeed(next)
+  }
 
   /** Marks everything currently listed as read. Runs when the panel closes,
       not when it opens — otherwise the "new" highlight vanishes from under
       the user the instant they look at it. */
   function markAllSeen() {
-    const keys = items.map((item) => item.key)
-    if (keys.every((key) => seen.includes(key))) return
+    const keys = [...new Set([...seen, ...items.map((item) => item.key)])]
+    if (keys.length === seen.length && keys.every((key) => seen.includes(key))) return
     setSeen(keys)
     writeJson(seenKey(user?.id), keys)
   }
@@ -207,14 +318,32 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
   }
 
   function clearAll() {
-    clearFiredAlerts(user?.id)
+    // Fired alerts belong to whichever feed is showing — clearing Tickets
+    // must not wipe reminder history, and vice versa.
+    for (const alert of readFiredAlerts(user?.id)) {
+      const isTicket = alert.ticketId != null
+      if (isTicket === (feed === 'tickets')) dismissFiredAlert(user?.id, alert.id)
+    }
     const next = { ...dismissed }
     for (const item of items) {
-      if (item.kind === 'attention') next[item.key] = item.date
+      if (item.kind === 'attention' || item.kind === 'ticket') next[item.key] = item.date
     }
     setDismissed(next)
     writeJson(dismissedKey(user?.id), next)
   }
+
+  function activate(item: Item) {
+    if (item.ticketId != null && onOpenTicket) {
+      close()
+      onOpenTicket(item.ticketId)
+      onNavigate?.()
+      return
+    }
+    close()
+    onNavigate?.()
+  }
+
+  const loading = feed === 'normal' ? attention.initial : tickets.initial
 
   return (
     <div ref={wrapperRef} className="relative shrink-0">
@@ -222,7 +351,7 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
         type="button"
         onClick={() => (open ? close() : setOpen(true))}
         aria-label={
-          unread.length ? `Notifications, ${unread.length} unread` : 'Notifications'
+          badgeCount ? `Notifications, ${badgeCount} unread` : 'Notifications'
         }
         aria-expanded={open}
         title="Notifications"
@@ -234,9 +363,9 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
         )}
       >
         <Icon name="bell" size={17} />
-        {unread.length > 0 ? (
+        {badgeCount > 0 ? (
           <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-critical px-1 text-[9.5px] font-semibold leading-none text-white">
-            {unread.length > 9 ? '9+' : unread.length}
+            {badgeCount > 9 ? '9+' : badgeCount}
           </span>
         ) : null}
       </button>
@@ -245,86 +374,142 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
         <div
           role="dialog"
           aria-label="Notifications"
-          className="absolute bottom-full left-0 z-50 mb-2 w-60 overflow-hidden rounded-xl border border-line bg-surface-solid shadow-2xl"
+          className="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-xl border border-line bg-surface-solid shadow-2xl"
         >
-          <div className="flex items-center justify-between gap-2 border-b border-line px-2.5 py-2">
-            <p className="text-[12px] font-semibold text-ink">Notifications</p>
-            {items.length > 0 ? (
+          <div className="flex items-center gap-2 border-b border-line px-2.5 py-2">
+            <p className="min-w-0 flex-1 text-[12px] font-semibold text-ink">
+              {feed === 'tickets' ? 'Tickets' : 'Notifications'}
+            </p>
+            <div className="flex items-center gap-0.5 rounded-lg border border-line bg-surface-2 p-0.5">
               <button
                 type="button"
-                onClick={clearAll}
-                className="text-[10.5px] font-medium text-ink-3 transition-colors hover:text-critical"
+                onClick={() => chooseFeed('normal')}
+                aria-pressed={feed === 'normal'}
+                title="Due soon & reminders"
+                aria-label="Normal notifications"
+                className={cx(
+                  'relative rounded-md p-1 transition-colors',
+                  feed === 'normal'
+                    ? 'bg-surface text-brand-strong shadow-sm'
+                    : 'text-ink-3 hover:text-ink',
+                )}
               >
-                Clear all
+                <Icon name="bell" size={13} />
+                {unreadNormal.length > 0 && feed !== 'normal' ? (
+                  <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-critical" />
+                ) : null}
               </button>
-            ) : null}
+              <button
+                type="button"
+                onClick={() => chooseFeed('tickets')}
+                aria-pressed={feed === 'tickets'}
+                title={
+                  isAccountDeveloper
+                    ? 'New tickets & messages from users'
+                    : 'Ticket updates & replies'
+                }
+                aria-label="Ticket notifications"
+                className={cx(
+                  'relative rounded-md p-1 transition-colors',
+                  feed === 'tickets'
+                    ? 'bg-surface text-brand-strong shadow-sm'
+                    : 'text-ink-3 hover:text-ink',
+                )}
+              >
+                <Icon name="tools" size={13} />
+                {unreadTickets.length > 0 && feed !== 'tickets' ? (
+                  <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-critical" />
+                ) : null}
+              </button>
+            </div>
           </div>
 
           <div className="scrollbar-thin max-h-72 overflow-y-auto">
-            {attention.initial ? (
+            {loading ? (
               <Loading />
             ) : items.length === 0 ? (
               <div className="flex flex-col items-center gap-1 px-3 py-6 text-center">
                 <Icon name="check" size={17} className="text-good" />
                 <p className="text-[12px] font-medium text-ink">You’re all caught up</p>
                 <p className="text-[11px] text-ink-3">
-                  No alerts, and nothing due in the next 7 days.
+                  {feed === 'tickets'
+                    ? isAccountDeveloper
+                      ? 'No new tickets or unread messages.'
+                      : 'No ticket updates or unread replies.'
+                    : 'No alerts, and nothing due in the next 7 days.'}
                 </p>
               </div>
             ) : (
               <ul className="divide-y divide-line">
                 {items.map((item) => {
                   const isAlert = item.kind === 'alert'
-                  const overdue = !isAlert && isOverdue(item.date)
-                  return (
-                    <li
-                      key={item.key}
-                      className={cx(
-                        'group relative transition-colors hover:bg-surface-2',
-                        !seen.includes(item.key) && 'bg-brand-soft/40',
-                      )}
-                    >
-                      <Link
-                        to={item.to}
-                        onClick={() => {
-                          close()
-                          onNavigate?.()
-                        }}
-                        className="flex items-start gap-2 py-2 pl-2.5 pr-12"
-                      >
-                        <span
-                          className={cx(
-                            'mt-0.5 grid size-5 shrink-0 place-items-center rounded-lg',
-                            isAlert
+                  const isTicket = item.kind === 'ticket'
+                  const overdue = !isAlert && !isTicket && isOverdue(item.date)
+                  const rowClass = cx(
+                    'group relative transition-colors hover:bg-surface-2',
+                    !seen.includes(item.key) && 'bg-brand-soft/40',
+                  )
+                  const body = (
+                    <>
+                      <span
+                        className={cx(
+                          'mt-0.5 grid size-5 shrink-0 place-items-center rounded-lg',
+                          isTicket
+                            ? 'bg-brand-soft text-brand-strong'
+                            : isAlert
                               ? 'bg-brand-soft text-brand-strong'
                               : overdue
                                 ? 'bg-critical/10 text-critical'
                                 : 'bg-surface-2 text-ink-3',
+                        )}
+                      >
+                        <Icon name={item.icon} size={11} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-medium text-ink">
+                          {item.title}
+                        </span>
+                        <span
+                          className={cx(
+                            'block truncate text-[10.5px] text-ink-3',
+                            !isTicket && 'capitalize',
                           )}
                         >
-                          <Icon name={item.icon} size={11} />
+                          {item.meta}
                         </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] font-medium text-ink">
-                            {item.title}
-                          </span>
-                          <span className="block truncate text-[10.5px] capitalize text-ink-3">
-                            {item.meta}
-                          </span>
-                        </span>
-                      </Link>
+                      </span>
+                    </>
+                  )
+                  return (
+                    <li key={item.key} className={rowClass}>
+                      {item.to ? (
+                        <Link
+                          to={item.to}
+                          onClick={() => activate(item)}
+                          className="flex items-start gap-2 py-2 pl-2.5 pr-12"
+                        >
+                          {body}
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => activate(item)}
+                          className="flex w-full items-start gap-2 py-2 pl-2.5 pr-12 text-left"
+                        >
+                          {body}
+                        </button>
+                      )}
 
-                      {/* Date and the per-row dismiss share a corner: the date
-                          gives way on hover/focus so the button never has to
-                          fight it for space. */}
                       <span
                         className={cx(
                           'pointer-events-none absolute right-2.5 top-2.5 text-[10px] font-medium transition-opacity group-hover:opacity-0 group-focus-within:opacity-0',
                           overdue ? 'text-critical' : 'text-ink-3',
                         )}
-                        title={isAlert ? undefined : formatDate(item.date)}
+                        title={isAlert || isTicket ? undefined : formatDate(item.date)}
                       >
-                        {isAlert ? relativeTime(item.date) : relativeDay(item.date)}
+                        {isAlert || isTicket
+                          ? relativeTime(item.date)
+                          : relativeDay(item.date)}
                       </span>
                       <button
                         type="button"
@@ -342,16 +527,47 @@ export function NotificationsPanel({ onNavigate }: { onNavigate?: () => void }) 
             )}
           </div>
 
-          <Link
-            to="/calendar"
-            onClick={() => {
-              close()
-              onNavigate?.()
-            }}
-            className="block border-t border-line px-2.5 py-1.5 text-center text-[11px] font-medium text-brand hover:bg-surface-2"
-          >
-            Open calendar
-          </Link>
+          <div className="flex items-stretch border-t border-line">
+            {feed === 'normal' ? (
+              <Link
+                to="/calendar"
+                onClick={() => {
+                  close()
+                  onNavigate?.()
+                }}
+                className="min-w-0 flex-1 px-2.5 py-1.5 text-center text-[11px] font-medium text-brand hover:bg-surface-2"
+              >
+                Open calendar
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  close()
+                  onOpenTicket?.()
+                  onNavigate?.()
+                }}
+                className="min-w-0 flex-1 px-2.5 py-1.5 text-center text-[11px] font-medium text-brand hover:bg-surface-2"
+              >
+                Open refinement log
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={clearAll}
+              disabled={items.length === 0}
+              title="Clear all"
+              aria-label="Clear all notifications"
+              className={cx(
+                'grid shrink-0 place-items-center border-l border-line px-2.5 transition-colors',
+                items.length === 0
+                  ? 'cursor-not-allowed text-ink-3/40'
+                  : 'text-ink-3 hover:bg-surface-2 hover:text-critical',
+              )}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

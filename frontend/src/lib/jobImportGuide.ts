@@ -1,10 +1,9 @@
 /**
- * The copy-paste prompt for importing a single job ad — a real, consuming
- * import (unlike `importGuide.ts`'s tracker-wide guide, which has no endpoint
- * yet). Paste a job ad's full text into any AI with this prompt, and it comes
- * back with the ad separated into this app's actual fields — description,
- * skills, deadline — rather than dumped as one blob, so importing it produces
- * a real, browsable listing rather than a wall of pasted text in one box.
+ * The copy-paste prompt for importing a single job ad. Paste a job ad's full
+ * text into any AI with this prompt, and it comes back with the ad separated
+ * into this app's actual fields — description, skills, deadline — rather than
+ * dumped as one blob. (Tracker-wide migration lives in `importGuide.ts` +
+ * Settings → Bring Your Own AI.)
  */
 export const JOB_IMPORT_PROMPT = `I use an app called Career Tracker for my job search. I'm going to paste the full text of a job ad below. Read it and separate it into this JSON shape.
 

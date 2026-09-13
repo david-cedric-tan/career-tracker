@@ -1,7 +1,32 @@
+import { readFileSync } from 'node:fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+
+/**
+ * HTTPS, when `run.sh --https` has generated a certificate and pointed these
+ * at it.
+ *
+ * Installing the app and registering a service worker both require a secure
+ * origin, and `http://192.168.x.x` is not one — over plain HTTP on the LAN the
+ * install option simply never appears, however complete the manifest is.
+ */
+const certFile = process.env.VITE_HTTPS_CERT
+const keyFile = process.env.VITE_HTTPS_KEY
+const https =
+  certFile && keyFile
+    ? { cert: readFileSync(certFile), key: readFileSync(keyFile) }
+    : undefined
+
+/**
+ * In HTTPS mode the API is proxied through this server instead of being called
+ * on `:8000` directly. That keeps everything same-origin, which means Django
+ * needs no certificate of its own (it has no good way to serve one) and the
+ * browser is never asked to make a plain-HTTP request from a secure page,
+ * which it would block as mixed content.
+ */
+const proxyTarget = process.env.VITE_PROXY_TARGET
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -48,5 +73,18 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    ...(https ? { https } : {}),
+    ...(proxyTarget
+      ? {
+          // `xfwd` adds X-Forwarded-Proto/Host so Django knows the page is
+          // HTTPS and builds https:// media URLs — without it every photo and
+          // logo came back as http://, which browsers block as mixed content.
+          proxy: {
+            '/api': { target: proxyTarget, changeOrigin: false, xfwd: true },
+            '/media': { target: proxyTarget, changeOrigin: false, xfwd: true },
+            '/static': { target: proxyTarget, changeOrigin: false, xfwd: true },
+          },
+        }
+      : {}),
   },
 })

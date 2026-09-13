@@ -5,3 +5,6 @@ db.sqlite3
 .env
 media/
 staticfiles/
+
+# Locally generated HTTPS certificates (run.sh --https)
+.certs/

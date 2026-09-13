@@ -3,7 +3,8 @@ import { fieldErrors, formatApiError } from '../../api/client'
 import { extracurriculars } from '../../api/resources'
 import type { ExtraCurricular } from '../../api/types'
 import { formatDate } from '../../lib/format'
-import { AttachmentList } from './AttachmentList'
+import { AttachmentGalleryDialog, AttachmentStrip } from './AttachmentGallery'
+import { SectionIconPicker } from './SectionIconPicker'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Input, Textarea } from '../ui/Field'
@@ -18,9 +19,15 @@ export function ExtraCurricularPanel() {
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<ExtraCurricular | null>(null)
+  const [galleryId, setGalleryId] = useState<number | null>(null)
+  const gallery = rows?.find((row) => row.id === galleryId) ?? null
 
   function reload() {
     return extracurriculars.list().then(setRows)
+  }
+
+  function apply(saved: ExtraCurricular) {
+    setRows((current) => (current ?? []).map((entry) => (entry.id === saved.id ? saved : entry)))
   }
 
   useEffect(() => {
@@ -56,7 +63,14 @@ export function ExtraCurricularPanel() {
         <ul className="mt-3 flex flex-col gap-3">
           {rows.map((row) => (
             <li key={row.id} className="rounded-lg border border-line bg-surface-2 p-3">
-              <div className="flex items-start gap-2">
+              <div className="flex items-start gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-surface">
+                  {row.icon ? (
+                    <img src={row.icon} alt="" loading="lazy" className="size-full object-contain p-1" />
+                  ) : (
+                    <Icon name="users" size={16} className="text-ink-3" />
+                  )}
+                </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-medium text-ink">
                     {row.organization}
@@ -84,23 +98,7 @@ export function ExtraCurricularPanel() {
                 <p className="mt-2 text-[12.5px] text-ink-2">{row.description}</p>
               ) : null}
 
-              <div className="mt-2.5">
-                <AttachmentList
-                  attachments={row.attachments}
-                  onAdd={async (file, caption) => {
-                    const saved = await extracurriculars.addAttachment(row.id, file, caption)
-                    setRows((current) =>
-                      (current ?? []).map((entry) => (entry.id === row.id ? saved : entry)),
-                    )
-                  }}
-                  onRemove={async (attachmentId) => {
-                    const saved = await extracurriculars.removeAttachment(row.id, attachmentId)
-                    setRows((current) =>
-                      (current ?? []).map((entry) => (entry.id === row.id ? saved : entry)),
-                    )
-                  }}
-                />
-              </div>
+              <AttachmentStrip attachments={row.attachments} onOpen={() => setGalleryId(row.id)} />
             </li>
           ))}
         </ul>
@@ -112,7 +110,22 @@ export function ExtraCurricularPanel() {
         onClose={() => setFormOpen(false)}
         onSaved={() => void reload()}
         onDeleted={() => void reload()}
+        onRowChange={apply}
       />
+
+      {gallery ? (
+        <AttachmentGalleryDialog
+          title={gallery.organization}
+          attachments={gallery.attachments}
+          onClose={() => setGalleryId(null)}
+          onAdd={async (file, caption) =>
+            apply(await extracurriculars.addAttachment(gallery.id, file, caption))
+          }
+          onRemove={async (attachmentId) =>
+            apply(await extracurriculars.removeAttachment(gallery.id, attachmentId))
+          }
+        />
+      ) : null}
     </Card>
   )
 }
@@ -122,6 +135,7 @@ function ExtraCurricularForm(props: {
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
+  onRowChange: (saved: ExtraCurricular) => void
   existing?: ExtraCurricular | null
 }) {
   if (!props.open) return null
@@ -132,14 +146,18 @@ function ExtraCurricularFormBody({
   onClose,
   onSaved,
   onDeleted,
+  onRowChange,
   existing,
 }: {
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
+  onRowChange: (saved: ExtraCurricular) => void
   existing?: ExtraCurricular | null
 }) {
   const { notify } = useToast()
+  const [row, setRow] = useState<ExtraCurricular | null>(existing ?? null)
+  const [pendingIcon, setPendingIcon] = useState<File | null>(null)
   const [form, setForm] = useState(() => ({
     organization: existing?.organization ?? '',
     role: existing?.role ?? '',
@@ -162,8 +180,12 @@ function ExtraCurricularFormBody({
     setErrors({})
     const payload = { ...form, ended_on: form.ended_on || null }
     try {
-      if (existing) await extracurriculars.update(existing.id, payload)
-      else await extracurriculars.create(payload)
+      if (existing) {
+        await extracurriculars.update(existing.id, payload)
+      } else {
+        const created = await extracurriculars.create(payload)
+        if (pendingIcon) await extracurriculars.uploadIcon(created.id, pendingIcon)
+      }
       notify(existing ? 'Updated.' : 'Added.')
       onSaved()
       onClose()
@@ -215,6 +237,18 @@ function ExtraCurricularFormBody({
             {error}
           </p>
         ) : null}
+
+        <SectionIconPicker
+          name={form.organization || 'Organisation'}
+          label="badge"
+          row={row}
+          api={extracurriculars}
+          onRowChange={(saved) => {
+            setRow(saved)
+            onRowChange(saved)
+          }}
+          onPending={setPendingIcon}
+        />
 
         <Input
           label="Organization"

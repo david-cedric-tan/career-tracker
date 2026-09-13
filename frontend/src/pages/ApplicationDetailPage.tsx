@@ -8,7 +8,7 @@ import {
   people as peopleApi,
   todos as todosApi,
 } from '../api/resources'
-import type { Application, ApplicationStage } from '../api/types'
+import type { Application, ApplicationChoices, ApplicationStage } from '../api/types'
 import { ApplicationForm } from '../components/ApplicationForm'
 import { useCelebrate } from '../celebrate/context'
 import { movedForward } from '../lib/pipeline'
@@ -21,10 +21,11 @@ import { outcomeHint, stageHint } from '../lib/badgeHints'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
-import { MentionInput } from '../components/ui/Mention'
+import { MentionInput, MentionTextarea } from '../components/ui/Mention'
 import { Input, Select } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
+import { Switch } from '../components/ui/Switch'
 import { ErrorState, Loading } from '../components/ui/States'
 import { useToast } from '../components/ui/toast-context'
 import { DocumentGallery } from '../components/applications/DocumentGallery'
@@ -74,11 +75,15 @@ export function ApplicationDetailPage() {
 
   async function setWaiting(
     waiting: boolean,
-    body: { note?: string; changed_at?: string } = {},
+    body: { note?: string; changed_at?: string; stage?: string; mark_done?: boolean } = {},
   ) {
     try {
       detail.setData(await applications.setWaiting(applicationId, waiting, body))
-      notify(waiting ? 'Marked as waiting for a response.' : 'Waiting cleared.')
+      notify(
+        waiting
+          ? 'Stage marked done — now waiting for a response.'
+          : 'Waiting cleared.',
+      )
     } catch (err) {
       notify(formatApiError(err), 'error')
     }
@@ -101,7 +106,7 @@ export function ApplicationDetailPage() {
         className="mb-3 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-3 transition-colors hover:text-ink"
       >
         <Icon name="chevronLeft" size={15} />
-        {from ? 'Back' : 'All applications'}
+        {from ? 'Back' : 'All Applications'}
       </Link>
 
       <PageHeader
@@ -234,7 +239,7 @@ export function ApplicationDetailPage() {
                 label="Resume"
                 value={
                   application.resume_label ? (
-                    <Link to="/resumes" className="text-brand hover:underline">
+                    <Link to="/files?tab=resumes" className="text-brand hover:underline">
                       {application.resume_label}
                     </Link>
                   ) : (
@@ -417,7 +422,7 @@ export function ApplicationDetailPage() {
               title="Tasks"
               action={
                 <Link to="/todos" className="text-[12.5px] font-medium text-brand hover:underline">
-                  All todos
+                  All Todos
                 </Link>
               }
             />
@@ -480,9 +485,42 @@ export function ApplicationDetailPage() {
       {stageDone ? (
         <StageDoneModal
           started={stageDone === 'done'}
-          stageLabel={application.stage_display}
+          application={application}
+          choices={choices.data}
           onClose={() => setStageDone(null)}
-          onConfirm={(body) => setWaiting(stageDone === 'done', body)}
+          onConfirm={async (body) => {
+            if (stageDone === 'done') {
+              await setWaiting(true, {
+                note: body.note,
+                changed_at: body.changed_at,
+                stage: body.stage,
+                mark_done: true,
+              })
+              return
+            }
+
+            // Reply: clear waiting first (keeps the received-at timestamp on
+            // the waiting_ended row), then apply outcome / next stage if set.
+            let saved = await applications.setWaiting(applicationId, false, {
+              note: body.note,
+              changed_at: body.changed_at,
+            })
+            const stage = body.stage ?? latestPipelineStage(application)
+            const outcome = body.outcome ?? application.outcome
+            if (stage !== application.stage || outcome !== application.outcome) {
+              saved = await applications.advance(applicationId, {
+                stage,
+                outcome,
+                note: body.note?.trim() ? '' : undefined,
+              })
+            }
+            detail.setData(saved)
+            notify(
+              outcome === 'rejected'
+                ? 'Reply logged — kept on the same stage, marked rejected.'
+                : 'Reply logged.',
+            )
+          }}
         />
       ) : null}
 
@@ -741,11 +779,7 @@ function AdvanceDialog({
       }
     >
       <div className="flex flex-col gap-4">
-        <button
-          type="button"
-          onClick={() => setHistorical((current) => !current)}
-          className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5 text-left transition-colors hover:border-brand-ring"
-        >
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2.5 text-left transition-colors hover:border-brand-ring">
           <span>
             <span className="block text-[13px] font-medium text-ink">
               This already happened
@@ -754,22 +788,12 @@ function AdvanceDialog({
               Log old stage moves with their real dates, instead of today's.
             </span>
           </span>
-          <span
-            role="switch"
-            aria-checked={historical}
-            className={cx(
-              'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-              historical ? 'bg-brand' : 'bg-surface ring-1 ring-inset ring-line',
-            )}
-          >
-            <span
-              className={cx(
-                'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
-                historical ? 'translate-x-5' : 'translate-x-0',
-              )}
-            />
-          </span>
-        </button>
+          <Switch
+            checked={historical}
+            onChange={setHistorical}
+            label="This already happened"
+          />
+        </label>
 
         {error ? (
           <p role="alert" className="rounded-lg border border-critical/25 bg-critical/10 px-3 py-2 text-[13px] text-ink">
@@ -893,23 +917,11 @@ function AdvanceDialog({
                       Linked to this application, with a reminder the day before.
                     </span>
                   </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={addToCalendar}
-                    onClick={() => setAddToCalendar((value) => !value)}
-                    className={cx(
-                      'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-                      addToCalendar ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
-                    )}
-                  >
-                    <span
-                      className={cx(
-                        'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
-                        addToCalendar ? 'translate-x-5' : 'translate-x-0',
-                      )}
-                    />
-                  </button>
+                  <Switch
+                    checked={addToCalendar}
+                    onChange={setAddToCalendar}
+                    label="Put it in my calendar"
+                  />
                 </label>
                 {addToCalendar ? (
                   <Input
@@ -939,34 +951,96 @@ function nowLocalInput(): string {
 }
 
 /**
+ * Prefer the chronologically latest stage move in the log over `application.stage`,
+ * which can lag after backdated history edits.
+ */
+function latestPipelineStage(application: Application): string {
+  const latest = [...application.event_logs]
+    .filter((log) => log.event_type === 'stage' || log.event_type === 'created')
+    .sort((a, b) => b.changed_at.localeCompare(a.changed_at))[0]
+  return latest?.curr_stage || application.stage
+}
+
+function latestPipelineStageLabel(application: Application): string {
+  const latest = [...application.event_logs]
+    .filter((log) => log.event_type === 'stage' || log.event_type === 'created')
+    .sort((a, b) => b.changed_at.localeCompare(a.changed_at))[0]
+  return latest?.curr_stage_display || application.stage_display
+}
+
+/**
  * When a stage was finished, or when the reply landed.
  *
  * Defaults to now but stays editable: an interview on Friday afternoon
  * routinely gets logged on Monday morning, and the timeline orders entries by
  * this timestamp — so guessing "now" would file it after things that actually
  * happened later.
+ *
+ * "Got a reply" also asks for outcome (rejected / offer / …) and an optional
+ * next stage. Rejection keeps the current stage — rejected is an outcome, not
+ * a pipeline step.
  */
 function StageDoneModal({
   started,
-  stageLabel,
+  application,
+  choices,
   onClose,
   onConfirm,
 }: {
   started: boolean
-  stageLabel: string
+  application: Application
+  choices: ApplicationChoices | null
   onClose: () => void
-  onConfirm: (body: { note?: string; changed_at?: string }) => Promise<void>
+  onConfirm: (body: {
+    note?: string
+    changed_at?: string
+    stage?: string
+    outcome?: string
+  }) => Promise<void>
 }) {
+  const { notify } = useToast()
+  const pipelineStage = latestPipelineStage(application)
+  const pipelineLabel = latestPipelineStageLabel(application)
   const [when, setWhen] = useState(nowLocalInput)
   const [note, setNote] = useState('')
+  const [outcome, setOutcome] = useState(application.outcome)
+  const [stage, setStage] = useState(pipelineStage)
   const [saving, setSaving] = useState(false)
+
+  const stageList = useResource(() => applicationStages.list(), [])
+  const stageRows = stageList.data ?? []
+  const stageOptions = stageRows.map((row) => ({ id: row.id, label: row.name }))
+  function stageOptionId(key: string) {
+    return stageRows.find((row) => row.key === key)?.id ?? null
+  }
+  function keyForStageId(id: number | null, fallback: string) {
+    if (id == null) return fallback
+    return stageRows.find((row) => row.id === id)?.key ?? fallback
+  }
+
+  const keepSameStage =
+    outcome === 'rejected' ||
+    outcome === 'ghosted' ||
+    outcome === 'withdrawn' ||
+    outcome === 'declined'
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     setSaving(true)
     try {
-      await onConfirm({ note, changed_at: new Date(when).toISOString() })
+      await onConfirm({
+        note,
+        changed_at: new Date(when).toISOString(),
+        ...(started
+          ? { stage }
+          : {
+              outcome,
+              stage: keepSameStage ? pipelineStage : stage,
+            }),
+      })
       onClose()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
     } finally {
       setSaving(false)
     }
@@ -976,11 +1050,12 @@ function StageDoneModal({
     <Modal
       open
       onClose={onClose}
-      title={started ? `Mark ${stageLabel} done?` : 'Got a reply?'}
+      size="lg"
+      title={started ? 'Mark stage done?' : 'Got a reply?'}
       description={
         started
-          ? 'The stage and outcome stay as they are — this only records that the next move is theirs.'
-          : 'This closes the waiting period. Move the stage separately if things progressed.'
+          ? 'Logs that you finished this stage (green tick), then waits for their reply until the next stage move.'
+          : 'Log what the reply meant: status (rejected, offer, …) and whether the pipeline moves on.'
       }
       footer={
         <>
@@ -1001,13 +1076,64 @@ function StageDoneModal({
           autoFocus
           value={when}
           onChange={(event) => setWhen(event.target.value)}
-          help="Defaults to now — change it if it happened earlier."
         />
-        <Input
+
+        {started ? (
+          <Combobox
+            label="Stage you finished"
+            value={stageOptionId(stage)}
+            options={stageOptions}
+            onChange={(id) => setStage(keyForStageId(id, stage))}
+          />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Status / outcome"
+              value={outcome}
+              onChange={(event) => {
+                const next = event.target.value
+                setOutcome(next)
+                if (
+                  next === 'rejected' ||
+                  next === 'ghosted' ||
+                  next === 'withdrawn' ||
+                  next === 'declined'
+                ) {
+                  setStage(pipelineStage)
+                }
+              }}
+            >
+              {choices?.outcome.map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
+                </option>
+              ))}
+            </Select>
+
+            <Combobox
+              label="Next stage"
+              value={stageOptionId(keepSameStage ? pipelineStage : stage)}
+              options={stageOptions}
+              onChange={(id) => {
+                if (keepSameStage) return
+                setStage(keyForStageId(id, stage))
+              }}
+              disabled={keepSameStage}
+              placeholder={pipelineLabel}
+            />
+          </div>
+        )}
+
+        <MentionTextarea
           label="Note"
-          placeholder={started ? 'How it went, who you spoke to…' : 'What they said…'}
+          placeholder={
+            started
+              ? 'How it went, who you spoke to…'
+              : 'What they said — paste formatted notes if you like…'
+          }
           value={note}
-          onChange={(event) => setNote(event.target.value)}
+          onChange={setNote}
+          rows={4}
         />
       </form>
     </Modal>

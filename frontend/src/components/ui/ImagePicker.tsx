@@ -1,19 +1,20 @@
-import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useState } from 'react'
 import { formatApiError } from '../../api/client'
 import { cx } from '../../lib/format'
 import { Avatar } from './Avatar'
 import { Button, Spinner } from './Button'
 import { Icon } from './Icon'
-
-const MAX_BYTES = 5 * 1024 * 1024
-const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
+import { UploadDialog } from './UploadDialog'
 
 /**
  * Pick / replace / remove a picture.
  *
- * `onUpload` may be null while the record doesn't exist yet (a new contact) —
- * in that case the parent holds the File and uploads it after the create, and
- * we show a local object-URL preview so the choice is still visible.
+ * Inline it's only the picture and a "Change" button — the format rules and
+ * the preview live in the popup, where you're actually choosing a file. A
+ * pick isn't saved until you confirm it there, so a wrong file costs nothing.
+ *
+ * `onUpload` runs on save; for a record that doesn't exist yet (a new
+ * contact) the parent just holds the File and shows the object-URL it sets.
  */
 export function ImagePicker({
   name,
@@ -33,55 +34,13 @@ export function ImagePicker({
   label?: string
   size?: 'lg' | 'xl'
   shape?: 'circle' | 'square'
+  /** Extra line under the picker — only when something is worth saying. */
   helpText?: string
   className?: string
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [dragging, setDragging] = useState(false)
-
-  async function accept(file: File | undefined) {
-    if (!file) return
-    setError('')
-    if (!file.type.startsWith('image/')) {
-      setError('Pick an image file.')
-      return
-    }
-    if (file.size > MAX_BYTES) {
-      setError(`That image is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is 5MB.`)
-      return
-    }
-
-    setBusy(true)
-    try {
-      await onUpload(file)
-    } catch (err) {
-      setError(formatApiError(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function onPick(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Let the same file be re-picked after a failure.
-    event.target.value = ''
-    await accept(file)
-  }
-
-  /** Dropping a logo straight onto the avatar is the obvious gesture. */
-  function onDrop(event: DragEvent<HTMLElement>) {
-    event.preventDefault()
-    setDragging(false)
-    void accept(event.dataTransfer.files?.[0])
-  }
-
-  function onDragOver(event: DragEvent<HTMLElement>) {
-    // Without preventDefault the browser navigates to the dropped image.
-    event.preventDefault()
-    setDragging(true)
-  }
 
   async function remove() {
     if (!onRemove) return
@@ -97,22 +56,16 @@ export function ImagePicker({
   }
 
   return (
-    <div
-      className={className}
-      onDragOver={onDragOver}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
-    >
+    <div className={className}>
       <div className="flex items-center gap-4">
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setOpen(true)}
           disabled={busy}
           aria-label={src ? `Change ${label}` : `Upload a ${label}`}
           className={cx(
             'group relative focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
             shape === 'circle' ? 'rounded-full' : 'rounded-lg',
-            dragging && 'outline-2 outline-offset-2 outline-dashed outline-brand',
           )}
         >
           <Avatar name={name} src={src} size={size} shape={shape} />
@@ -132,9 +85,9 @@ export function ImagePicker({
             <Button
               type="button"
               size="sm"
-              onClick={() => inputRef.current?.click()}
+              onClick={() => setOpen(true)}
               disabled={busy}
-              icon={<Icon name="plus" size={14} />}
+              icon={<Icon name="edit" size={14} />}
             >
               {src ? 'Change' : 'Upload'}
             </Button>
@@ -151,24 +104,28 @@ export function ImagePicker({
               </Button>
             ) : null}
           </div>
-          <p className="text-[11.5px] text-ink-3">
-            {helpText ?? 'PNG, JPG, WEBP or GIF, up to 5MB. Cropped to a square.'}
-          </p>
+          {helpText ? <p className="text-[11.5px] text-ink-3">{helpText}</p> : null}
         </div>
       </div>
-
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPT}
-        onChange={onPick}
-        className="hidden"
-      />
 
       {error ? (
         <p role="alert" className="mt-2 text-[12px] text-critical">
           {error}
         </p>
+      ) : null}
+
+      {open ? (
+        <UploadDialog
+          title={src ? `Change ${label}` : `Upload a ${label}`}
+          accept="image"
+          current={src}
+          shape={shape}
+          saveLabel={`Save ${label}`}
+          onClose={() => setOpen(false)}
+          onSave={async (file) => {
+            await onUpload(file)
+          }}
+        />
       ) : null}
     </div>
   )

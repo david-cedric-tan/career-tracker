@@ -7,9 +7,15 @@ export type ReminderAlert = {
   key: string
   title: string
   subtitle: string
+  /** Where a click goes. Defaults to the calendar. */
+  to?: string
+  /** Overrides navigation — e.g. opening the ticket window in place. */
+  onOpen?: () => void
+  /** Small icon on the banner; a bell unless told otherwise. */
+  icon?: string
 }
 
-const AUTO_DISMISS_MS = 6000
+const AUTO_DISMISS_MS = 8000
 
 /** Stack of iOS-style banner notifications, top-center, newest on top. */
 export function IOSNotificationStack({
@@ -50,7 +56,8 @@ function IOSNotificationBanner({
   }
 
   function open() {
-    navigate('/calendar')
+    if (alert.onOpen) alert.onOpen()
+    else navigate(alert.to ?? '/calendar')
     dismiss()
   }
 
@@ -69,14 +76,14 @@ function IOSNotificationBanner({
         if (event.key === 'Enter' || event.key === ' ') open()
       }}
       className={cx(
-        'pointer-events-auto w-full max-w-sm cursor-pointer rounded-2xl border border-white/10',
-        'bg-ink/85 px-3.5 py-3 shadow-[0_16px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl',
+        'ios-banner pointer-events-auto w-full max-w-sm cursor-pointer rounded-2xl',
+        'px-3.5 py-3 text-white backdrop-blur-xl',
         leaving ? 'ios-banner-exit' : 'ios-banner-enter',
       )}
     >
       <div className="flex items-start gap-2.5">
         <span className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-brand text-white">
-          <Icon name="bell" size={16} />
+          <Icon name={alert.icon ?? 'bell'} size={16} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">

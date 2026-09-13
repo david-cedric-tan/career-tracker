@@ -46,6 +46,7 @@ export function IdentityCard() {
     return {
       first_name: user?.first_name ?? '',
       last_name: user?.last_name ?? '',
+      preferred_name: user?.preferred_name ?? '',
       email: user?.email ?? '',
       mobile_number: user?.mobile_number ?? '',
       school_email: user?.school_email ?? '',
@@ -150,6 +151,15 @@ export function IdentityCard() {
             />
           </div>
           <Input
+            label="Preferred name"
+            placeholder={user?.first_name?.split(' ')[0] || 'Dave'}
+            maxLength={40}
+            value={form.preferred_name}
+            error={errors.preferred_name}
+            help="What the sidebar and greeting call you — keep it short."
+            onChange={(event) => setForm((prev) => ({ ...prev, preferred_name: event.target.value }))}
+          />
+          <Input
             label="Email"
             type="email"
             required
@@ -220,7 +230,8 @@ export function IdentityCard() {
         <dl className="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">
           <Detail label="First name" value={user?.first_name} />
           <Detail label="Last name" value={user?.last_name} />
-          <Detail label="Email" value={user?.email} className="sm:col-span-2" />
+          <Detail label="Preferred name" value={user?.preferred_name} />
+          <Detail label="Email" value={user?.email} />
           <Detail label="Mobile number" value={user?.mobile_number} />
           <Detail
             label="LinkedIn"

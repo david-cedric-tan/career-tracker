@@ -1,16 +1,19 @@
 import type { ReactNode } from 'react'
+import { cx } from '../../lib/format'
 
 export function PageHeader({
   title,
   subtitle,
   action,
   mark,
+  subtitleClassName,
 }: {
-  title: string
+  title: ReactNode
   subtitle?: ReactNode
   action?: ReactNode
   /** An identifying image beside the title — a company's logo, say. */
   mark?: ReactNode
+  subtitleClassName?: string
 }) {
   return (
     <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -24,7 +27,9 @@ export function PageHeader({
             rather than on a glass card, and the tertiary tone all but
             disappeared against a light photo in dark mode. A page subtitle is
             secondary text anyway — `ink-3` is for hints inside a surface. */}
-        {subtitle ? <p className="mt-1 text-sm text-ink-2">{subtitle}</p> : null}
+        {subtitle ? (
+          <p className={cx('mt-1 text-sm text-ink-2', subtitleClassName)}>{subtitle}</p>
+        ) : null}
         </div>
       </div>
       {action ? <div className="flex shrink-0 gap-2">{action}</div> : null}

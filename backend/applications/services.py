@@ -155,12 +155,16 @@ def log_creation(application, note="Application created."):
     )
 
 
-def log_waiting(application, started, note="", changed_at=None):
+def log_waiting(application, started, note="", changed_at=None, stage=None):
     """Record the ball moving into (or out of) the employer's court.
 
     Its own event type rather than a stage or outcome row: waiting is a state
     layered on top of both, and the dashboard time series counts stage rows as
     pipeline movement — a "waiting" row is not that.
+
+    `stage` is the pipeline step the wait belongs to (usually the one just
+    finished). Callers can override when the application's current stage is
+    stale relative to a backdated history.
     """
     if changed_at is None:
         changed_at = _free_timestamp(application)
@@ -177,7 +181,30 @@ def log_waiting(application, started, note="", changed_at=None):
             EventType.WAITING_STARTED if started else EventType.WAITING_ENDED
         ),
         prev_stage="",
-        curr_stage=application.stage,
+        curr_stage=stage or application.stage,
+        prev_outcome="",
+        curr_outcome=application.outcome,
+        changes=[],
+        changed_at=changed_at,
+        note=note or "",
+    )
+
+
+def log_stage_done(application, note="", changed_at=None, stage=None):
+    """Record that you finished a stage — before waiting on their reply."""
+    if changed_at is None:
+        changed_at = _free_timestamp(application)
+    else:
+        while AppsEventLog.objects.filter(
+            application=application, changed_at=changed_at
+        ).exists():
+            changed_at += timedelta(microseconds=1)
+
+    return AppsEventLog.objects.create(
+        application=application,
+        event_type=EventType.STAGE_DONE,
+        prev_stage="",
+        curr_stage=stage or application.stage,
         prev_outcome="",
         curr_outcome=application.outcome,
         changes=[],

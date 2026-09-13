@@ -5,10 +5,12 @@ Environment variables (loaded from backend/.env):
     DJANGO_SECRET_KEY, DJANGO_DEBUG, DJANGO_ALLOWED_HOSTS,
     POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_HOST / POSTGRES_PORT
     (falls back to SQLite when USE_POSTGRES is not truthy),
-    CORS_ALLOWED_ORIGINS
+    CORS_ALLOWED_ORIGINS,
+    API_ACCESS_LOG / API_ACCESS_LOG_COLOR (per-request access log)
 """
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -76,6 +78,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Last, so the user it reports is the one the auth middleware resolved.
+    "config.access_log.AccessLogMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -174,3 +178,56 @@ CORS_ALLOW_CREDENTIALS = True
 # the SPA can't read the filename off a download and every backup would save as
 # a generic name instead of a dated, user-stamped one.
 CORS_EXPOSE_HEADERS = ["Content-Disposition"]
+
+# Needed when the app is served over HTTPS through the frontend's proxy
+# (`run.sh --https`): Django sees a plain-HTTP request but an `https://` Origin
+# header, and without this it reads that mismatch as cross-site.
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [])
+
+# In `run.sh --https` the Vite dev server terminates TLS and proxies to Django
+# over plain HTTP, forwarding the original scheme. Trusting the header is what
+# makes `request.build_absolute_uri()` — every photo and logo URL — say
+# https://, so a secure page can actually load them. Only the dev proxy sits in
+# front of this server, so the header can't be spoofed from outside.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# The account that can read and reply to every user's refinement notes. This
+# grants nothing else — it is not staff, and it opens no admin.
+DEVELOPER_USERNAME = os.getenv("DEVELOPER_USERNAME", "DavieeTan")
+
+# Per-request access log (config/access_log.py): who called which endpoint,
+# from which address, with what result. Only paths under API_ACCESS_LOG_PATHS
+# are logged, so static and media traffic doesn't drown out the API calls.
+# Off under the test runner by default: 395 tests' worth of request lines buries
+# the actual failures.
+TESTING = "test" in sys.argv
+API_ACCESS_LOG = env_bool("API_ACCESS_LOG", not TESTING)
+# auto (colour only when the terminal supports it) / always / never.
+API_ACCESS_LOG_COLOR = os.getenv("API_ACCESS_LOG_COLOR", "auto").strip().lower()
+API_ACCESS_LOG_PATHS = tuple(env_list("API_ACCESS_LOG_PATHS", ["/api/"]))
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "access": {"format": "%(asctime)s %(message)s", "datefmt": "%H:%M:%S"},
+    },
+    "handlers": {
+        "access": {
+            "class": "logging.StreamHandler",
+            "formatter": "access",
+        },
+    },
+    "loggers": {
+        "api.access": {
+            "handlers": ["access"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # runserver logs its own line for every request, which would duplicate
+        # each access-log entry without adding the user. Errors still surface.
+        "django.server": {
+            "level": "WARNING" if API_ACCESS_LOG else "INFO",
+        },
+    },
+}

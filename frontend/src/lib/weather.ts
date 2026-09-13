@@ -1,4 +1,4 @@
-import { resolveCoords } from './sunTimes'
+import { resolveCoords } from './location'
 
 export type WeatherSnapshot = {
   temperatureC: number
@@ -118,15 +118,16 @@ async function resolveLocationLabel(lat: number, lon: number): Promise<string | 
 /**
  * Current conditions for the header's clock/weather widget. Open-Meteo needs
  * no API key and takes lat/lon directly — reuses the same cached coordinates
- * as the Dynamic theme's sunrise/sunset lookup (see sunTimes.ts), so there's
- * only ever one geolocation prompt across the whole app.
+ * as the Dynamic theme's sunrise/sunset lookup. Location is only used after
+ * this account has allowed it (see location.ts); a decline just means the
+ * clock renders alone.
  */
 export async function fetchWeather(): Promise<WeatherSnapshot | null> {
-  const cached = readCache()
-  if (cached) return cached
-
   const coords = await resolveCoords()
   if (!coords) return null
+
+  const cached = readCache()
+  if (cached) return cached
 
   try {
     const url = new URL('https://api.open-meteo.com/v1/forecast')

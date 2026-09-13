@@ -1,6 +1,8 @@
 import { cx, initials } from '../../lib/format'
 
 const SIZES = {
+  /** Sits inline with small label text — a face next to a name, not a portrait. */
+  xxs: 'size-5 text-[9px]',
   xs: 'size-7 text-[11px]',
   sm: 'size-8 text-[12px]',
   md: 'size-10 text-[13px]',

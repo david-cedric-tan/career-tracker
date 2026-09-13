@@ -29,8 +29,10 @@ class EventReminderSerializer(serializers.ModelSerializer):
 
 class CalendarEventSerializer(serializers.ModelSerializer):
     reminders = EventReminderSerializer(many=True, required=False)
-    company_name = serializers.CharField(source="company.name", read_only=True, default=None)
+    company_name = serializers.CharField(source="company.display_name", read_only=True, default=None)
     application_label = serializers.SerializerMethodField()
+    application_logo = serializers.SerializerMethodField()
+    company_logo = serializers.SerializerMethodField()
     # Enough to draw a person without a second round-trip, mirroring the shape
     # Person.company_details already uses for the company bubble view.
     people_details = serializers.SerializerMethodField()
@@ -46,16 +48,16 @@ class CalendarEventSerializer(serializers.ModelSerializer):
             "end_time",
             "notes",
             "is_done",
-            "company", "company_name",
-            "application", "application_label",
+            "company", "company_name", "company_logo",
+            "application", "application_label", "application_logo",
             "people", "people_details",
             "reminders",
             "created_at",
             "updated_at",
         ]
         read_only_fields = [
-            "id", "company_name", "application_label", "people_details",
-            "created_at", "updated_at",
+            "id", "company_name", "company_logo", "application_label",
+            "application_logo", "people_details", "created_at", "updated_at",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -72,10 +74,22 @@ class CalendarEventSerializer(serializers.ModelSerializer):
                 user=request.user
             )
 
+    def _absolute(self, image):
+        if not image:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_application_logo(self, event):
+        return self._absolute(event.application.company.logo) if event.application_id else None
+
+    def get_company_logo(self, event):
+        return self._absolute(event.company.logo) if event.company_id else None
+
     def get_application_label(self, event):
         if not event.application:
             return None
-        return f"{event.application.company.name} · {event.application.get_stage_display()}"
+        return f"{event.application.company.display_name} · {event.application.get_stage_display()}"
 
     def get_people_details(self, event):
         request = self.context.get("request")

@@ -5,7 +5,6 @@ from config.images import validate_image
 
 from .models import (
     Application,
-    ApplicationDocument,
     ApplicationJobListing,
     ApplicationStage,
     AppsEventLog,
@@ -14,6 +13,7 @@ from .models import (
     EventType,
     Industry,
     JobListing,
+    LibraryDocument,
     Location,
     Outcome,
     Resume,
@@ -138,6 +138,32 @@ def stage_label(key):
     return dict(Stage.choices).get(key, key)
 
 
+def stage_position_map():
+    """key → pipeline position for furthest-stage ranking."""
+    return {row.key: row.position for row in ApplicationStage.objects.all()}
+
+
+def furthest_stage_key(application, positions=None):
+    """Furthest pipeline step this application has ever reached.
+
+    Uses current stage plus every stage/created/stage_done log row, ranked by
+    catalog position. Falls back to the current stage when nothing ranks.
+    """
+    positions = positions if positions is not None else stage_position_map()
+    keys = {application.stage} if application.stage else set()
+    logs = application.event_logs.all()
+    for log in logs:
+        if log.event_type in {
+            EventType.STAGE,
+            EventType.CREATED,
+            EventType.STAGE_DONE,
+        } and log.curr_stage:
+            keys.add(log.curr_stage)
+    if not keys:
+        return application.stage
+    return max(keys, key=lambda key: positions.get(key, -1))
+
+
 class ApplicationStageSerializer(serializers.ModelSerializer):
     """`key` is what applications and the event log actually store; the API
     generates it from the name, so callers only ever send a name."""
@@ -183,10 +209,12 @@ class ResumeSerializer(serializers.ModelSerializer):
     file_kind = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     target_company_names = serializers.SerializerMethodField()
+    target_companies_info = serializers.SerializerMethodField()
     target_role_names = serializers.SerializerMethodField()
     application_count = serializers.IntegerField(
         source="applications.count", read_only=True
     )
+    applications_info = serializers.SerializerMethodField()
 
     class Meta:
         model = Resume
@@ -197,6 +225,7 @@ class ResumeSerializer(serializers.ModelSerializer):
             "variant_type_display",
             "target_companies",
             "target_company_names",
+            "target_companies_info",
             "target_roles",
             "target_role_names",
             "notes",
@@ -206,6 +235,7 @@ class ResumeSerializer(serializers.ModelSerializer):
             "file_kind",
             "file_size",
             "application_count",
+            "applications_info",
             "created_at",
             "updated_at",
         ]
@@ -213,12 +243,13 @@ class ResumeSerializer(serializers.ModelSerializer):
             "id",
             "variant_type_display",
             "file",
-            "file_name",
             "file_kind",
             "file_size",
             "target_company_names",
+            "target_companies_info",
             "target_role_names",
             "application_count",
+            "applications_info",
             "created_at",
             "updated_at",
         ]
@@ -232,6 +263,20 @@ class ResumeSerializer(serializers.ModelSerializer):
     def get_file_kind(self, resume):
         return document_kind(resume.file_name) if resume.file else None
 
+    def validate_file_name(self, value):
+        """Editable for reference; keeps its extension so the kind label holds."""
+        value = (value or "").strip()
+        if not value:
+            return value
+        instance = self.instance
+        if instance and instance.file_name:
+            current_ext = document_kind(instance.file_name)
+            if current_ext and document_kind(value) != current_ext:
+                raise serializers.ValidationError(
+                    f"Keep the .{instance.file_name.rsplit('.', 1)[-1]} extension."
+                )
+        return value
+
     def get_file_size(self, resume):
         """Bytes, or None — a missing file on disk shouldn't 500 the list."""
         if not resume.file:
@@ -244,8 +289,43 @@ class ResumeSerializer(serializers.ModelSerializer):
     def get_target_company_names(self, obj):
         return [c.name for c in obj.target_companies.all()]
 
+    def get_target_companies_info(self, obj):
+        """Short label + logo for File Directory chips."""
+        request = self.context.get("request")
+        rows = []
+        for company in obj.target_companies.all():
+            logo = None
+            if company.logo:
+                logo = (
+                    request.build_absolute_uri(company.logo.url)
+                    if request
+                    else company.logo.url
+                )
+            rows.append(
+                {
+                    "id": company.id,
+                    "name": company.name,
+                    "short_name": company.display_name,
+                    "logo": logo,
+                }
+            )
+        return rows
+
     def get_target_role_names(self, obj):
         return [r.name for r in obj.target_roles.all()]
+
+    def get_applications_info(self, obj):
+        """The applications this version was sent with — enough for a
+        hover list on the File Directory card without a second request."""
+        return [
+            {
+                "id": application.id,
+                "company_name": application.company.display_name,
+                "company_logo": company_logo_url(application, self.context),
+                "stage_display": stage_label(application.stage),
+            }
+            for application in obj.applications.all()
+        ]
 
     def validate_label(self, value):
         """uniq_resume_label_per_user is (user, label), and the client never
@@ -265,7 +345,7 @@ class ResumeSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class JobListingSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source="company.name", read_only=True)
+    company_name = serializers.CharField(source="company.display_name", read_only=True)
     role_name = serializers.CharField(source="role.name", read_only=True)
     location_name = serializers.CharField(
         source="location.name", read_only=True, default=None
@@ -392,7 +472,7 @@ class AppsEventLogSerializer(serializers.ModelSerializer):
     service layer, never through the API."""
 
     company_name = serializers.CharField(
-        source="application.company.name", read_only=True
+        source="application.company.display_name", read_only=True
     )
     event_type_display = serializers.CharField(
         source="get_event_type_display", read_only=True
@@ -445,17 +525,37 @@ class AppsEventLogSerializer(serializers.ModelSerializer):
 # endpoint should not drag every nested listing along for 40 rows.
 # ---------------------------------------------------------------------------
 
-class ApplicationDocumentSerializer(serializers.ModelSerializer):
-    """Read shape for a document in the application's gallery."""
+class LibraryDocumentSerializer(serializers.ModelSerializer):
+    """Read shape for a File Directory / application-gallery document."""
 
     file = serializers.SerializerMethodField()
     file_kind = serializers.SerializerMethodField()
+    application_company = serializers.SerializerMethodField()
+    application_company_name = serializers.SerializerMethodField()
+    application_company_logo = serializers.SerializerMethodField()
+    company_name = serializers.CharField(source="company.display_name", read_only=True, default=None)
+    company_full_name = serializers.CharField(source="company.name", read_only=True, default=None)
+    company_logo = serializers.SerializerMethodField()
 
     class Meta:
-        model = ApplicationDocument
+        model = LibraryDocument
         fields = [
-            "id", "title", "description", "file", "file_kind", "kind",
-            "original_name", "position", "created_at",
+            "id",
+            "title",
+            "description",
+            "file",
+            "file_kind",
+            "kind",
+            "original_name",
+            "application",
+            "application_company",
+            "application_company_name",
+            "application_company_logo",
+            "company", "company_name", "company_full_name", "company_logo",
+            "tags",
+            "position",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = fields
 
@@ -466,6 +566,73 @@ class ApplicationDocumentSerializer(serializers.ModelSerializer):
 
     def get_file_kind(self, document):
         return document_kind(document.original_name or document.file.name)
+
+    def get_application_company(self, document):
+        """Prefer the company's short name for compact File Directory tags."""
+        company = document.application.company if document.application_id else None
+        if not company:
+            return None
+        return company.display_name
+
+    def get_application_company_name(self, document):
+        company = document.application.company if document.application_id else None
+        return company.name if company else None
+
+    def get_company_logo(self, document):
+        if not document.company_id or not document.company.logo:
+            return None
+        request = self.context.get("request")
+        url = document.company.logo.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_application_company_logo(self, document):
+        company = document.application.company if document.application_id else None
+        if not company or not company.logo:
+            return None
+        request = self.context.get("request")
+        return (
+            request.build_absolute_uri(company.logo.url)
+            if request
+            else company.logo.url
+        )
+
+
+# Nested application gallery still uses the historical field name `documents`.
+ApplicationDocumentSerializer = LibraryDocumentSerializer
+
+
+class LibraryDocumentWriteSerializer(serializers.Serializer):
+    """Create/update payload for library documents (multipart on create)."""
+
+    file = serializers.FileField(required=False)
+    title = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    application = serializers.PrimaryKeyRelatedField(
+        queryset=Application.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    company = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=50),
+        required=False,
+    )
+    # The name the file is known by — defaults to what was uploaded, editable
+    # for reference. Downloads use the title; this is the "which file was
+    # that" note beside it.
+    original_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            self.fields["application"].queryset = Application.objects.filter(
+                user=request.user
+            )
 
 
 class ApplicationDocumentUploadSerializer(serializers.Serializer):
@@ -481,6 +648,32 @@ class ApplicationDocumentEditSerializer(serializers.Serializer):
 
     title = serializers.CharField(max_length=255)
     description = serializers.CharField(required=False, allow_blank=True)
+    application = serializers.PrimaryKeyRelatedField(
+        queryset=Application.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    company = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=50),
+        required=False,
+    )
+    # The name the file is known by — defaults to what was uploaded, editable
+    # for reference. Downloads use the title; this is the "which file was
+    # that" note beside it.
+    original_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            self.fields["application"].queryset = Application.objects.filter(
+                user=request.user
+            )
 
 
 def outcome_changed_at(application):
@@ -525,9 +718,11 @@ def company_logo_url(application, context):
 
 
 class ApplicationListSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source="company.name", read_only=True)
+    company_name = serializers.CharField(source="company.display_name", read_only=True)
     company_logo = serializers.SerializerMethodField()
     stage_display = serializers.SerializerMethodField()
+    furthest_stage = serializers.SerializerMethodField()
+    furthest_stage_display = serializers.SerializerMethodField()
 
     def get_company_logo(self, application):
         return company_logo_url(application, self.context)
@@ -535,6 +730,20 @@ class ApplicationListSerializer(serializers.ModelSerializer):
 
     def get_stage_display(self, application):
         return stage_label(application.stage)
+
+    def _positions(self):
+        cached = self.context.get("_stage_positions")
+        if cached is None:
+            cached = stage_position_map()
+            self.context["_stage_positions"] = cached
+        return cached
+
+    def get_furthest_stage(self, application):
+        return furthest_stage_key(application, self._positions())
+
+    def get_furthest_stage_display(self, application):
+        return stage_label(self.get_furthest_stage(application))
+
     listing_count = serializers.IntegerField(source="listing_links.count", read_only=True)
     awaiting_days = serializers.IntegerField(read_only=True)
     deadline = serializers.SerializerMethodField()
@@ -556,6 +765,7 @@ class ApplicationListSerializer(serializers.ModelSerializer):
             "id",
             "company", "company_name", "company_logo",
             "stage", "stage_display",
+            "furthest_stage", "furthest_stage_display",
             "outcome", "outcome_display",
             "applied_at",
             "follow_up_date",
@@ -578,7 +788,7 @@ class ApplicationListSerializer(serializers.ModelSerializer):
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
-    company_name = serializers.CharField(source="company.name", read_only=True)
+    company_name = serializers.CharField(source="company.display_name", read_only=True)
     company_logo = serializers.SerializerMethodField()
     stage_display = serializers.SerializerMethodField()
 
@@ -593,7 +803,9 @@ class ApplicationSerializer(serializers.ModelSerializer):
         source="resume.label", read_only=True, default=None
     )
     event_logs = AppsEventLogSerializer(many=True, read_only=True)
-    documents = ApplicationDocumentSerializer(many=True, read_only=True)
+    documents = LibraryDocumentSerializer(
+        source="library_documents", many=True, read_only=True
+    )
     awaiting_days = serializers.IntegerField(read_only=True)
     deadline = serializers.SerializerMethodField()
     outcome_changed_at = serializers.SerializerMethodField()

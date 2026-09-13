@@ -13,7 +13,7 @@ import { useToast } from '../ui/toast-context'
 const CATEGORIES = [
   { value: 'portfolio', label: 'Portfolio' },
   { value: 'github', label: 'GitHub' },
-  { value: 'website', label: 'Personal site' },
+  { value: 'website', label: 'Personal Site' },
   { value: 'social', label: 'Social' },
   { value: 'other', label: 'Other' },
 ]

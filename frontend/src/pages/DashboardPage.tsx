@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { dashboard } from '../api/resources'
 import type { ActivityItem } from '../api/types'
@@ -13,10 +13,12 @@ import { PageHeader } from '../components/layout/PageHeader'
 import { Card, CardHeader } from '../components/ui/Card'
 import { ClockWeather } from '../components/ui/ClockWeather'
 import { Icon } from '../components/ui/Icon'
+import { InfoHint } from '../components/ui/InfoHint'
 import { EmptyState, ErrorState, Loading, Refreshing } from '../components/ui/States'
 import { useAuth } from '../auth/context'
 import { useResource } from '../hooks/useResource'
-import { cx, displayName, formatDate, relativeDay, relativeTime } from '../lib/format'
+import { cx, shortName, formatDate, relativeDay, relativeTime } from '../lib/format'
+import { readViewState, rememberViewState } from '../lib/listState'
 
 const PERIODS = [
   // "All" is the default: the dashboard's job on open is "how is this going",
@@ -31,8 +33,13 @@ type Period = (typeof PERIODS)[number]['value']
 export function DashboardPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [period, setPeriod] = useState<Period>('all')
-  const [showTable, setShowTable] = useState(false)
+  const saved = readViewState<{ period?: Period; showTable?: boolean }>('dashboard')
+  const [period, setPeriod] = useState<Period>(saved?.period ?? 'all')
+  const [showTable, setShowTable] = useState(Boolean(saved?.showTable))
+
+  useEffect(() => {
+    rememberViewState('dashboard', { period, showTable })
+  }, [period, showTable])
 
   // Pipeline/Outcomes bars reuse Applications' own filter params, so a click
   // on either just deep-links there with a stateful way back to this page.
@@ -94,8 +101,17 @@ export function DashboardPage() {
       {/* Ordinary in-flow content, same as every other page's header — it
           scrolls away with the rest of the page rather than staying pinned. */}
       <PageHeader
-        title={`Hi, ${displayName(user)}`}
-        subtitle="Where your search stands today."
+        title={`Hi, ${shortName(user)}`}
+        subtitle={
+          <span className="inline-flex items-center gap-2.5">
+            <span
+              className="h-px w-8 shrink-0 bg-gradient-to-r from-brand/70 to-brand/15"
+              aria-hidden="true"
+            />
+            <span className="italic tracking-wide">Where your search stands today</span>
+          </span>
+        }
+        subtitleClassName="mt-2 text-[13px] text-ink-3"
         action={
           <div className="hidden lg:block">
             <ClockWeather />
@@ -125,7 +141,9 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* These four stay put — always the first row, never hidden or
+          rearranged. Everything below is the board. */}
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
         <StatTile
           label="Active Applications"
           value={stats?.applications.active ?? 0}
@@ -139,7 +157,7 @@ export function DashboardPage() {
           hint={`${stats?.applications.rejected ?? 0} rejected`}
           icon="check"
           tone="good"
-          to="/applications?outcome=offer_received"
+          to="/applications?outcome=offers"
         />
         <StatTile
           label="Todos Overdue"
@@ -159,10 +177,6 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* Every panel below is a board widget — movable, resizable and
-          hideable — rather than a fixed section. The page still owns their
-          data and local state (period, chart-vs-table); the board only
-          decides where each one sits and how wide it runs. */}
       <WidgetBoard
         summary={stats}
         attention={attention.data}
@@ -230,7 +244,7 @@ export function DashboardPage() {
                   sentence and then looking for what it meant is not. */}
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <span className="text-[11.5px] font-medium uppercase tracking-wide text-ink-3">
-                  By stage
+                  By Stage
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-warning/30 bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-[#8a5d00] dark:text-warning">
                   <span className="size-2 shrink-0 rounded-sm bg-warning" aria-hidden="true" />
@@ -297,7 +311,14 @@ export function DashboardPage() {
 
           activity: (
             <Card className="h-full">
-              <CardHeader title="Recent Activity" subtitle="Across every domain" />
+              <CardHeader
+                title={
+                  <span className="inline-flex items-center gap-1.5">
+                    Recent Activity
+                    <InfoHint label="Across every domain" />
+                  </span>
+                }
+              />
               <div className="mt-2">
                 {activity.initial ? (
                   <Loading />

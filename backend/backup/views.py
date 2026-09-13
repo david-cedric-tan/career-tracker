@@ -165,3 +165,28 @@ def import_archive(request):
     if manifest_rows:
         files_attached = reattach_media(request.user, refs, manifest_rows, media_bytes)
     return Response({"dry_run": False, "counts": counts, "files_attached": files_attached})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def import_from_ai(request):
+    """Merge BYO-AI JSON into the account (does not wipe existing data).
+
+    Body: the parsed object from `frontend/src/lib/importGuide.ts`, either as
+    raw JSON or `{"payload": {...}}`.
+    """
+    from .ai_import import import_tracker_payload
+
+    payload = request.data
+    if isinstance(payload, dict) and "payload" in payload and isinstance(
+        payload.get("payload"), dict
+    ):
+        payload = payload["payload"]
+
+    try:
+        summary = import_tracker_payload(request.user, payload)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response(summary)
+

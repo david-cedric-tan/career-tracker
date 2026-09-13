@@ -77,55 +77,10 @@ export function isDaytime(lat: number, lon: number, at = new Date()): boolean {
   return at >= times.sunrise && at < times.sunset
 }
 
-const COORDS_KEY = 'dynamicThemeCoords'
 const FALLBACK_START_HOUR = 7
 const FALLBACK_END_HOUR = 19
 
-type Coords = { lat: number; lon: number }
-
-function readCachedCoords(): Coords | null {
-  try {
-    const raw = localStorage.getItem(COORDS_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<Coords>
-    if (typeof parsed.lat === 'number' && typeof parsed.lon === 'number') return parsed as Coords
-  } catch {
-    // Private mode, corrupt value, whatever — just re-request.
-  }
-  return null
-}
-
-function writeCachedCoords(coords: Coords): void {
-  try {
-    localStorage.setItem(COORDS_KEY, JSON.stringify(coords))
-  } catch {
-    // Fine — geolocation just gets asked again next time.
-  }
-}
-
-/**
- * Resolves to the browser's coordinates (cached across reloads so Dynamic
- * mode doesn't re-prompt every visit), or null if geolocation is denied,
- * unavailable, or too slow — callers fall back to a fixed daytime window.
- */
-export function resolveCoords(): Promise<Coords | null> {
-  const cached = readCachedCoords()
-  if (cached) return Promise.resolve(cached)
-
-  if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve(null)
-
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = { lat: position.coords.latitude, lon: position.coords.longitude }
-        writeCachedCoords(coords)
-        resolve(coords)
-      },
-      () => resolve(null),
-      { timeout: 8000, maximumAge: 24 * 60 * 60 * 1000 },
-    )
-  })
-}
+export { resolveCoords } from './location'
 
 /** No location available at all — a fixed, no-permission-needed day window. */
 export function isDaytimeFallback(at = new Date()): boolean {

@@ -5,6 +5,7 @@ from applications.models import Company
 from config.images import validate_image
 
 from .models import (
+    MessageChannel,
     CADENCE_NEVER,
     ContactChannel,
     ContactMethod,
@@ -108,6 +109,11 @@ class PersonSerializer(serializers.ModelSerializer):
     preferred_contact_display = serializers.SerializerMethodField()
     photo = serializers.SerializerMethodField()
     catchup_count = serializers.SerializerMethodField()
+    # How the last contact happened, off the latest catch-up — "last met" is
+    # often "last messaged", and the format field already records which.
+    last_message_channel_display = serializers.CharField(
+        source="get_last_message_channel_display", read_only=True
+    )
 
     class Meta:
         model = Person
@@ -124,6 +130,7 @@ class PersonSerializer(serializers.ModelSerializer):
             "connections", "connection_details",
             "applications", "application_labels",
             "last_meeting_at",
+            "last_messaged_at", "last_message_channel", "last_message_channel_display",
             "next_chat_at",
             "cadence_months",
             "notes",
@@ -139,7 +146,7 @@ class PersonSerializer(serializers.ModelSerializer):
             "company_names", "company_details", "connection_details",
             "application_labels",
             "contact_methods", "preferred_contact_display", "photo",
-            "catchup_count", "created_at", "updated_at",
+            "catchup_count", "last_message_channel_display", "created_at", "updated_at",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -160,6 +167,7 @@ class PersonSerializer(serializers.ModelSerializer):
     def get_catchup_count(self, obj):
         return obj.catchups.count()
 
+
     def get_photo(self, obj):
         """Absolute URL so the SPA on :5173 can load it from the API origin."""
         if not obj.photo:
@@ -168,7 +176,7 @@ class PersonSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(obj.photo.url) if request else obj.photo.url
 
     def get_company_names(self, obj):
-        return [c.name for c in obj.companies.all()]
+        return [c.display_name for c in obj.companies.all()]
 
     def get_company_details(self, obj):
         """Name + logo per company, plus the membership's own dates, so the
@@ -183,7 +191,8 @@ class PersonSerializer(serializers.ModelSerializer):
         return [
             {
                 "id": link.company.id,
-                "name": link.company.name,
+                "name": link.company.display_name,
+                "full_name": link.company.name,
                 "logo": (
                     request.build_absolute_uri(link.company.logo.url)
                     if link.company.logo and request
@@ -211,7 +220,7 @@ class PersonSerializer(serializers.ModelSerializer):
                 # Where they are now, for the tile's hover — past employers are
                 # history the card has no room to explain.
                 "company_names": [
-                    link.company.name
+                    link.company.display_name
                     for link in other.company_links.all()
                     if not link.is_past
                 ],
@@ -244,7 +253,7 @@ class PersonSerializer(serializers.ModelSerializer):
 
     def get_application_labels(self, obj):
         return [
-            {"id": a.id, "label": f"{a.company.name} · {a.get_stage_display()}"}
+            {"id": a.id, "label": f"{a.company.display_name} · {a.get_stage_display()}"}
             for a in obj.applications.all()
         ]
 
@@ -396,6 +405,7 @@ class PersonListSerializer(PersonSerializer):
             "source", "source_display",
             "companies", "company_names", "company_details",
             "last_meeting_at",
+            "last_messaged_at", "last_message_channel", "last_message_channel_display",
             "next_chat_at",
             "contact_methods",
             "preferred_contact_display",
@@ -414,6 +424,7 @@ def choice_payload():
     return {
         "status": pack(PersonStatus),
         "channel": pack(ContactChannel),
+        "message_channel": pack(MessageChannel),
     }
 
 

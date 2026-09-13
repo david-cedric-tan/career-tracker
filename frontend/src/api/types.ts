@@ -11,7 +11,12 @@ export type User = {
   avatar: string | null
   /** Absolute URL of the user's own Intern-mode background, or null. */
   custom_wallpaper: string | null
+  /** Absolute URL of the dashboard desk photo, or null. */
+  pinned_photo: string | null
+  pinned_photo_caption: string
   mobile_number: string
+  /** Short form for the sidebar and greeting — falls back to the first name. */
+  preferred_name: string
   school_email: string
   /** Optional third address, separate from the login and school/work ones. */
   personal_email: string
@@ -28,6 +33,9 @@ export type User = {
   celebrations_enabled: boolean | null
   /** The dashboard board's arrangement, opaque to the API. */
   dashboard_layout: DashboardLayout | null
+  /** Granted server-side. Lets this account read and reply to everyone's
+      refinement notes; grants nothing else. */
+  is_developer: boolean
 }
 
 /** Widget ids are the frontend's vocabulary; `spans` is columns out of 4. */
@@ -97,7 +105,9 @@ export type Company = {
  */
 export type CompanyRef = {
   id: number
+  /** Short form when one is set — what the UI shows. */
   name: string
+  full_name: string
   logo: string | null
   /** Their title at this company, if recorded. */
   title: string
@@ -137,6 +147,13 @@ export type Resume = {
   variant_type_display: string
   target_companies: number[]
   target_company_names: string[]
+  /** Companies with logos for File Directory chips. */
+  target_companies_info: {
+    id: number
+    name: string
+    short_name: string
+    logo: string | null
+  }[]
   target_roles: number[]
   target_role_names: string[]
   notes: string
@@ -149,6 +166,13 @@ export type Resume = {
   file_kind: string | null
   file_size: number | null
   application_count: number
+  /** The applications sent with this version, for the card's hover list. */
+  applications_info: {
+    id: number
+    company_name: string
+    company_logo: string | null
+    stage_display: string
+  }[]
   created_at: string
   updated_at: string
 }
@@ -194,6 +218,7 @@ export type EventType =
   | 'edited'
   | 'waiting_started'
   | 'waiting_ended'
+  | 'stage_done'
 
 /** One field that moved in a save, rendered for display by the API. */
 export type FieldChange = {
@@ -230,6 +255,9 @@ export type ApplicationSummary = {
   company_logo: string | null
   stage: string
   stage_display: string
+  /** Furthest pipeline step ever reached (from history + current). */
+  furthest_stage: string
+  furthest_stage_display: string
   outcome: string
   outcome_display: string
   applied_at: string
@@ -263,11 +291,27 @@ export type ApplicationDocument = {
   file: string
   /** "PDF" | "Word" | … , or null for images. */
   file_kind: string | null
-  kind: 'image' | 'document'
+  kind: 'image' | 'document' | string
   original_name: string
+  /** Linked application id, or null when the file is general. */
+  application: number | null
+  application_company: string | null
+  /** Full legal name — for tooltips when the tag shows the short form. */
+  application_company_name: string | null
+  application_company_logo: string | null
+  /** A company the file is about, without an application (prep notes, say). */
+  company: number | null
+  company_name: string | null
+  company_full_name: string | null
+  company_logo: string | null
+  tags: string[]
   position: number
   created_at: string
+  updated_at: string
 }
+
+/** Alias — File Directory and application galleries share one document shape. */
+export type LibraryDocument = ApplicationDocument
 
 export type Application = ApplicationSummary & {
   resume_version: string
@@ -321,6 +365,10 @@ export type Person = {
   applications?: number[]
   application_labels?: { id: number; label: string }[]
   last_meeting_at: string | null
+  /** A message isn't a meeting — tracked apart, with the channel it went through. */
+  last_messaged_at: string | null
+  last_message_channel: string
+  last_message_channel_display: string
   next_chat_at: string | null
   /** Months between catch-ups before a blank next-chat date is auto-filled.
       Null means "use the app's 3-month default". */
@@ -335,6 +383,7 @@ export type Person = {
 export type NetworkChoices = {
   status: Choice[]
   channel: Choice[]
+  message_channel: Choice[]
 }
 
 /* ----------------------------------------------------------------- todos */
@@ -350,10 +399,13 @@ export type Todo = {
   status_display: string
   application: number | null
   application_label: string | null
+  application_logo: string | null
   person: number | null
   person_name: string | null
+  person_photo: string | null
   company: number | null
   company_name: string | null
+  company_logo: string | null
   /** Manual order, used only by the Custom sort. */
   position: number
   is_overdue: boolean
@@ -451,6 +503,7 @@ export type Catchup = {
   person_name: string
   person_photo: string | null
   person_companies: string[]
+  person_companies_info: { id: number; name: string; full_name: string; logo: string | null }[]
   met_on: string
   title: string
   display_title: string
@@ -458,6 +511,8 @@ export type Catchup = {
   format_display: string
   /** Only meaningful when format === 'other' — what "other" actually was. */
   format_other: string
+  /** Only meaningful when format === 'message' — linkedin, email, sms, other. */
+  message_channel: string
   location: string
   minutes: string
   takeaways: string
@@ -466,7 +521,7 @@ export type Catchup = {
   updated_at: string
 }
 
-export type CatchupChoices = { format: Choice[] }
+export type CatchupChoices = { format: Choice[]; message_channel: Choice[] }
 
 /* ------------------------------------------------------------ experience */
 
@@ -501,6 +556,8 @@ export type CompanyStat = {
   logo: string | null
   count: number
   active: number
+  /** Live applications waiting on the company's reply. */
+  waiting: number
   offers: number
   rejected: number
 }
@@ -533,6 +590,8 @@ export type Education = {
   ended_on: string | null
   is_current: boolean
   description: string
+  /** School crest / logo — absolute URL, or null. */
+  icon: string | null
   attachments: ProfileAttachment[]
   created_at: string
   updated_at: string
@@ -547,6 +606,8 @@ export type Certification = {
   credential_url: string
   description: string
   is_expired: boolean
+  /** Issuer logo / badge — absolute URL, or null. */
+  icon: string | null
   attachments: ProfileAttachment[]
   created_at: string
   updated_at: string
@@ -560,6 +621,8 @@ export type ExtraCurricular = {
   ended_on: string | null
   is_current: boolean
   description: string
+  /** Club / society badge — absolute URL, or null. */
+  icon: string | null
   attachments: ProfileAttachment[]
   created_at: string
   updated_at: string
@@ -588,13 +651,24 @@ export type CalendarEvent = {
     | 'todo'
     | 'application_followup'
     | 'application_reapply'
+    | 'application_deadline'
+    | 'application_stage'
     | 'person_chat'
+    | 'catchup'
     | 'catchup_followup'
     | 'custom'
   title: string
   date: string
   done: boolean
   target_url: string
+  /** Who it's with, when the entry is tied to a contact — drawn as a face on the chip. */
+  person?: { id: number; full_name: string; photo: string | null } | null
+  /** Short secondary line (a catch-up's format and place, a stage move). */
+  details?: string
+  /** Whose application — drawn as the logo on application entries. */
+  company?: { id: number; name: string; logo: string | null } | null
+  /** Deadlines only: how close the closing date is. */
+  urgency?: 'past' | 'critical' | 'soon' | 'later'
   /** Only ever present on `domain: 'custom'` rows — every other domain is date-only. */
   all_day?: boolean
   start_time?: string | null
@@ -636,8 +710,10 @@ export type CalendarEventRecord = {
   is_done: boolean
   company: number | null
   company_name: string | null
+  company_logo: string | null
   application: number | null
   application_label: string | null
+  application_logo: string | null
   people: number[]
   people_details: EventPersonRef[]
   reminders: EventReminder[]
@@ -730,15 +806,80 @@ export type Mention = {
 
 /* ------------------------------------------------------ developer mode */
 
+export type RefinementStatus =
+  | 'open'
+  | 'testing'
+  | 'awaiting_validation'
+  | 'done'
+
+export type RefinementEventLog = {
+  id: number
+  event_type:
+    | 'raised'
+    | 'edited'
+    | 'fixed'
+    | 'reopened'
+    | 'closed'
+    | 'testing'
+    | 'awaiting_validation'
+  event_type_display: string
+  detail: string
+  actor_name: string | null
+  created_at: string
+}
+
 export type RefinementNote = {
   id: number
   body: string
   kind: 'improvement' | 'bug' | 'complaint'
   kind_display: string
-  status: 'open' | 'done'
+  status: RefinementStatus
   status_display: string
-  /** The route the note was written on, for context when reviewing later. */
+  /** The route the note was written on — kept for the developer, not shown as UI copy. */
   page: string
+  /** Which screens the reporter says are affected — slugs from `TICKET_SCREENS`. */
+  screens: string[]
+  screen_labels: string[]
+  /** Answered tickets stop being editable, so the reply keeps making sense. */
+  is_locked: boolean
   created_at: string
   updated_at: string
+  /** Who raised it — only interesting in the developer's all-accounts view. */
+  author: string
+  /** Their profile picture, or null to fall back to initials. */
+  author_avatar: string | null
+  is_mine: boolean
+  /** Thread summary — enough for a badge and a notification line. */
+  message_count: number
+  /** Messages from the other person you haven't opened. */
+  unread_count: number
+  last_message: {
+    author: string
+    is_mine: boolean
+    created_at: string
+    preview: string
+  } | null
+  /** What the developer wrote back. Empty on a note you just ticked off. */
+  resolution: string
+  resolved_at: string | null
+  resolved_by_name: string | null
+  /** Null while the reporter still owes this reply a look, which is what makes
+      it show up as a notification rather than just sitting in the history. */
+  resolution_seen_at: string | null
+  /** Append-only status trail — raised, fixed, reopened, and so on. */
+  event_logs: RefinementEventLog[]
+  /** Belongs in the notifications Tickets feed for the current viewer. */
+  needs_attention: boolean
+}
+
+/** One turn in a ticket conversation, from either side. */
+export type TicketMessage = {
+  id: number
+  /** Empty when the picture is the whole message. */
+  body: string
+  image: string | null
+  created_at: string
+  author: string
+  author_avatar: string | null
+  is_mine: boolean
 }

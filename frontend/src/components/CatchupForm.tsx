@@ -1,12 +1,16 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { catchups, people } from '../api/resources'
 import type { Catchup, CatchupChoices, Person } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
-import { today } from '../lib/format'
+import { useFormDirty } from '../hooks/useFormDirty'
+import { cx, today } from '../lib/format'
+import { MESSAGE_CHANNEL_ICON } from '../lib/tones'
+import { Icon } from './ui/Icon'
 import { Button } from './ui/Button'
 import { Combobox } from './ui/Combobox'
-import { Input, Select } from './ui/Field'
+import { Input } from './ui/Field'
+import { FormatPicker } from './catchups/FormatPicker'
 import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
@@ -46,6 +50,7 @@ function CatchupFormBody({
     title: existing?.title ?? '',
     format: existing?.format ?? 'coffee',
     format_other: existing?.format_other ?? '',
+    message_channel: existing?.message_channel ?? 'linkedin',
     location: existing?.location ?? '',
     minutes: existing?.minutes ?? '',
     takeaways: existing?.takeaways ?? '',
@@ -55,6 +60,8 @@ function CatchupFormBody({
   const [error, setError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const dirty = useFormDirty(form)
+  const guardedCloseRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     void people.list().then(setPersonOptions)
@@ -80,6 +87,7 @@ function CatchupFormBody({
       follow_up_on: form.follow_up_on || null,
       // Stale "what was it" text shouldn't survive switching away from Other.
       format_other: form.format === 'other' ? form.format_other : '',
+      message_channel: form.format === 'message' ? form.message_channel : '',
     }
 
     try {
@@ -114,9 +122,10 @@ function CatchupFormBody({
     <Modal
       open
       onClose={onClose}
+      dirty={dirty}
+      guardedCloseRef={guardedCloseRef}
       size="lg"
       title={existing ? 'Edit minutes' : 'Log a catch-up'}
-      description="Logging this also updates when you last met and rolls the next chat forward."
       footer={
         <>
           {existing ? (
@@ -128,7 +137,7 @@ function CatchupFormBody({
               Delete
             </Button>
           ) : null}
-          <Button type="button" onClick={onClose}>
+          <Button type="button" onClick={() => guardedCloseRef.current?.()}>
             Cancel
           </Button>
           <Button type="submit" form="catchup-form" variant="primary" loading={saving}>
@@ -153,12 +162,61 @@ function CatchupFormBody({
             id: person.id,
             label: person.full_name,
             hint: person.company_names[0],
+            avatar: person.photo,
           }))}
           onChange={(id) => set('person', id)}
           placeholder="Search your network…"
         />
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div>
+          <FormatPicker
+            label="Format"
+            value={form.format}
+            onChange={(next) => set('format', next)}
+            choices={choices?.format}
+          />
+          {form.format === 'other' ? (
+            <Input
+              className="mt-2"
+              value={form.format_other}
+              onChange={(event) => set('format_other', event.target.value)}
+              placeholder="What was it?"
+              aria-label="What the format actually was"
+            />
+          ) : null}
+          {form.format === 'message' ? (
+            <div className="mt-2">
+              <div role="radiogroup" aria-label="Message channel" className="flex flex-wrap gap-1.5">
+                {choices?.message_channel.map((choice) => {
+                  const active = form.message_channel === choice.value
+                  return (
+                    <button
+                      key={choice.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => set('message_channel', choice.value)}
+                      className={cx(
+                        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+                        active
+                          ? 'border-brand bg-brand-soft text-brand-strong'
+                          : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+                      )}
+                    >
+                      <Icon name={MESSAGE_CHANNEL_ICON[choice.value] ?? 'mail'} size={11} />
+                      {choice.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-1.5 text-[11.5px] text-ink-3">
+                Updates “last messaged” only — it won’t count as a meeting or appear on the calendar.
+              </p>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="Met on"
             type="date"
@@ -167,28 +225,6 @@ function CatchupFormBody({
             error={errors.met_on}
             onChange={(event) => set('met_on', event.target.value)}
           />
-          <div>
-            <Select
-              label="Format"
-              value={form.format}
-              onChange={(event) => set('format', event.target.value)}
-            >
-              {choices?.format.map((choice) => (
-                <option key={choice.value} value={choice.value}>
-                  {choice.label}
-                </option>
-              ))}
-            </Select>
-            {form.format === 'other' ? (
-              <Input
-                className="mt-2"
-                value={form.format_other}
-                onChange={(event) => set('format_other', event.target.value)}
-                placeholder="What was it?"
-                aria-label="What the format actually was"
-              />
-            ) : null}
-          </div>
           <Input
             label="Follow up on"
             type="date"
@@ -201,11 +237,12 @@ function CatchupFormBody({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <MentionInput
-            label="Title"
-            placeholder="Coffee at Barangaroo"
+            label="Label"
+            placeholder="Coffee at Barangaroo, Intro call, Mentoring…"
             value={form.title}
             error={errors.title}
             onChange={(value) => set('title', value)}
+            help="Shown at the top of the card — what this catch-up was about."
           />
           <MentionInput
             label="Location"

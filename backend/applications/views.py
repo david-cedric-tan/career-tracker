@@ -24,7 +24,6 @@ from .imports import import_listings
 
 from .models import (
     Application,
-    ApplicationDocument,
     ApplicationJobListing,
     ApplicationStage,
     AppsEventLog,
@@ -34,6 +33,7 @@ from .models import (
     EventType,
     Industry,
     JobListing,
+    LibraryDocument,
     Location,
     Outcome,
     Resume,
@@ -46,7 +46,6 @@ from .models import (
 )
 from .serializers import (
     ApplicationDocumentEditSerializer,
-    ApplicationDocumentSerializer,
     ApplicationDocumentUploadSerializer,
     ApplicationJobListingSerializer,
     CompanyLogoSerializer,
@@ -59,6 +58,8 @@ from .serializers import (
     CountrySerializer,
     IndustrySerializer,
     JobListingSerializer,
+    LibraryDocumentSerializer,
+    LibraryDocumentWriteSerializer,
     LocationSerializer,
     ResumeFileSerializer,
     ResumeSerializer,
@@ -71,6 +72,7 @@ from .services import (
     end_waiting,
     log_change,
     log_creation,
+    log_stage_done,
     log_transition,
     log_waiting,
     resync_waiting,
@@ -304,6 +306,144 @@ class VenueViewSet(NamedCatalogViewSet):
     scope_fields = ["location"]
 
 
+class LibraryDocumentViewSet(viewsets.ModelViewSet):
+    """File Directory — supporting documents, optionally linked to an application."""
+
+    serializer_class = LibraryDocumentSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    queryset = LibraryDocument.objects.none()
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = (
+            LibraryDocument.objects.filter(user=self.request.user)
+            .select_related("application", "application__company", "company")
+        )
+        params = self.request.query_params
+        application = params.get("application")
+        if application:
+            qs = qs.filter(application_id=application)
+        company_id = params.get("company")
+        if company_id:
+            qs = qs.filter(Q(company_id=company_id) | Q(application__company_id=company_id))
+        scope = params.get("scope")
+        if scope == "linked":
+            qs = qs.filter(Q(application__isnull=False) | Q(company__isnull=False))
+        elif scope == "general":
+            qs = qs.filter(application__isnull=True, company__isnull=True)
+        tag = params.get("tag")
+        if tag:
+            qs = qs.filter(tags__contains=[tag])
+        search = params.get("search")
+        if search:
+            qs = qs.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(original_name__icontains=search)
+            )
+        return qs
+
+    def get_serializer_class(self):
+        if self.action in {"create", "partial_update", "update"}:
+            return LibraryDocumentWriteSerializer
+        return LibraryDocumentSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = LibraryDocumentWriteSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        upload = serializer.validated_data.get("file")
+        if not upload:
+            return Response(
+                {"file": ["A file is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        kind = classify_and_validate(upload)
+        original_name = (serializer.validated_data.get("original_name") or "").strip() or upload.name
+        extension = os.path.splitext(upload.name)[1].lower()
+        upload.name = f"library-{request.user.id}-{secrets.token_hex(4)}{extension}"
+
+        title = (serializer.validated_data.get("title") or "").strip()
+        if not title:
+            title = os.path.splitext(original_name)[0]
+
+        application = serializer.validated_data.get("application")
+        tags = [
+            tag.strip()
+            for tag in serializer.validated_data.get("tags", [])
+            if isinstance(tag, str) and tag.strip()
+        ]
+
+        last = (
+            LibraryDocument.objects.filter(user=request.user)
+            .aggregate(Max("position"))
+            .get("position__max")
+        )
+        document = LibraryDocument.objects.create(
+            user=request.user,
+            application=application,
+            company=serializer.validated_data.get("company"),
+            file=upload,
+            title=title,
+            description=(serializer.validated_data.get("description") or "").strip(),
+            original_name=original_name,
+            kind=kind,
+            tags=tags,
+            position=0 if last is None else last + 1,
+        )
+        return Response(
+            LibraryDocumentSerializer(document, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        document = self.get_object()
+        serializer = LibraryDocumentWriteSerializer(
+            data=request.data, context={"request": request}, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        update_fields = ["updated_at"]
+
+        if "title" in data:
+            title = data["title"].strip()
+            if title:
+                document.title = title
+                update_fields.append("title")
+        if "description" in data:
+            document.description = data["description"].strip()
+            update_fields.append("description")
+        if "application" in data:
+            document.application = data["application"]
+            update_fields.append("application")
+        if "company" in data:
+            document.company = data["company"]
+            update_fields.append("company")
+        if "tags" in data:
+            document.tags = [
+                tag.strip() for tag in data["tags"] if isinstance(tag, str) and tag.strip()
+            ]
+            update_fields.append("tags")
+        if "original_name" in data:
+            name = data["original_name"].strip()
+            if name:
+                document.original_name = name
+                update_fields.append("original_name")
+
+        document.save(update_fields=update_fields)
+        return Response(
+            LibraryDocumentSerializer(document, context={"request": request}).data
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        document = self.get_object()
+        document.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class ResumeViewSet(viewsets.ModelViewSet):
     """FR-RES-01 — the library is per-user, never shared."""
 
@@ -314,7 +454,7 @@ class ResumeViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = (
             Resume.objects.filter(user=self.request.user)
-            .prefetch_related("target_companies", "target_roles")
+            .prefetch_related("target_companies", "target_roles", "applications__company")
         )
         variant = self.request.query_params.get("variant_type")
         if variant:
@@ -408,7 +548,7 @@ class JobListingViewSet(viewsets.ModelViewSet):
         parts = []
         if mine:
             labels = ", ".join(
-                f"your {link.application.company.name} application" for link in mine[:3]
+                f"your {link.application.company.display_name} application" for link in mine[:3]
             )
             if len(mine) > 3:
                 labels += f" and {len(mine) - 3} more of yours"
@@ -491,6 +631,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                     ),
                 ),
                 "event_logs",
+                "library_documents",
             )
         )
         params = self.request.query_params
@@ -575,14 +716,18 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if not title:
             title = os.path.splitext(original_name)[0]
 
-        last = application.documents.aggregate(Max("position")).get("position__max")
-        ApplicationDocument.objects.create(
+        last = application.library_documents.aggregate(Max("position")).get(
+            "position__max"
+        )
+        LibraryDocument.objects.create(
+            user=request.user,
             application=application,
             file=upload,
             title=title,
             description=serializer.validated_data.get("description", "").strip(),
             original_name=original_name,
             kind=kind,
+            tags=[],
             position=0 if last is None else last + 1,
         )
 
@@ -598,7 +743,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
     )
     def edit_document(self, request, pk=None, document_id=None):
         application = self.get_object()
-        document = application.documents.filter(pk=document_id).first()
+        document = application.library_documents.filter(pk=document_id).first()
         if document is None:
             return Response(
                 {"detail": "No such document on this application."},
@@ -608,13 +753,26 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if request.method == "DELETE":
             document.delete()  # post_delete removes the file too
         else:
-            serializer = ApplicationDocumentEditSerializer(data=request.data)
+            serializer = ApplicationDocumentEditSerializer(
+                data=request.data, context={"request": request}
+            )
             serializer.is_valid(raise_exception=True)
             document.title = serializer.validated_data["title"].strip()
             document.description = serializer.validated_data.get(
                 "description", ""
             ).strip()
-            document.save(update_fields=["title", "description", "updated_at"])
+            update_fields = ["title", "description", "updated_at"]
+            if "tags" in serializer.validated_data:
+                document.tags = [
+                    tag.strip()
+                    for tag in serializer.validated_data["tags"]
+                    if tag.strip()
+                ]
+                update_fields.append("tags")
+            if "application" in serializer.validated_data:
+                document.application = serializer.validated_data["application"]
+                update_fields.append("application")
+            document.save(update_fields=update_fields)
 
         application.refresh_from_db()
         return Response(self.get_serializer(application).data)
@@ -739,11 +897,13 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="waiting")
     def waiting(self, request, pk=None):
-        """POST/DELETE the "they owe me a reply" flag.
+        """POST the "they owe me a reply" flag.
 
-        Body: {"waiting": true|false}. Neither the stage nor the outcome moves
-        — finishing a video interview leaves you *at* the video interview, and
-        still in progress; all that changed is whose court the ball is in.
+        Body: {"waiting": true|false, "stage"?, "mark_done"?, "note"?,
+        "changed_at"?}. Starting a wait logs a green-tick stage_done row
+        (unless mark_done is false) then waiting_started for that stage —
+        finishing a video interview leaves you *at* the video interview; the
+        outcome stays in progress; the ball is just in their court.
         """
         application = self.get_object()
         waiting = request.data.get("waiting", True)
@@ -767,6 +927,26 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             changed_at = timezone.make_aware(changed_at)
 
         if waiting and not application.awaiting_response:
+            # Optional: which stage this wait belongs to (defaults to current).
+            stage = request.data.get("stage") or application.stage
+            if stage not in stage_keys():
+                return Response(
+                    {"stage": [f"'{stage}' is not a valid stage."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Mark-done path: green-tick "stage completed", then waiting.
+            # `mark_done` defaults true when starting a wait so the timeline
+            # always shows the finished step before the temporary wait.
+            mark_done = request.data.get("mark_done", True)
+            if mark_done is not False:
+                log_stage_done(
+                    application,
+                    note=request.data.get("note", ""),
+                    changed_at=changed_at,
+                    stage=stage,
+                )
+
             application.awaiting_response = True
             application.awaiting_since = changed_at or timezone.now()
             application.save(
@@ -777,6 +957,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 started=True,
                 note=request.data.get("note", ""),
                 changed_at=changed_at,
+                stage=stage,
             )
         elif not waiting:
             end_waiting(
@@ -852,7 +1033,28 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         if "note" in request.data:
             event.note = (request.data.get("note") or "").strip()
 
-        event.save(update_fields=["changed_at", "note"])
+        # Waiting / stage-done rows can retarget which stage they refer to —
+        # useful when a backdated stage move left the wait pointing at the
+        # wrong step.
+        if "stage" in request.data and event.event_type in {
+            EventType.WAITING_STARTED,
+            EventType.STAGE_DONE,
+        }:
+            stage = request.data.get("stage") or ""
+            if stage not in stage_keys():
+                return Response(
+                    {"stage": [f"'{stage}' is not a valid stage."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            event.curr_stage = stage
+
+        update_fields = ["changed_at", "note"]
+        if "stage" in request.data and event.event_type in {
+            EventType.WAITING_STARTED,
+            EventType.STAGE_DONE,
+        }:
+            update_fields.append("curr_stage")
+        event.save(update_fields=update_fields)
         resync_waiting(application)
         application._prefetched_objects_cache = {}
         return Response(self.get_serializer(application).data)

@@ -194,8 +194,17 @@ export function persistOpacity(opacity: number): void {
 const PRESET_KEY = 'presetTheme'
 const FONT_KEY = 'fontFamily'
 
-export const DEFAULT_PRESET = 'none'
-export const DEFAULT_FONT = 'system'
+/**
+ * PwC ember over the matching wallpaper, in the firm's typeface.
+ *
+ * These are the values a browser that has never signed anyone in falls back
+ * to — the login screen has to look like something, and "unstyled until you
+ * have an account" is a poor first impression. Every reader below prefers the
+ * stored value, so a machine that has been used before opens on whatever theme
+ * that person left it in, and only a genuinely new browser gets these.
+ */
+export const DEFAULT_PRESET = 'pwc'
+export const DEFAULT_FONT = 'workSans'
 
 export function readPreset(): string {
   return read(PRESET_KEY) ?? DEFAULT_PRESET

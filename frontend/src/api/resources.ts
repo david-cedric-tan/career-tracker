@@ -31,10 +31,12 @@ import type {
   EventLog,
   Industry,
   JobListing,
+  LibraryDocument,
   Location,
   NetworkChoices,
   Person,
   RefinementNote,
+  TicketMessage,
   RegionStat,
   Resume,
   Role,
@@ -62,7 +64,8 @@ function crud<T, Payload = Partial<T>>(path: string) {
   }
 }
 
-/** A CRUD resource whose rows carry a generic file+caption attachment list. */
+/** A CRUD resource whose rows carry a generic file+caption attachment list
+ *  and an optional identifying icon (school crest, issuer logo, …). */
 function sectionWithAttachments<T extends { id: number }>(path: string) {
   return {
     ...crud<T>(`auth/${path}`),
@@ -74,6 +77,13 @@ function sectionWithAttachments<T extends { id: number }>(path: string) {
     },
     removeAttachment: (id: number, attachmentId: number) =>
       api<T>(`/auth/${path}/${id}/attachments/${attachmentId}/`, { method: 'DELETE' }),
+    uploadIcon: (id: number, file: File) => {
+      const body = new FormData()
+      body.append('icon', file)
+      return api<T>(`/auth/${path}/${id}/icon/`, { method: 'POST', body })
+    },
+    removeIcon: (id: number) =>
+      api<T>(`/auth/${path}/${id}/icon/`, { method: 'DELETE' }),
   }
 }
 
@@ -117,6 +127,14 @@ export const resumes = {
   },
   removeFile: (id: number) => api<Resume>(`/resumes/${id}/file/`, { method: 'DELETE' }),
 }
+
+export const libraryDocuments = {
+  ...crud<LibraryDocument>('library-documents'),
+  create: (body: FormData) =>
+    api<LibraryDocument>('/library-documents/', { method: 'POST', body }),
+  update: (id: number, body: Record<string, unknown>) =>
+    api<LibraryDocument>(`/library-documents/${id}/`, { method: 'PATCH', body }),
+}
 export const jobListings = {
   ...crud<JobListing>('job-listings'),
   import: (rows: JobListingImportRow[]) =>
@@ -141,7 +159,7 @@ export const applications = {
   updateEvent: (
     id: number,
     eventId: number,
-    body: { changed_at?: string; note?: string },
+    body: { changed_at?: string; note?: string; stage?: string },
   ) =>
     api<Application>(`/applications/${id}/events/${eventId}/`, {
       method: 'PATCH',
@@ -152,7 +170,7 @@ export const applications = {
   setWaiting: (
     id: number,
     waiting: boolean,
-    body: { note?: string; changed_at?: string } = {},
+    body: { note?: string; changed_at?: string; stage?: string; mark_done?: boolean } = {},
   ) =>
     api<Application>(`/applications/${id}/waiting/`, {
       method: 'POST',
@@ -233,10 +251,71 @@ export const profileLinks = {
     api<{ ids: number[] }>('/auth/links/reorder/', { method: 'POST', body: { ids } }),
 }
 export const profileAddresses = crud<ProfileAddress>('auth/addresses')
-export const refinements = crud<RefinementNote>('auth/refinements')
+export const refinements = {
+  ...crud<RefinementNote>('auth/refinements'),
+  /** Reply that it's fixed. Developer-only for other people's notes. */
+  resolve: (id: number, message: string) =>
+    api<RefinementNote>(`/auth/refinements/${id}/resolve/`, {
+      method: 'POST',
+      body: { message },
+    }),
+  /** Park a live ticket in Testing / Awaiting validation / Open. Developer-only. */
+  setStatus: (id: number, status: 'open' | 'testing' | 'awaiting_validation') =>
+    api<RefinementNote>(`/auth/refinements/${id}/set-status/`, {
+      method: 'POST',
+      body: { status },
+    }),
+  /** "I've read the replies" — clears the caller's own unseen resolutions. */
+  acknowledge: () =>
+    api<{ acknowledged: number }>('/auth/refinements/acknowledge/', { method: 'POST' }),
+  /** The screen-tag vocabulary, so it isn't spelled out twice. */
+  screens: () =>
+    api<{ value: string; label: string }[]>('/auth/refinements/screens/'),
+  /** The ticket conversation. Fetching it also marks it read for whoever asks.
+      Pass `after` + `wait` to hold the request until a newer message lands. */
+  messages: (
+    id: number,
+    options: { after?: number; wait?: number; signal?: AbortSignal } = {},
+  ) =>
+    api<TicketMessage[]>(`/auth/refinements/${id}/messages/`, {
+      params: {
+        after: options.after,
+        wait: options.wait,
+      },
+      signal: options.signal,
+    }),
+  sendMessage: (id: number, message: { body: string; image?: File | null }) => {
+    // Multipart either way: a thread post can carry a picture, and branching
+    // on whether it does would mean two code paths for one action.
+    const form = new FormData()
+    form.append('body', message.body)
+    if (message.image) form.append('image', message.image)
+    return api<TicketMessage>(`/auth/refinements/${id}/messages/`, {
+      method: 'POST',
+      body: form,
+    })
+  },
+}
 
 export type BackupCounts = Record<string, number>
 export type BackupFormat = 'json' | 'xlsx' | 'zip'
+
+export type AiImportBucket = {
+  created: number
+  updated: number
+  skipped: number
+}
+
+export type AiImportSummary = {
+  companies: AiImportBucket
+  applications: AiImportBucket
+  people: AiImportBucket
+  catchups: AiImportBucket
+  todos: AiImportBucket
+  calendar_events: AiImportBucket
+  warnings: string[]
+  errors: { section: string; index: number; error: string }[]
+}
 
 export const backup = {
   summary: () =>
@@ -257,6 +336,12 @@ export const backup = {
       files_attached?: number
     }>('/backup/import/', { method: 'POST', body })
   },
+  /** Merge BYO-AI JSON into the account (does not wipe existing data). */
+  importFromAi: (payload: Record<string, unknown>) =>
+    api<AiImportSummary>('/backup/import-ai/', {
+      method: 'POST',
+      body: payload,
+    }),
 }
 
 export const dashboard = {

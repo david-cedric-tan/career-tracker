@@ -38,13 +38,19 @@ export function AuthShell({
 
         <div
           className={cx(
-            'w-full max-w-sm transition-all duration-300 ease-out',
+            // `auth-card`: glass here doesn't wait for the Settings slider —
+            // see index.css. Signing in is the first thing anyone sees, and
+            // it's the screen the look is built around.
+            'auth-card glass-panel w-full max-w-sm rounded-card p-6 transition-all duration-300 ease-out sm:p-7',
             success ? 'scale-95 opacity-0 blur-sm' : 'scale-100 opacity-100',
           )}
         >
           <div className="mb-7 flex items-center gap-2.5">
-            <span className="grid size-9 place-items-center rounded-xl bg-brand text-white shadow-sm">
-              <Icon name="trendingUp" size={19} />
+            {/* The same mountain mark as the sidebar. It used to be a generic
+                trending-up glyph, so the app introduced itself with one logo
+                and then switched to another the moment you were inside. */}
+            <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-brand shadow-sm">
+              <img src="/fuji_1.svg" alt="" className="size-8 object-contain" />
             </span>
             <span className="text-base font-semibold tracking-tight text-ink">
               Career Tracker

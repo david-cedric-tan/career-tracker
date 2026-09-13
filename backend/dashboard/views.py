@@ -18,6 +18,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from applications.serializers import application_deadline, stage_label
 from applications.models import (
     Application,
     ApplicationStage,
@@ -27,7 +28,7 @@ from applications.models import (
     Outcome,
     Stage,
 )
-from catchups.models import Catchup
+from catchups.models import Catchup, CatchupFormat
 from events.models import CalendarEvent
 from network.models import Person, PersonStatus
 from todos.models import Todo, TodoStatus
@@ -353,7 +354,7 @@ def activity(request):
         .select_related("application", "application__company")
         .order_by("-changed_at")[:limit]
     ):
-        company = log.application.company.name
+        company = log.application.company.display_name
 
         if log.event_type == EventType.STAGE:
             summary_text = (
@@ -468,6 +469,7 @@ def companies(request):
         "outcome",
         "stage",
         "applied_at",
+        "awaiting_response",
     ):
         entry = tally.get(row["company_id"])
         if entry is None:
@@ -480,6 +482,8 @@ def companies(request):
                 "active": 0,
                 "offers": 0,
                 "rejected": 0,
+                # Live applications where the ball is in their court.
+                "waiting": 0,
                 "stage_rank": -1,
                 "last_applied": None,
             }
@@ -488,6 +492,8 @@ def companies(request):
         entry["count"] += 1
         if row["outcome"] == Outcome.IN_PROGRESS:
             entry["active"] += 1
+            if row["awaiting_response"]:
+                entry["waiting"] += 1
             # Only live applications set the stage rank — how far a rejected
             # application got is history, not where the company stands now.
             entry["stage_rank"] = max(
@@ -538,6 +544,7 @@ def companies(request):
                 ),
                 "count": entry["count"],
                 "active": entry["active"],
+                "waiting": entry["waiting"],
                 "offers": entry["offers"],
                 "rejected": entry["rejected"],
             }
@@ -588,7 +595,7 @@ def attention(request):
     follow_ups = [
         {
             "id": app.id,
-            "company": app.company.name,
+            "company": app.company.display_name,
             "stage": app.get_stage_display(),
             "follow_up_date": app.follow_up_date,
         }
@@ -634,7 +641,7 @@ def attention(request):
     reapplies = [
         {
             "id": app.id,
-            "company": app.company.name,
+            "company": app.company.display_name,
             "outcome": app.get_outcome_display(),
             "reapply_at": app.reapply_at,
         }
@@ -653,18 +660,52 @@ def attention(request):
     )
 
 
-def _collect_calendar_events(user, start, end):
+def _company_ref(company, request):
+    """Whose application an entry is about, for the chip's logo."""
+    logo = None
+    if company.logo:
+        logo = request.build_absolute_uri(company.logo.url) if request else company.logo.url
+    return {"id": company.id, "name": company.display_name, "logo": logo}
+
+
+def _deadline_urgency(closing, today):
+    """How loudly a closing date should shout: past, today/tomorrow, this
+    week, or comfortably ahead."""
+    days = (closing - today).days
+    if days < 0:
+        return "past"
+    if days <= 1:
+        return "critical"
+    if days <= 7:
+        return "soon"
+    return "later"
+
+
+def _person_ref(person, request):
+    """Who an entry is with, for the calendar chip's face."""
+    if not person:
+        return None
+    photo = None
+    if person.photo:
+        photo = request.build_absolute_uri(person.photo.url) if request else person.photo.url
+    return {"id": person.id, "full_name": person.full_name, "photo": photo}
+
+
+def _collect_calendar_events(user, start, end, request=None):
     """FR-CAL — every date-bearing domain, in one flat list.
 
     Shared by the JSON endpoint and the .ics export, so the two can never
     disagree about what belongs on the calendar. Read-only, like the rest of
     this module: it owns no data, it only draws from what each domain has.
+
+    Entries tied to a person carry a `person` ref so the chip can show their
+    face — a calendar of catch-ups is scanned by who, not by title.
     """
     events = []
 
     for todo in Todo.objects.filter(
         user=user, due_date__isnull=False, due_date__gte=start, due_date__lte=end
-    ):
+    ).select_related("person"):
         events.append(
             {
                 "id": f"todo-{todo.id}",
@@ -673,6 +714,7 @@ def _collect_calendar_events(user, start, end):
                 "date": todo.due_date.isoformat(),
                 "done": todo.status == TodoStatus.DONE,
                 "target_url": "/todos",
+                "person": _person_ref(todo.person, request),
             }
         )
 
@@ -686,12 +728,72 @@ def _collect_calendar_events(user, start, end):
             {
                 "id": f"followup-{app.id}",
                 "domain": "application_followup",
-                "title": f"Follow up: {app.company.name}",
+                "title": f"Follow up: {app.company.display_name}",
                 "date": app.follow_up_date.isoformat(),
                 "done": app.outcome != Outcome.IN_PROGRESS,
                 "target_url": f"/applications/{app.id}",
             }
         )
+    # Closing dates of the listings each application covers — the one that
+    # shuts first is the constraint, so it's the one on the calendar. Tagged
+    # with an urgency so the chip's colour says how close it is.
+    today = timezone.localdate()
+    for app in applications.prefetch_related("listing_links__job_listing"):
+        closing = application_deadline(app)
+        if not closing:
+            continue
+        closing_date = parse_date(closing)
+        if closing_date is None or closing_date < start or closing_date > end:
+            continue
+        events.append(
+            {
+                "id": f"deadline-{app.id}",
+                "domain": "application_deadline",
+                "title": f"Closes: {app.company.display_name}",
+                "date": closing,
+                "done": app.outcome != Outcome.IN_PROGRESS or closing_date < today,
+                "target_url": f"/applications/{app.id}",
+                "company": _company_ref(app.company, request),
+                "urgency": _deadline_urgency(closing_date, today),
+                "details": stage_label(app.stage),
+            }
+        )
+
+    # The pipeline's own history: every stage and outcome move, on the day
+    # it happened, so the calendar doubles as a timeline of what moved when.
+    for log in (
+        AppsEventLog.objects.filter(
+            application__user=user,
+            event_type__in=[EventType.CREATED, EventType.STAGE, EventType.OUTCOME],
+            changed_at__date__gte=start,
+            changed_at__date__lte=end,
+        )
+        .select_related("application__company")
+        .order_by("changed_at")
+    ):
+        if log.event_type == EventType.OUTCOME:
+            label = log.get_curr_outcome_display()
+        else:
+            label = stage_label(log.curr_stage) or log.curr_stage
+        events.append(
+            {
+                "id": f"stage-{log.id}",
+                "domain": "application_stage",
+                "title": f"{log.application.company.display_name} · {label}",
+                "date": timezone.localtime(log.changed_at).date().isoformat(),
+                "done": False,
+                "target_url": f"/applications/{log.application_id}",
+                "company": _company_ref(log.application.company, request),
+                "details": (
+                    "Logged"
+                    if log.event_type == EventType.CREATED
+                    else f"{stage_label(log.prev_stage) or '—'} → {label}"
+                    if log.event_type == EventType.STAGE
+                    else f"Outcome: {label}"
+                ),
+            }
+        )
+
     for app in applications.filter(
         reapply_at__isnull=False, reapply_at__gte=start, reapply_at__lte=end
     ):
@@ -699,7 +801,7 @@ def _collect_calendar_events(user, start, end):
             {
                 "id": f"reapply-{app.id}",
                 "domain": "application_reapply",
-                "title": f"Reapply: {app.company.name}",
+                "title": f"Reapply: {app.company.display_name}",
                 "date": app.reapply_at.isoformat(),
                 "done": False,
                 "target_url": f"/applications/{app.id}",
@@ -718,6 +820,30 @@ def _collect_calendar_events(user, start, end):
                 "date": person.next_chat_at.isoformat(),
                 "done": False,
                 "target_url": f"/network/{person.id}",
+                "person": _person_ref(person, request),
+            }
+        )
+
+    # The catch-ups themselves, on the day they happened — logging one should
+    # put it on the calendar without a second step.
+    for catchup in (
+        Catchup.objects.filter(user=user, met_on__gte=start, met_on__lte=end)
+        # A message isn't an appointment — it has no place on a calendar.
+        .exclude(format=CatchupFormat.MESSAGE)
+        .select_related("person")
+    ):
+        events.append(
+            {
+                "id": f"catchup-{catchup.id}",
+                "domain": "catchup",
+                "title": f"{catchup.display_title} · {catchup.person.full_name}",
+                "date": catchup.met_on.isoformat(),
+                "done": False,
+                "target_url": f"/catchups/{catchup.id}",
+                "person": _person_ref(catchup.person, request),
+                "details": " · ".join(
+                    part for part in [catchup.display_format, catchup.location] if part
+                ),
             }
         )
 
@@ -733,6 +859,7 @@ def _collect_calendar_events(user, start, end):
                 "date": catchup.follow_up_on.isoformat(),
                 "done": False,
                 "target_url": f"/network/{catchup.person_id}",
+                "person": _person_ref(catchup.person, request),
             }
         )
 
@@ -740,7 +867,8 @@ def _collect_calendar_events(user, start, end):
     # anywhere else in the app.
     for custom in CalendarEvent.objects.filter(
         user=user, date__gte=start, date__lte=end
-    ):
+    ).prefetch_related("people"):
+        first_person = custom.people.first()
         events.append(
             {
                 "id": f"custom-{custom.id}",
@@ -749,6 +877,7 @@ def _collect_calendar_events(user, start, end):
                 "date": custom.date.isoformat(),
                 "done": custom.is_done,
                 "target_url": "",
+                "person": _person_ref(first_person, request),
                 "all_day": custom.all_day,
                 "start_time": custom.start_time.isoformat() if custom.start_time else None,
                 "end_time": custom.end_time.isoformat() if custom.end_time else None,
@@ -777,7 +906,7 @@ def _calendar_window(request):
 def calendar_events(request):
     """FR-CAL — every date-bearing domain, aggregated for the calendar page."""
     start, end = _calendar_window(request)
-    events = _collect_calendar_events(request.user, start, end)
+    events = _collect_calendar_events(request.user, start, end, request)
     return Response({"start": start.isoformat(), "end": end.isoformat(), "events": events})
 
 
@@ -949,7 +1078,7 @@ def mentions(request):
             {
                 "domain": "company_note",
                 "id": note.company_id,
-                "title": f"{note.company.name}’s notes",
+                "title": f"{note.company.display_name}’s notes",
                 "snippet": _snippet(note.notes, needle),
                 "url": f"/job-directory/companies/{note.company_id}",
             }

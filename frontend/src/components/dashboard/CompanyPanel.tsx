@@ -77,7 +77,7 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
             <Link
               to={`/applications?company=${company.id}`}
               state={{ from: '/' }}
-              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}${company.rejected ? `, ${company.rejected} rejected` : ''}`}
+              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}${company.waiting ? `, ${company.waiting} waiting for a reply` : ''}${company.rejected ? `, ${company.rejected} rejected` : ''}`}
               className={cx(
                 'group relative flex w-20 flex-col items-center justify-center gap-1',
                 'rounded-lg border border-line bg-surface-2 py-1.5 transition-all duration-200',
@@ -118,6 +118,13 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
                   title={`${company.offers} offer${company.offers === 1 ? '' : 's'}`}
                 >
                   <Icon name="check" size={10} />
+                </span>
+              ) : company.waiting > 0 ? (
+                <span
+                  className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-warning text-white shadow-sm"
+                  title={`Waiting on ${company.waiting === 1 ? 'a reply' : `${company.waiting} replies`}`}
+                >
+                  <Icon name="clock" size={10} />
                 </span>
               ) : company.rejected > 0 && company.active === 0 ? (
                 <span

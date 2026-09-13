@@ -9,11 +9,21 @@ export type Option = {
   id: number
   label: string
   hint?: string
+  /** Keep the hint for matching only — don't render it on the row. */
+  hintHidden?: boolean
   /** Optional mark for the row — a person's photo or a company's logo. Falls
       back to initials, so a row never renders an empty hole. */
   avatar?: string | null
   /** Logos are square, faces are round. */
   avatarShape?: 'circle' | 'square'
+}
+
+/** Label or hint — so a company shown as "IBM" is still found by typing "International". */
+function optionMatches(option: Option, needle: string): boolean {
+  return (
+    option.label.toLowerCase().includes(needle) ||
+    Boolean(option.hint && option.hint.toLowerCase().includes(needle))
+  )
 }
 
 /**
@@ -67,7 +77,7 @@ export function Combobox({
     const needle = query.trim().toLowerCase()
     if (!needle) return options.slice(0, 50)
     return options
-      .filter((option) => option.label.toLowerCase().includes(needle))
+      .filter((option) => optionMatches(option, needle))
       .slice(0, 50)
   }, [options, query])
 
@@ -232,7 +242,7 @@ export function Combobox({
                     />
                   ) : null}
                   <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                  {option.hint ? (
+                  {option.hint && !option.hintHidden ? (
                     <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
                       {option.hint}
                     </span>
@@ -312,7 +322,7 @@ export function MultiSelect({
 
   const needle = query.trim().toLowerCase()
   const visible = needle
-    ? options.filter((option) => option.label.toLowerCase().includes(needle))
+    ? options.filter((option) => optionMatches(option, needle))
     : options
   // Ticked-but-filtered-out entries stay ticked (the value is untouched),
   // they just don't render — so a search never silently drops a selection.
@@ -371,7 +381,7 @@ export function MultiSelect({
                   to win the fight for width and squeeze the name down to an
                   ellipsis, which is backwards — the name is the thing you're
                   picking by. */}
-              {option.hint ? (
+              {option.hint && !option.hintHidden ? (
                 <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
                   {option.hint}
                 </span>

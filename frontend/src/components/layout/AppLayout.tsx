@@ -18,13 +18,14 @@ import {
   type MotionLevel,
 } from '../../lib/mediaSettings'
 import { TooltipLayer } from '../ui/TooltipLayer'
-import { cx, displayName } from '../../lib/format'
+import { cx, displayName, shortName } from '../../lib/format'
 import { Avatar } from '../ui/Avatar'
 import { Icon } from '../ui/Icon'
 import { ThemeToggle } from '../ui/ThemeToggle'
 import { Wallpaper } from './Wallpaper'
 import { RefinementLog } from '../devmode/RefinementLog'
-import { useDeveloperMode } from '../../hooks/useDeveloperMode'
+import { useUnseenReplies } from '../devmode/useUnseenReplies'
+import { listKeyForPath, listPath } from '../../lib/listState'
 
 /** `fx` is the hover animation for each row — matched to the destination, not
     just "something moves". See NavEffect. */
@@ -35,7 +36,7 @@ const NAV = [
   { to: '/catchups', label: 'Catch-ups', icon: 'coffee', fx: 'steam' as const },
   { to: '/todos', label: 'Todos', icon: 'checklist', fx: 'ticks' as const },
   { to: '/calendar', label: 'Calendar', icon: 'calendar', fx: 'swing' as const },
-  { to: '/resumes', label: 'Resumes', icon: 'file', fx: 'write' as const },
+  { to: '/files', label: 'File Directory', icon: 'file', fx: 'write' as const },
   { to: '/job-directory', label: 'Job Directory', icon: 'library', fx: 'books' as const },
 ]
 
@@ -65,6 +66,11 @@ const NATURE_BIRDS = [
 const SCENES = {
   windy: { label: 'Windy', track: '/windy.mp3', icon: 'cloudSnow' },
   nature: { label: 'Nature', track: '/nature.mp3', icon: 'sun' },
+  // Takes its colours from whatever theme the app is set to rather than
+  // shipping its own, so the about screen matches the rest of the app instead
+  // of being the one place that's always slate-blue or forest-green. It keeps
+  // the windy loop: this scene changes the look, not the soundtrack.
+  theme: { label: 'Theme', track: '/windy.mp3', icon: 'sparkles' },
 } as const
 
 type Scene = keyof typeof SCENES
@@ -74,7 +80,8 @@ const SCENE_EVENT = 'brand-scene-change'
 
 function readScene(): Scene {
   try {
-    return localStorage.getItem(SCENE_KEY) === 'nature' ? 'nature' : 'windy'
+    const saved = localStorage.getItem(SCENE_KEY)
+    return saved && saved in SCENES ? (saved as Scene) : 'windy'
   } catch {
     return 'windy'
   }
@@ -312,9 +319,9 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
             a bug rather than a flourish. */}
         {scene === 'nature' ? (
           <NatureScene active={active} settling={settling} wide />
-        ) : (
+        ) : scene === 'windy' ? (
           <BrandClouds active={active} settling={settling} wide />
-        )}
+        ) : null}
         <span className={cx('relative z-10 inline-block', active && scene === 'windy' && 'word-blown')}>
           Career Tracker
         </span>
@@ -359,9 +366,9 @@ function BrandMark({
       <img src="/fuji_1.svg" alt="" className="relative z-10 size-9 object-contain" />
       {scene === 'nature' ? (
         <NatureScene active={active} settling={settling} />
-      ) : (
+      ) : scene === 'windy' ? (
         <BrandClouds active={active} settling={settling} />
-      )}
+      ) : null}
     </span>
   )
 }
@@ -508,6 +515,7 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
   )
 
   const nature = scene === 'nature'
+  const themed = scene === 'theme'
 
   // Rendered into <body> rather than where it sits in the tree. On mobile the
   // brand lives inside the sticky header, which has its own `backdrop-blur` —
@@ -521,8 +529,16 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       className={cx(
         'brand-credit fixed inset-0 z-[90] grid cursor-pointer place-items-center overflow-y-auto p-6 backdrop-blur-md',
-        nature ? 'bg-emerald-950/55' : 'bg-slate-950/55',
+        nature ? 'bg-emerald-950/55' : themed ? null : 'bg-slate-950/55',
       )}
+      style={
+        themed
+          ? {
+              backgroundColor:
+                'color-mix(in srgb, var(--color-brand) 30%, rgb(2 6 23 / 0.72))',
+            }
+          : undefined
+      }
     >
       {/* Clicks inside shouldn't dismiss — the vinyl and the scene switch both
           live here, and closing on every tap would make them unusable. */}
@@ -542,8 +558,9 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
           {nature ? <NatureScene /> : null}
           <img src="/fuji_1.svg" alt="" className="relative z-10 size-28 object-contain" />
           {/* Always moving here — the mark is the subject of this screen, so
-              there's no hover to wait for. */}
-          {nature ? null : <BrandClouds active thickness={5} />}
+              there's no hover to wait for. The themed scene stays bare: its
+              point is the palette, and weather on top only muddies it. */}
+          {scene === 'windy' ? <BrandClouds active thickness={5} /> : null}
         </span>
 
         <div className="space-y-1.5">
@@ -853,46 +870,57 @@ function NatureScene({
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cx(
-              'qa-fx-host flex items-center gap-3 rounded-lg px-3 py-2',
-              'text-sm font-medium transition-colors duration-150',
-              isActive
-                ? 'bg-brand-soft text-brand-strong'
-                : 'text-ink-2 hover:bg-brand-soft hover:text-brand-strong',
-            )
-          }
-        >
-          {/* The effect layers position themselves against this box, so the
-              sonar rings and shimmer stay icon-sized rather than sweeping the
-              whole row. Hover is detected on the row above it. */}
-          <span className="relative grid size-5 shrink-0 place-items-center">
-            <NavEffect fx={item.fx} />
-            <Icon
-              name={item.icon}
-              className={cx(
-                'relative',
-                item.fx === 'swing' && 'qa-swing nav-delayed',
-                hidesIcon(item.fx) && 'nav-icon-swap',
-              )}
-            />
-          </span>
-          {item.label}
-        </NavLink>
-      ))}
+      {NAV.map((item) => {
+        const key = listKeyForPath(item.to)
+        const to = key ? listPath(key) : item.to
+        return (
+          <NavLink
+            key={item.to}
+            to={to}
+            end={item.end}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cx(
+                'qa-fx-host flex items-center gap-3 rounded-lg px-3 py-2',
+                'text-sm font-medium transition-colors duration-150',
+                isActive
+                  ? 'bg-brand-soft text-brand-strong'
+                  : 'text-ink-2 hover:bg-brand-soft hover:text-brand-strong',
+              )
+            }
+          >
+            {/* The effect layers position themselves against this box, so the
+                sonar rings and shimmer stay icon-sized rather than sweeping the
+                whole row. Hover is detected on the row above it. */}
+            <span className="relative grid size-5 shrink-0 place-items-center">
+              <NavEffect fx={item.fx} />
+              <Icon
+                name={item.icon}
+                className={cx(
+                  'relative',
+                  item.fx === 'swing' && 'qa-swing nav-delayed',
+                  hidesIcon(item.fx) && 'nav-icon-swap',
+                )}
+              />
+            </span>
+            {item.label}
+          </NavLink>
+        )
+      })}
     </nav>
   )
 }
 
-function UserCard({ onNavigate }: { onNavigate?: () => void }) {
+function UserCard({
+  onNavigate,
+  onOpenTicket,
+}: {
+  onNavigate?: () => void
+  onOpenTicket?: (ticketId?: number) => void
+}) {
   const { user, logout } = useAuth()
-  const name = displayName(user) || '—'
+  const name = shortName(user) || '—'
+  const fullName = displayName(user) || name
 
   return (
     <div className="border-t border-line pt-3">
@@ -907,13 +935,21 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
             )
           }
         >
-          <Avatar name={name} src={user?.avatar} size="sm" />
+          <Avatar name={fullName} src={user?.avatar} size="sm" />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium text-ink">{name}</span>
-            <span className="block truncate text-[11px] text-ink-3">{user?.email || '—'}</span>
+            <span className="block truncate text-[13px] font-medium text-ink" title={fullName}>
+              {name}
+            </span>
+            {/* The handle, not the email: it's what identifies you to the
+                other person on this app (a refinement ticket is signed with
+                it), and an address in a sidebar is just noise you can't act
+                on. */}
+            <span className="block truncate text-[11px] text-ink-3">
+              {user?.username ? `@${user.username}` : '—'}
+            </span>
           </span>
         </NavLink>
-        <NotificationsPanel onNavigate={onNavigate} />
+        <NotificationsPanel onNavigate={onNavigate} onOpenTicket={onOpenTicket} />
         <NavLink
           to="/settings"
           onClick={onNavigate}
@@ -945,8 +981,25 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
 export function AppLayout() {
   const { user } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [developerMode] = useDeveloperMode()
   const [logOpen, setLogOpen] = useState(false)
+  const [focusTicketId, setFocusTicketId] = useState<number | null>(null)
+  // The quick-access button owns the bottom-right corner; the log window
+  // gets out of the way while the shortcuts are fanned out over that space.
+  const [quickOpen, setQuickOpen] = useState(false)
+  // Replies are announced by the ticket watcher (banner + bell); this only
+  // resets its "unseen" count when the log is opened.
+  const { clear: clearReplies } = useUnseenReplies(true)
+
+  function openRefinementLog(ticketId?: number) {
+    setFocusTicketId(ticketId && ticketId > 0 ? ticketId : null)
+    clearReplies()
+    setLogOpen(true)
+  }
+
+  function closeRefinementLog() {
+    setLogOpen(false)
+    setFocusTicketId(null)
+  }
   const location = useLocation()
   const navigate = useNavigate()
   // Clock/weather is a dashboard-only flourish — every other page just gets
@@ -1032,7 +1085,7 @@ export function AppLayout() {
         <div className="flex-1 overflow-y-auto">
           <NavItems />
         </div>
-        <UserCard />
+        <UserCard onOpenTicket={openRefinementLog} />
       </aside>
       {/* Reserves the sidebar's width in the flex flow, since `fixed` takes
           the real aside out of it. */}
@@ -1066,7 +1119,10 @@ export function AppLayout() {
             <div className="flex flex-1 flex-col justify-center overflow-y-auto">
               <NavItems onNavigate={() => setDrawerOpen(false)} />
             </div>
-            <UserCard onNavigate={() => setDrawerOpen(false)} />
+            <UserCard
+              onNavigate={() => setDrawerOpen(false)}
+              onOpenTicket={openRefinementLog}
+            />
           </aside>
         </div>
       ) : null}
@@ -1109,7 +1165,7 @@ export function AppLayout() {
 
         <main
           className={cx(
-            'mx-auto w-full max-w-7xl flex-1 px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
+            'mx-auto w-full min-w-0 max-w-7xl flex-1 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
             // Clears the fixed top-right toggle on every page except the
             // dashboard, which handles its own header spacing.
             !isDashboard && 'lg:pt-16',
@@ -1120,25 +1176,31 @@ export function AppLayout() {
       </div>
       </div>
 
-      <QuickAccessMenu hidden={tourOpen} />
+      <QuickAccessMenu
+        hidden={tourOpen}
+        onOpenChange={setQuickOpen}
+        onOpenRefinementLog={() => openRefinementLog()}
+      />
       <OnboardingTour open={tourOpen} onClose={() => setTourOpen(false)} mode={tourMode} />
-      <ReminderScheduler />
+      <ReminderScheduler onOpenTicket={openRefinementLog} />
       <TooltipLayer />
 
-      {developerMode && !tourOpen ? (
-        logOpen ? (
-          <RefinementLog onClose={() => setLogOpen(false)} />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setLogOpen(true)}
-            title="Refinement log"
-            aria-label="Open the refinement log"
-            className="fixed bottom-4 right-4 z-40 grid size-11 place-items-center rounded-full border border-line bg-surface text-ink-2 shadow-lg transition-colors hover:text-brand"
-          >
-            <Icon name="checklist" size={18} />
-          </button>
-        )
+      {/* The log window. Its old standalone launcher — the small round button
+          that floated above the quick-access FAB — is retired: "Talk to a Dev"
+          in the quick-access menu opens the log now. Kept for reference:
+
+          {developerMode && !logOpen ? (
+            <button onClick={() => openRefinementLog()} className="fixed bottom-24 right-6 …">
+              <Icon name="tools" size={18} />
+              {unseenReplies > 0 ? <span …>{unseenReplies}</span> : null}
+            </button>
+          ) : null}
+      */}
+      {logOpen && !tourOpen && !quickOpen ? (
+        <RefinementLog
+          onClose={closeRefinementLog}
+          initialTicketId={focusTicketId}
+        />
       ) : null}
     </>
   )

@@ -75,6 +75,13 @@ export function relativeDay(value: string | null | undefined): string {
   return formatDate(value)
 }
 
+/** Whole days elapsed since a timestamp — how long something has been sitting. */
+export function daysSince(value: string): number {
+  const started = new Date(value).getTime()
+  if (Number.isNaN(started)) return 0
+  return Math.max(0, Math.floor((Date.now() - started) / 86_400_000))
+}
+
 export function relativeTime(value: string): string {
   const diff = Date.now() - new Date(value).getTime()
   const minutes = Math.round(diff / 60_000)
@@ -95,6 +102,13 @@ export function displayName(
 ): string {
   const full = [user?.first_name, user?.last_name].filter(Boolean).join(' ')
   return full || user?.username || ''
+}
+
+/** The short name the app addresses you by — preferred name, else first name. */
+export function shortName(
+  user: { preferred_name?: string; first_name?: string; username?: string } | null | undefined,
+): string {
+  return user?.preferred_name?.trim() || user?.first_name?.trim() || user?.username || ''
 }
 
 export function initials(name: string): string {

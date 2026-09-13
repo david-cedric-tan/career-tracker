@@ -221,6 +221,20 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
     zoomAbout(factor, size.width / 2, size.height / 2)
   }
 
+  // Pinch-to-zoom: every active touch by pointer id, so two fingers can be
+  // told apart from one. The wheel handler above only covers trackpads.
+  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ distance: number; midX: number; midY: number } | null>(null)
+
+  function pinchState(rect: DOMRect) {
+    const [a, b] = [...pointers.current.values()]
+    return {
+      distance: Math.hypot(a.x - b.x, a.y - b.y),
+      midX: (a.x + b.x) / 2 - rect.left,
+      midY: (a.y + b.y) / 2 - rect.top,
+    }
+  }
+
   const byGeoName = useMemo(() => {
     const map = new Map<string, RegionStat>()
     for (const region of regions) map.set(geographyName(region.country_name), region)
@@ -273,10 +287,35 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
           aria-label="Applications by region"
           className={cx('touch-none select-none', view.k > 1 ? 'cursor-grab' : 'cursor-default')}
           onPointerDown={(event) => {
-            drag.current = { x: event.clientX, y: event.clientY, moved: false }
+            pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
             event.currentTarget.setPointerCapture(event.pointerId)
+            if (pointers.current.size === 2) {
+              // Second finger down: the one-finger drag becomes a pinch.
+              drag.current = null
+              suppressClick.current = true
+              pinch.current = pinchState(event.currentTarget.getBoundingClientRect())
+              return
+            }
+            drag.current = { x: event.clientX, y: event.clientY, moved: false }
           }}
           onPointerMove={(event) => {
+            if (pointers.current.has(event.pointerId)) {
+              pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+            }
+            if (pointers.current.size === 2 && pinch.current) {
+              const next = pinchState(event.currentTarget.getBoundingClientRect())
+              const previous = pinch.current
+              if (previous.distance > 0) {
+                zoomAbout(next.distance / previous.distance, next.midX, next.midY)
+              }
+              setView((current) => ({
+                ...current,
+                x: current.x + (next.midX - previous.midX),
+                y: current.y + (next.midY - previous.midY),
+              }))
+              pinch.current = next
+              return
+            }
             const state = drag.current
             if (!state) return
             const dx = event.clientX - state.x
@@ -288,12 +327,19 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
             setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }))
           }}
           onPointerUp={(event) => {
+            pointers.current.delete(event.pointerId)
+            if (pointers.current.size < 2) pinch.current = null
             event.currentTarget.releasePointerCapture(event.pointerId)
             // Cleared on the next tick so the click that follows this release
             // can still see that it was a drag and skip navigating.
             const wasDrag = drag.current?.moved ?? false
             drag.current = null
             if (wasDrag) suppressClick.current = true
+          }}
+          onPointerCancel={(event) => {
+            pointers.current.delete(event.pointerId)
+            pinch.current = null
+            drag.current = null
           }}
           onPointerLeave={() => {
             drag.current = null
@@ -382,7 +428,7 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
           disabled={view.k >= MAX_ZOOM}
           aria-label="Zoom in"
           title="Zoom in"
-          className="grid size-7 place-items-center text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+          className="grid size-9 place-items-center text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40 sm:size-7"
         >
           <Icon name="plus" size={14} />
         </button>
@@ -392,7 +438,7 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
           disabled={view.k <= MIN_ZOOM}
           aria-label="Zoom out"
           title="Zoom out"
-          className="grid size-7 place-items-center border-t border-line text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+          className="grid size-9 place-items-center border-t border-line text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40 sm:size-7"
         >
           <Icon name="minus" size={14} />
         </button>
@@ -402,7 +448,7 @@ export function RegionMapWidget({ regions }: { regions: RegionStat[] }) {
           disabled={view.k === 1 && view.x === 0 && view.y === 0}
           aria-label="Reset the map view"
           title="Reset view"
-          className="grid size-7 place-items-center border-t border-line text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+          className="grid size-9 place-items-center border-t border-line text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40 sm:size-7"
         >
           <Icon name="refresh" size={13} />
         </button>

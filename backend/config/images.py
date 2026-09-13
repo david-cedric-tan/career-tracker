@@ -11,10 +11,17 @@ from io import BytesIO
 
 from django.conf import settings
 from django.core.files.uploadedfile import InMemoryUploadedFile
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, features
 from rest_framework import serializers
 
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP", "GIF"}
+# AVIF is what phones and modern export tools increasingly hand you, and it is
+# safe to accept anywhere: every upload is re-encoded to JPEG/PNG below, so the
+# format only has to survive being decoded. Gated on the running Pillow build
+# actually having libavif — otherwise the file would be accepted here and then
+# fail on open, and the error message would name a format we can't read.
+if features.check("avif"):
+    ALLOWED_FORMATS.add("AVIF")
 AVATAR_SIZE = 512
 LOGO_SIZE = 256
 GALLERY_SIZE = 1024

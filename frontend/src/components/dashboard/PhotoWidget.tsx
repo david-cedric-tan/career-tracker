@@ -1,68 +1,103 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { removePinnedPhoto, uploadPinnedPhoto } from '../../api/auth'
+import { formatApiError } from '../../api/client'
 import { experiences as experiencesApi } from '../../api/resources'
 import type { Experience } from '../../api/types'
+import { useAuth } from '../../auth/context'
 import { cx } from '../../lib/format'
+import {
+  clearLocalPinnedPhotos,
+  takeLocalPinnedPhoto,
+  MAX_BYTES,
+} from '../../lib/pinnedPhoto'
 import { Button } from '../ui/Button'
 import { Icon } from '../ui/Icon'
 import { Modal } from '../ui/Modal'
 import { EmptyState, Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
 
-const STORAGE_KEY = 'career-tracker:pinned-photo'
 /**
- * Kept well under a typical 5MB localStorage quota: a data URL is base64, which
- * inflates the file by about a third, so 2.5MB of GIF lands near 3.4MB stored.
+ * Desk photo on the dashboard. Stored on the account so it follows the user
+ * to another device — and so two people on one machine never share a pin.
  */
-const MAX_BYTES = 2.5 * 1024 * 1024
-
-type Pinned = { src: string; caption: string }
-
-/**
- * Kept per browser as a data URL rather than uploaded to the account.
- *
- * A pinned photo is desk decoration — it doesn't belong to any application or
- * contact, so there's no row for it to hang off, and giving it its own model
- * and endpoint would be a lot of machinery for one square on one screen. The
- * size cap keeps it well clear of what localStorage will hold.
- */
-function readPinned(): Pinned | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<Pinned>
-    return typeof parsed.src === 'string' && parsed.src
-      ? { src: parsed.src, caption: typeof parsed.caption === 'string' ? parsed.caption : '' }
-      : null
-  } catch {
-    return null
-  }
-}
-
 export function PhotoWidget() {
+  const { user, setUser } = useAuth()
   const { notify } = useToast()
-  const [pinned, setPinned] = useState<Pinned | null>(readPinned)
   const [picking, setPicking] = useState(false)
+  const [working, setWorking] = useState(false)
+  const migratedFor = useRef<number | null>(null)
 
-  function save(next: Pinned | null) {
-    setPinned(next)
+  const src = user?.pinned_photo ?? null
+  const caption = user?.pinned_photo_caption ?? ''
+
+  // One-time: a photo that only lived in this browser is uploaded to the
+  // account, then the local copy is dropped.
+  useEffect(() => {
+    if (!user || user.pinned_photo || migratedFor.current === user.id) return
+    migratedFor.current = user.id
+    let cancelled = false
+
+    void (async () => {
+      const local = await takeLocalPinnedPhoto(user.id)
+      if (!local || cancelled) return
+      try {
+        let file: Blob | null = local.blob ?? null
+        if (!file && local.url) {
+          const response = await fetch(local.url)
+          if (response.ok) file = await response.blob()
+        }
+        if (!file || cancelled) return
+        const next = await uploadPinnedPhoto(file, local.caption)
+        if (!cancelled) {
+          setUser(next)
+          await clearLocalPinnedPhotos(user.id)
+        }
+      } catch {
+        // Leave the local copy; they can re-pin from the picker.
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user, setUser])
+
+  async function save(file: Blob, nextCaption: string) {
+    setWorking(true)
     try {
-      if (next) localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-      else localStorage.removeItem(STORAGE_KEY)
-    } catch {
-      notify("That image is too large to keep — it'll clear when you reload.", 'error')
+      const next = await uploadPinnedPhoto(file, nextCaption)
+      setUser(next)
+      if (user) await clearLocalPinnedPhotos(user.id)
+    } catch (error) {
+      notify(formatApiError(error), 'error')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function clear() {
+    setWorking(true)
+    try {
+      const next = await removePinnedPhoto()
+      setUser(next)
+      if (user) await clearLocalPinnedPhotos(user.id)
+    } catch (error) {
+      notify(formatApiError(error), 'error')
+    } finally {
+      setWorking(false)
     }
   }
 
   return (
     <div className="group/photo relative flex h-full flex-col gap-2">
-      {pinned ? (
+      {src ? (
         <button
           type="button"
           onClick={() => setPicking(true)}
-          title={pinned.caption || 'Change the pinned photo'}
+          title={caption || 'Change the pinned photo'}
           className="relative min-h-24 flex-1 overflow-hidden rounded-lg ring-1 ring-line"
         >
-          <img src={pinned.src} alt={pinned.caption} className="size-full object-cover" />
+          <img src={src} alt={caption} className="size-full object-cover" />
         </button>
       ) : (
         <button
@@ -82,15 +117,13 @@ export function PhotoWidget() {
         </button>
       )}
 
-      {/* No caption line: the photo is the whole point of the widget, and a
-          filename under it just ate a row of the tile. The remove button
-          floats over the image instead, on hover. */}
-      {pinned ? (
+      {src ? (
         <button
           type="button"
-          onClick={() => save(null)}
+          onClick={() => void clear()}
+          disabled={working}
           aria-label="Remove the pinned photo"
-          className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-slate-950/55 text-white opacity-0 transition-opacity hover:bg-critical focus:opacity-100 group-hover/photo:opacity-100"
+          className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-slate-950/55 text-white opacity-0 transition-opacity hover:bg-critical focus:opacity-100 group-hover/photo:opacity-100 disabled:opacity-40"
         >
           <Icon name="trash" size={12} />
         </button>
@@ -98,10 +131,10 @@ export function PhotoWidget() {
 
       {picking ? (
         <PhotoPicker
+          busy={working}
           onClose={() => setPicking(false)}
-          onPick={(next) => {
-            save(next)
-            setPicking(false)
+          onPick={(file, nextCaption) => {
+            void save(file, nextCaption).then(() => setPicking(false))
           }}
         />
       ) : null}
@@ -112,9 +145,11 @@ export function PhotoWidget() {
 function PhotoPicker({
   onClose,
   onPick,
+  busy,
 }: {
   onClose: () => void
-  onPick: (pinned: Pinned) => void
+  onPick: (file: Blob, caption: string) => void
+  busy: boolean
 }) {
   const { notify } = useToast()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -127,8 +162,6 @@ function PhotoPicker({
       .catch(() => setRows([]))
   }, [])
 
-  // Every photo already in the app, so pinning one doesn't mean finding the
-  // original file again.
   const gallery = (rows ?? []).flatMap((experience) =>
     experience.photos.map((photo) => ({
       id: photo.id,
@@ -144,24 +177,24 @@ function PhotoPicker({
 
     if (file.size > MAX_BYTES) {
       notify(
-        `That image is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is 2.5MB — ` +
-          'animated GIFs run large, so a shorter or smaller one will fit.',
+        `That image is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is ` +
+          `${Math.round(MAX_BYTES / 1024 / 1024)}MB.`,
         'error',
       )
       return
     }
 
-    // Read to a data URL rather than re-encoding through a canvas: a canvas
-    // would flatten an animated GIF to its first frame. Stored as-is, so the
-    // animation survives — and it means no upload endpoint or server-side row.
-    const reader = new FileReader()
-    reader.onerror = () => notify("That image couldn't be read.", 'error')
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onPick({ src: reader.result, caption: file.name.replace(/\.[^.]+$/, '') })
-      }
+    onPick(file, file.name.replace(/\.[^.]+$/, ''))
+  }
+
+  async function pickGallery(src: string, nextCaption: string) {
+    try {
+      const response = await fetch(src)
+      if (!response.ok) throw new Error('fetch failed')
+      onPick(await response.blob(), nextCaption)
+    } catch {
+      notify("That gallery photo couldn't be loaded.", 'error')
     }
-    reader.readAsDataURL(file)
   }
 
   return (
@@ -169,15 +202,16 @@ function PhotoPicker({
       open
       onClose={onClose}
       title="Pin a photo"
-      description="Upload an image or GIF, or reuse a photo already in your galleries."
+      description="Upload an image or GIF, or reuse a photo already in your galleries. Saved to your account."
       footer={
         <>
-          <Button type="button" onClick={onClose}>
+          <Button type="button" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button
             type="button"
             variant="primary"
+            loading={busy}
             onClick={() => inputRef.current?.click()}
             icon={<Icon name="plus" size={14} />}
           >
@@ -189,7 +223,6 @@ function PhotoPicker({
       <input
         ref={inputRef}
         type="file"
-        // GIFs included — the data URL keeps them animated.
         accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
         onChange={onUpload}
         className="hidden"
@@ -210,9 +243,10 @@ function PhotoPicker({
             <li key={photo.id}>
               <button
                 type="button"
-                onClick={() => onPick({ src: photo.src, caption: photo.caption })}
+                disabled={busy}
+                onClick={() => void pickGallery(photo.src, photo.caption)}
                 title={photo.caption}
-                className="block aspect-square w-full overflow-hidden rounded-lg ring-1 ring-line transition-all hover:ring-2 hover:ring-brand"
+                className="block aspect-square w-full overflow-hidden rounded-lg ring-1 ring-line transition-all hover:ring-2 hover:ring-brand disabled:opacity-50"
               >
                 <img
                   src={photo.src}

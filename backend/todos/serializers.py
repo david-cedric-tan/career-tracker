@@ -10,14 +10,19 @@ class TodoSerializer(serializers.ModelSerializer):
     )
     is_overdue = serializers.BooleanField(read_only=True)
     application_label = serializers.CharField(
-        source="application.company.name", read_only=True, default=None
+        source="application.company.display_name", read_only=True, default=None
     )
     person_name = serializers.CharField(
         source="person.full_name", read_only=True, default=None
     )
     company_name = serializers.CharField(
-        source="company.name", read_only=True, default=None
+        source="company.display_name", read_only=True, default=None
     )
+    # Marks for the calendar's view card — one round-trip, no follow-up
+    # fetches just to draw a face and two logos.
+    application_logo = serializers.SerializerMethodField()
+    person_photo = serializers.SerializerMethodField()
+    company_logo = serializers.SerializerMethodField()
 
     class Meta:
         model = Todo
@@ -28,9 +33,9 @@ class TodoSerializer(serializers.ModelSerializer):
             "due_date",
             "priority", "priority_display",
             "status", "status_display",
-            "application", "application_label",
-            "person", "person_name",
-            "company", "company_name",
+            "application", "application_label", "application_logo",
+            "person", "person_name", "person_photo",
+            "company", "company_name", "company_logo",
             "is_overdue",
             "position",
             "completed_at",
@@ -40,8 +45,24 @@ class TodoSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "status_display", "priority_display", "is_overdue",
             "application_label", "person_name", "company_name",
+            "application_logo", "person_photo", "company_logo",
             "completed_at", "created_at", "updated_at",
         ]
+
+    def _absolute(self, image):
+        if not image:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_application_logo(self, todo):
+        return self._absolute(todo.application.company.logo) if todo.application_id else None
+
+    def get_person_photo(self, todo):
+        return self._absolute(todo.person.photo) if todo.person_id else None
+
+    def get_company_logo(self, todo):
+        return self._absolute(todo.company.logo) if todo.company_id else None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

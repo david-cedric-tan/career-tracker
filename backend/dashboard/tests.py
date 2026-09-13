@@ -334,6 +334,7 @@ class CalendarEventsTests(APITestCase):
                 "application_followup",
                 "application_reapply",
                 "person_chat",
+                "catchup",
                 "catchup_followup",
                 "custom",
             },

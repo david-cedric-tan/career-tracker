@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { applications, calendarEvents, companies, people } from '../api/resources'
 import type {
@@ -7,13 +7,15 @@ import type {
   Company,
   Person,
 } from '../api/types'
-import { cx, today } from '../lib/format'
+import { useFormDirty } from '../hooks/useFormDirty'
+import { today } from '../lib/format'
 import { Button } from './ui/Button'
 import { Input } from './ui/Field'
 import { Combobox, MultiSelect } from './ui/Combobox'
 import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Icon } from './ui/Icon'
 import { Modal } from './ui/Modal'
+import { Switch } from './ui/Switch'
 import { useToast } from './ui/toast-context'
 import { ConfirmDelete } from './ui/ConfirmDelete'
 
@@ -25,6 +27,10 @@ type Props = {
   existing?: CalendarEventRecord | null
   /** Pre-fills the date when opened from a day already selected on the grid. */
   defaultDate?: string
+  /** When adding from an hour slot, start timed rather than all-day. */
+  defaultAllDay?: boolean
+  /** `HH:MM` — used with `defaultAllDay: false`. */
+  defaultStartTime?: string
 }
 
 const DEFAULT_REMINDER_MINUTES = 30
@@ -87,15 +93,24 @@ export function CalendarEventForm(props: Props) {
   return <CalendarEventFormBody {...props} />
 }
 
-function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultDate }: Props) {
+function CalendarEventFormBody({
+  onClose,
+  onSaved,
+  onDeleted,
+  existing,
+  defaultDate,
+  defaultAllDay,
+  defaultStartTime,
+}: Props) {
   const { notify } = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const startSeed = defaultStartTime ?? roundedNow()
   const [form, setForm] = useState(() => ({
     title: existing?.title ?? '',
     date: existing?.date ?? defaultDate ?? today(),
-    all_day: existing?.all_day ?? true,
-    start_time: existing?.start_time?.slice(0, 5) ?? roundedNow(),
-    end_time: existing?.end_time?.slice(0, 5) ?? addMinutes(roundedNow(), 30),
+    all_day: existing?.all_day ?? defaultAllDay ?? true,
+    start_time: existing?.start_time?.slice(0, 5) ?? startSeed,
+    end_time: existing?.end_time?.slice(0, 5) ?? addMinutes(startSeed, 30),
     notes: existing?.notes ?? '',
     is_done: existing?.is_done ?? false,
     reminders: existing?.reminders.map((r) => r.minutes_before) ?? [],
@@ -119,6 +134,8 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
   const [customReminder, setCustomReminder] = useState(false)
   const [customAmount, setCustomAmount] = useState(2)
   const [customUnit, setCustomUnit] = useState<CustomUnit>('hours')
+  const dirty = useFormDirty({ form, company, application, attendees })
+  const guardedCloseRef = useRef<(() => void) | null>(null)
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -216,6 +233,8 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
     <Modal
       open
       onClose={onClose}
+      dirty={dirty}
+      guardedCloseRef={guardedCloseRef}
       title={existing ? 'Edit event' : 'Add event'}
       footer={
         <>
@@ -228,7 +247,7 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
               Delete
             </Button>
           ) : null}
-          <Button type="button" onClick={onClose}>
+          <Button type="button" onClick={() => guardedCloseRef.current?.()}>
             Cancel
           </Button>
           <Button type="submit" form="calendar-event-form" variant="primary" loading={saving}>
@@ -260,23 +279,11 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
         <div className="flex flex-col gap-3 rounded-lg border border-line p-3">
           <label className="flex items-center justify-between gap-3">
             <span className="text-[13px] font-medium text-ink">All-day</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={form.all_day}
-              onClick={() => toggleAllDay(!form.all_day)}
-              className={cx(
-                'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-                form.all_day ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
-              )}
-            >
-              <span
-                className={cx(
-                  'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
-                  form.all_day ? 'translate-x-5' : 'translate-x-0',
-                )}
-              />
-            </button>
+            <Switch
+              checked={form.all_day}
+              onChange={toggleAllDay}
+              label="All-day"
+            />
           </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -456,7 +463,7 @@ function CalendarEventFormBody({ onClose, onSaved, onDeleted, existing, defaultD
                 label: entry.company_name,
                 hint: entry.stage_display,
               }))}
-              placeholder="Assessment centre, interview…"
+              placeholder="Assessment Center, interview…"
             />
           </div>
 
