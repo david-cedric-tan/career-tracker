@@ -323,6 +323,9 @@ export const backup = {
   /** Downloads bypass `api()` — the response is a file, not JSON. */
   downloadUrl: (format: BackupFormat) =>
     `${import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'}/api/backup/export.${format}`,
+  /** Admin-only: every account's data, for moving the app to another machine. */
+  fullBackupUrl: () =>
+    `${import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'}/api/backup/admin/export-full.zip`,
   restore: (file: File, options: { dryRun?: boolean } = {}) => {
     const body = new FormData()
     body.append('file', file)

@@ -423,6 +423,14 @@ class DeveloperInboxTests(APITestCase):
         self.client.patch("/api/auth/me/", {"is_developer": True}, format="json")
         self.assertFalse(Profile.for_user(self.sister).is_developer)
 
+    def test_is_superuser_is_reported_but_not_self_grantable(self):
+        self.client.force_authenticate(self.sister)
+        self.assertFalse(self.client.get("/api/auth/me/").data["is_superuser"])
+
+        self.client.patch("/api/auth/me/", {"is_superuser": True}, format="json")
+        self.sister.refresh_from_db()
+        self.assertFalse(self.sister.is_superuser)
+
 
 @override_settings(MEDIA_ROOT=TICKET_MEDIA)
 class TicketThreadTests(APITestCase):

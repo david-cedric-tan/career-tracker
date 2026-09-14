@@ -7,10 +7,11 @@ from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from .archive import ARCHIVE_VERSION, archive_counts, build_archive, collect_media_manifest
+from .full_dump import build_full_backup
 from .restore import reattach_media, restore, validate_archive
 from .workbook import read_workbook
 from .ziparchive import build_zip_archive, read_zip_archive
@@ -189,4 +190,31 @@ def import_from_ai(request):
         return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response(summary)
+
+
+class IsSuperUser(BasePermission):
+    """Real admin, not `Profile.is_developer` — that flag only grants reading
+    the suggestion box (see accounts.models.Profile), which is a much smaller
+    thing than everyone's data. This is Django's own `is_superuser`, set on
+    whichever account should be trusted to move the whole app between
+    machines (`createsuperuser`, or the admin site)."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_superuser)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsSuperUser])
+def export_full_backup(request):
+    """Every table, every user, every uploaded file — for moving this whole
+    app to another machine, not for one account's own backup (see
+    `export_zip` for that). Restoring it is a management command
+    (`restore_full_backup`), never a web endpoint — see `.full_dump` for why.
+    """
+    payload = build_full_backup()
+    response = HttpResponse(payload, content_type="application/zip")
+    response["Content-Disposition"] = (
+        f'attachment; filename="career-tracker-full-backup-{date.today().isoformat()}.zip"'
+    )
+    return response
 

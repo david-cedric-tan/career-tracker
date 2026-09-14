@@ -1,4 +1,3 @@
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { readThumbnail, writeThumbnail } from './thumbnailCache'
 
 type PdfJs = typeof import('pdfjs-dist')
@@ -8,8 +7,13 @@ let pdfJsReady: Promise<PdfJs> | null = null
 /** Lazy-load pdf.js and wire the worker once. */
 export function loadPdfJs(): Promise<PdfJs> {
   if (!pdfJsReady) {
-    pdfJsReady = import('pdfjs-dist').then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+    // Dynamic `?url` import keeps Vite from failing the whole module graph when
+    // pdfjs-dist isn't installed yet (and works on Node 20 with pdfjs 4.x).
+    pdfJsReady = Promise.all([
+      import('pdfjs-dist'),
+      import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+    ]).then(([pdfjs, worker]) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = worker.default
       return pdfjs
     })
   }

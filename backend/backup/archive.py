@@ -9,11 +9,9 @@ exports are data-only. The full "Data + Resources" backup (FR-EXPORT-05) is
 a .zip built by `collect_media_manifest` below, layered on top of this same
 archive rather than changing its shape. It covers every file field that's
 already part of this archive (resumes, experience photos, profile
-avatar/wallpaper, company logos, person photos), plus certification
-attachments — those rows aren't in the archive shape yet, so the files ride
-along named by their caption for a human reading the zip, and restore skips
-the manifest rows rather than reattaching them. Education/ExtraCurricular
-attachments are still absent.
+avatar/wallpaper, company logos, person photos, certification attachments,
+refinement message images). Education/ExtraCurricular attachments are still
+absent.
 """
 
 import os
@@ -21,7 +19,15 @@ import re
 
 from django.utils.text import get_valid_filename
 
-from accounts.models import Certification, Experience, ExperiencePhoto, Profile
+from accounts.models import (
+    Certification,
+    Experience,
+    ExperiencePhoto,
+    Profile,
+    RefinementEventLog,
+    RefinementMessage,
+    RefinementNote,
+)
 from applications.models import (
     Application,
     ApplicationJobListing,
@@ -30,17 +36,19 @@ from applications.models import (
     Country,
     Industry,
     JobListing,
+    LibraryDocument,
     Location,
     Resume,
     Role,
     State,
 )
 from catchups.models import Catchup
+from events.models import CalendarEvent
 from network.models import ContactMethod, Person
 from todos.models import Todo
 
 # Bumped when the shape changes incompatibly, so an old file fails loudly
-# rather than importing halfway.
+# rather than importing halfway. New sheets are additive and stay on v1.
 ARCHIVE_VERSION = 1
 
 # Sheet/key name → the columns it carries, in order. The importer walks this
@@ -71,16 +79,40 @@ SHEETS = {
     ],
     "contact_methods": ["id", "person", "channel", "value", "is_preferred"],
     "catchups": [
-        "id", "person", "met_on", "title", "format", "location", "minutes",
-        "takeaways", "follow_up_on",
+        "id", "person", "met_on", "title", "format", "format_other",
+        "message_channel", "location", "minutes", "takeaways", "follow_up_on",
     ],
     "todos": [
-        "id", "title", "description", "due_date", "priority", "status",
-        "application", "person", "company", "completed_at",
+        "id", "title", "description", "due_date", "due_time", "due_end_time",
+        "priority", "status", "application", "person", "company",
+        "completed_at", "position",
+    ],
+    "calendar_events": [
+        "id", "title", "date", "all_day", "start_time", "end_time", "notes",
+        "is_done", "company", "application", "people", "reminders",
+    ],
+    "library_documents": [
+        "id", "title", "description", "original_name", "kind", "tags",
+        "position", "application", "company",
     ],
     "experiences": [
         "id", "company", "title", "started_on", "ended_on", "description",
         "photo_captions",
+    ],
+    "certifications": [
+        "id", "name", "issuer", "issued_on", "expires_on", "credential_url",
+        "description", "attachment_captions",
+    ],
+    "refinement_notes": [
+        "id", "body", "kind", "status", "page", "screens", "resolution",
+        "resolved_at", "resolved_by", "resolution_seen_at", "owner_read_at",
+        "developer_read_at", "created_at",
+    ],
+    "refinement_messages": [
+        "id", "note", "body", "author", "created_at", "has_image",
+    ],
+    "refinement_events": [
+        "id", "note", "event_type", "detail", "actor", "created_at",
     ],
 }
 
@@ -88,6 +120,10 @@ LIST_SEPARATOR = " | "
 
 
 def _date(value):
+    return value.isoformat() if value else None
+
+
+def _time(value):
     return value.isoformat() if value else None
 
 
@@ -143,9 +179,23 @@ def build_archive(user):
         id__in=listings.values_list("location_id", flat=True)
     ).select_related("state", "state__country")
 
+    profile = Profile.for_user(user)
     return {
         "version": ARCHIVE_VERSION,
         "username": user.username,
+        # Appearance and dashboard layout aren't a "row" like everything else
+        # here — one object, not a sheet — so it rides along as its own key
+        # rather than forcing SHEETS/archive_counts to special-case it.
+        "profile": {
+            "theme_mode": profile.theme_mode,
+            "wallpaper": profile.wallpaper,
+            "wallpaper_blur": profile.wallpaper_blur,
+            "wallpaper_opacity": profile.wallpaper_opacity,
+            "color_preset": profile.color_preset,
+            "font_family": profile.font_family,
+            "celebrations_enabled": profile.celebrations_enabled,
+            "dashboard_layout": profile.dashboard_layout,
+        },
         "companies": [
             {
                 "id": c.id,
@@ -265,6 +315,8 @@ def build_archive(user):
                 "met_on": _date(c.met_on),
                 "title": c.title,
                 "format": c.format,
+                "format_other": c.format_other,
+                "message_channel": c.message_channel,
                 "location": c.location,
                 "minutes": c.minutes,
                 "takeaways": c.takeaways,
@@ -278,14 +330,52 @@ def build_archive(user):
                 "title": t.title,
                 "description": t.description,
                 "due_date": _date(t.due_date),
+                "due_time": _time(t.due_time),
+                "due_end_time": _time(t.due_end_time),
                 "priority": t.priority,
                 "status": t.status,
                 "application": t.application_id,
                 "person": t.person.full_name if t.person else None,
                 "company": t.company.name if t.company else None,
                 "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                "position": t.position,
             }
             for t in Todo.objects.filter(user=user).select_related("person", "company")
+        ],
+        "calendar_events": [
+            {
+                "id": e.id,
+                "title": e.title,
+                "date": _date(e.date),
+                "all_day": e.all_day,
+                "start_time": _time(e.start_time),
+                "end_time": _time(e.end_time),
+                "notes": e.notes,
+                "is_done": e.is_done,
+                "company": e.company.name if e.company else None,
+                "application": e.application_id,
+                "people": _names(e.people.all(), attribute="full_name"),
+                "reminders": [r.minutes_before for r in e.reminders.all()],
+            }
+            for e in CalendarEvent.objects.filter(user=user)
+            .select_related("company", "application")
+            .prefetch_related("people", "reminders")
+        ],
+        "library_documents": [
+            {
+                "id": d.id,
+                "title": d.title,
+                "description": d.description,
+                "original_name": d.original_name,
+                "kind": d.kind,
+                "tags": list(d.tags or []),
+                "position": d.position,
+                "application": d.application_id,
+                "company": d.company.name if d.company else None,
+            }
+            for d in LibraryDocument.objects.filter(user=user).select_related(
+                "application", "company"
+            )
         ],
         "experiences": [
             {
@@ -298,6 +388,78 @@ def build_archive(user):
                 "photo_captions": [p.caption for p in e.photos.all()],
             }
             for e in experiences
+        ],
+        "certifications": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "issuer": c.issuer,
+                "issued_on": _date(c.issued_on),
+                "expires_on": _date(c.expires_on),
+                "credential_url": c.credential_url,
+                "description": c.description,
+                # Captions (falling back to original_name) keep zip reattach
+                # order stable when a credential has more than one file.
+                "attachment_captions": [
+                    (a.caption or a.original_name or "").strip()
+                    for a in c.attachments.all()
+                ],
+            }
+            for c in Certification.objects.filter(user=user).prefetch_related(
+                "attachments"
+            )
+        ],
+        "refinement_notes": [
+            {
+                "id": n.id,
+                "body": n.body,
+                "kind": n.kind,
+                "status": n.status,
+                "page": n.page,
+                "screens": list(n.screens or []),
+                "resolution": n.resolution,
+                "resolved_at": n.resolved_at.isoformat() if n.resolved_at else None,
+                "resolved_by": n.resolved_by.username if n.resolved_by else None,
+                "resolution_seen_at": (
+                    n.resolution_seen_at.isoformat() if n.resolution_seen_at else None
+                ),
+                "owner_read_at": n.owner_read_at.isoformat() if n.owner_read_at else None,
+                "developer_read_at": (
+                    n.developer_read_at.isoformat() if n.developer_read_at else None
+                ),
+                "created_at": n.created_at.isoformat() if n.created_at else None,
+            }
+            for n in RefinementNote.objects.filter(user=user).select_related(
+                "resolved_by"
+            )
+        ],
+        "refinement_messages": [
+            {
+                "id": m.id,
+                "note": m.note_id,
+                "body": m.body,
+                # Username rather than id — portable across databases; restore
+                # maps the archive owner back onto the restoring account.
+                "author": m.user.username if m.user_id else None,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+                "has_image": bool(m.image),
+            }
+            for m in RefinementMessage.objects.filter(note__user=user).select_related(
+                "user"
+            )
+        ],
+        "refinement_events": [
+            {
+                "id": e.id,
+                "note": e.note_id,
+                "event_type": e.event_type,
+                "detail": e.detail,
+                "actor": e.actor.username if e.actor_id else None,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in RefinementEventLog.objects.filter(note__user=user).select_related(
+                "actor"
+            )
         ],
     }
 
@@ -378,6 +540,22 @@ def collect_media_manifest(user):
             )
         )
 
+    for document in LibraryDocument.objects.filter(user=user).exclude(file=""):
+        entries.append(
+            (
+                {
+                    "kind": "library_document",
+                    # The row's own id — not a name, since a document has no
+                    # unique title — so restore's fresh copy (looked up by the
+                    # id `library_documents` was keyed by while restoring) is
+                    # unambiguous even with two documents titled the same.
+                    "match": {"id": document.id},
+                    "path": f"media/library/{document.id}{_ext(document.file.name)}",
+                },
+                document.file,
+            )
+        )
+
     for experience in Experience.objects.filter(user=user).select_related("company").prefetch_related("photos"):
         key = {
             "company": experience.company.name,
@@ -422,6 +600,20 @@ def collect_media_manifest(user):
     for certification in (
         Certification.objects.filter(user=user).prefetch_related("attachments")
     ):
+        if certification.icon:
+            entries.append(
+                (
+                    {
+                        "kind": "certification_icon",
+                        "match": {"name": certification.name},
+                        "path": (
+                            f"media/certification-icons/"
+                            f"{certification.id}{_ext(certification.icon.name)}"
+                        ),
+                    },
+                    certification.icon,
+                )
+            )
         for attachment in certification.attachments.all():
             if not attachment.file:
                 continue
@@ -431,6 +623,8 @@ def collect_media_manifest(user):
                         "kind": "certification_attachment",
                         "match": {"name": certification.name},
                         "caption": attachment.caption,
+                        "original_name": attachment.original_name,
+                        "attachment_kind": attachment.kind,
                         "path": f"media/certifications/{_caption_filename(attachment, taken_captions)}",
                     },
                     attachment.file,
@@ -446,6 +640,33 @@ def collect_media_manifest(user):
                     "path": f"media/people/{person.id}{_ext(person.photo.name)}",
                 },
                 person.photo,
+            )
+        )
+
+    for message in (
+        RefinementMessage.objects.filter(note__user=user)
+        .exclude(image="")
+        .select_related("note")
+    ):
+        if not message.image:
+            continue
+        entries.append(
+            (
+                {
+                    "kind": "refinement_message_image",
+                    "match": {
+                        "note": message.note_id,
+                        "message": message.id,
+                        "created_at": (
+                            message.created_at.isoformat() if message.created_at else None
+                        ),
+                    },
+                    "path": (
+                        f"media/refinements/{message.note_id}-{message.id}"
+                        f"{_ext(message.image.name)}"
+                    ),
+                },
+                message.image,
             )
         )
 

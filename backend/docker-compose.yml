@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:17
-    platform: linux/aarch64
     restart: unless-stopped
     ports:
       - "5433:5432"

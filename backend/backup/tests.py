@@ -10,7 +10,20 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
-from accounts.models import Experience, ExperiencePhoto, Profile
+from accounts.models import (
+    AttachmentKind,
+    Certification,
+    Experience,
+    ExperiencePhoto,
+    Profile,
+    ProfileAttachment,
+    RefinementEventType,
+    RefinementKind,
+    RefinementMessage,
+    RefinementNote,
+    RefinementStatus,
+    log_refinement_event,
+)
 from applications.models import (
     Application,
     ApplicationJobListing,
@@ -18,6 +31,7 @@ from applications.models import (
     Company,
     Industry,
     JobListing,
+    LibraryDocument,
     Location,
     Country,
     Resume,
@@ -27,6 +41,8 @@ from applications.models import (
 )
 from applications.services import log_creation, log_transition
 from catchups.models import Catchup
+from django.contrib.contenttypes.models import ContentType
+from events.models import CalendarEvent, EventReminder
 from network.models import ContactMethod, Person, RelationshipTag
 from todos.models import Todo, TodoStatus
 
@@ -50,6 +66,13 @@ class BackupTestBase(APITestCase):
         self.populate()
 
     def populate(self):
+        profile = Profile.for_user(self.user)
+        profile.theme_mode = "dark"
+        profile.font_family = "inter"
+        profile.color_preset = "violet"
+        profile.dashboard_layout = {"order": ["stats", "todos"], "hidden": ["news"]}
+        profile.save()
+
         industry = Industry.objects.create(name="Professional services")
         self.company = Company.objects.create(name="EY")
         self.company.industries.add(industry)
@@ -109,6 +132,7 @@ class BackupTestBase(APITestCase):
             met_on=date(2026, 6, 10),
             title="Coffee",
             format="coffee",
+            message_channel="whatsapp",
             minutes="Talked about the AC.",
             takeaways="Speak early.",
         )
@@ -116,13 +140,43 @@ class BackupTestBase(APITestCase):
         todo = Todo(
             user=self.user,
             title="Prep for the AC",
+            due_date=date(2026, 2, 20),
+            due_time="09:00:00",
+            due_end_time="10:30:00",
             application=self.application,
             person=self.person,
             company=self.company,
             status=TodoStatus.DONE,
+            position=3,
         )
         todo.sync_completion()
         todo.save()
+
+        self.event = CalendarEvent.objects.create(
+            user=self.user,
+            title="Assessment centre",
+            date=date(2026, 3, 15),
+            all_day=False,
+            start_time="09:00:00",
+            end_time="12:00:00",
+            notes="Bring laptop.",
+            company=self.company,
+            application=self.application,
+        )
+        self.event.people.add(self.person)
+        EventReminder.objects.create(event=self.event, minutes_before=60)
+
+        self.library_document = LibraryDocument.objects.create(
+            user=self.user,
+            title="Cover letter — EY",
+            description="Tailored to the vacationer role.",
+            original_name="ey-cover.pdf",
+            kind="document",
+            tags=["cover-letter", "final"],
+            position=1,
+            application=self.application,
+            company=self.company,
+        )
 
         Experience.objects.create(
             user=self.user,
@@ -133,10 +187,46 @@ class BackupTestBase(APITestCase):
             description="Worked on templates.",
         )
 
+        self.certification = Certification.objects.create(
+            user=self.user,
+            name="AWS Cloud Practitioner",
+            issuer="Amazon",
+            issued_on=date(2025, 3, 1),
+            description="Foundational cloud cert.",
+        )
+        ProfileAttachment.objects.create(
+            content_type=ContentType.objects.get_for_model(Certification),
+            object_id=self.certification.id,
+            file=SimpleUploadedFile("aws.pdf", b"%PDF-1.4 aws cert"),
+            original_name="AWS-CCF-CertificateFile.pdf",
+            kind=AttachmentKind.DOCUMENT,
+            caption="AWS-CCF-CertificateFile",
+        )
+
+        self.ticket = RefinementNote.objects.create(
+            user=self.user,
+            body="Calendar scroll jumps a week",
+            kind=RefinementKind.BUG,
+            status=RefinementStatus.OPEN,
+            page="/calendar",
+            screens=["calendar"],
+        )
+        log_refinement_event(
+            self.ticket, RefinementEventType.RAISED, actor=self.user
+        )
+        RefinementMessage.objects.create(
+            note=self.ticket,
+            user=self.user,
+            body="Happens when I drag an all-day event.",
+        )
+
         # Another user's data, which must never leak into this backup.
         theirs = Company.objects.create(name="Secret Co")
         Application.objects.create(user=self.other, company=theirs)
         Person.objects.create(user=self.other, full_name="Not Mine")
+        RefinementNote.objects.create(
+            user=self.other, body="Should never appear in dave's backup"
+        )
 
 
 class ExportTests(BackupTestBase):
@@ -148,7 +238,13 @@ class ExportTests(BackupTestBase):
         self.assertEqual(counts["people"], 1)
         self.assertEqual(counts["catchups"], 1)
         self.assertEqual(counts["todos"], 1)
+        self.assertEqual(counts["calendar_events"], 1)
+        self.assertEqual(counts["library_documents"], 1)
         self.assertEqual(counts["experiences"], 1)
+        self.assertEqual(counts["certifications"], 1)
+        self.assertEqual(counts["refinement_notes"], 1)
+        self.assertEqual(counts["refinement_messages"], 1)
+        self.assertEqual(counts["refinement_events"], 1)
 
     def test_json_export_is_a_download(self):
         response = self.client.get("/api/backup/export.json")
@@ -208,12 +304,39 @@ class RoundTripTests(BackupTestBase):
         catchup = Catchup.objects.get(user=self.user)
         self.assertEqual(catchup.minutes, "Talked about the AC.")
         self.assertEqual(catchup.person, person)
+        self.assertEqual(catchup.message_channel, "whatsapp")
 
         todo = Todo.objects.get(user=self.user)
         self.assertEqual(todo.status, TodoStatus.DONE)
         self.assertIsNotNone(todo.completed_at)
         self.assertEqual(todo.application, application)
         self.assertEqual(todo.person, person)
+        self.assertEqual(str(todo.due_time), "09:00:00")
+        self.assertEqual(str(todo.due_end_time), "10:30:00")
+        self.assertEqual(todo.position, 3)
+
+        document = LibraryDocument.objects.get(user=self.user)
+        self.assertEqual(document.title, "Cover letter — EY")
+        self.assertEqual(document.tags, ["cover-letter", "final"])
+        self.assertEqual(document.position, 1)
+        self.assertEqual(document.application, application)
+        self.assertEqual(document.company, application.company)
+
+        profile = Profile.for_user(self.user)
+        self.assertEqual(profile.theme_mode, "dark")
+        self.assertEqual(profile.font_family, "inter")
+        self.assertEqual(profile.color_preset, "violet")
+        self.assertEqual(profile.dashboard_layout, {"order": ["stats", "todos"], "hidden": ["news"]})
+
+        event = CalendarEvent.objects.get(user=self.user)
+        self.assertEqual(event.title, "Assessment centre")
+        self.assertEqual(event.date, date(2026, 3, 15))
+        self.assertFalse(event.all_day)
+        self.assertEqual(str(event.start_time), "09:00:00")
+        self.assertEqual(event.company, application.company)
+        self.assertEqual(event.application, application)
+        self.assertEqual([p.full_name for p in event.people.all()], ["Sarah Chen"])
+        self.assertEqual([r.minutes_before for r in event.reminders.all()], [60])
 
         experience = Experience.objects.get(user=self.user)
         self.assertEqual(experience.title, "Design Intern")
@@ -224,6 +347,21 @@ class RoundTripTests(BackupTestBase):
         # The binary isn't in the archive, but its name is, so the user knows
         # which file to re-attach.
         self.assertEqual(resume.file_name, "cv.pdf")
+
+        certification = Certification.objects.get(user=self.user)
+        self.assertEqual(certification.name, "AWS Cloud Practitioner")
+        self.assertEqual(certification.issuer, "Amazon")
+
+        note = RefinementNote.objects.get(user=self.user)
+        self.assertEqual(note.body, "Calendar scroll jumps a week")
+        self.assertEqual(list(note.screens), ["calendar"])
+        self.assertEqual(note.messages.get().body, "Happens when I drag an all-day event.")
+        self.assertEqual(note.event_logs.count(), 1)
+        self.assertFalse(
+            RefinementNote.objects.filter(
+                user=self.user, body="Should never appear in dave's backup"
+            ).exists()
+        )
 
     def import_file(self, name, content, **extra):
         return self.client.post(
@@ -249,11 +387,15 @@ class RoundTripTests(BackupTestBase):
 
         # Simulate the disaster: everything gone.
         Todo.objects.filter(user=self.user).delete()
+        CalendarEvent.objects.filter(user=self.user).delete()
+        LibraryDocument.objects.filter(user=self.user).delete()
         Catchup.objects.filter(user=self.user).delete()
         Person.objects.filter(user=self.user).delete()
         Application.objects.filter(user=self.user).delete()
         Resume.objects.filter(user=self.user).delete()
         Experience.objects.filter(user=self.user).delete()
+        Certification.objects.filter(user=self.user).delete()
+        RefinementNote.objects.filter(user=self.user).delete()
         self.assertEqual(Application.objects.filter(user=self.user).count(), 0)
 
         self.import_file("backup.json", exported, mode="replace")
@@ -359,6 +501,9 @@ class ZipBackupTests(BackupTestBase):
             image=SimpleUploadedFile("gallery.png", ONE_PX_PNG),
             caption="First day",
         )
+        self.library_document.file.save(
+            "ey-cover.pdf", SimpleUploadedFile("ey-cover.pdf", b"%PDF-1.4 cover letter"), save=True
+        )
 
     def import_zip(self, content, **extra):
         return self.client.post(
@@ -385,7 +530,15 @@ class ZipBackupTests(BackupTestBase):
             kinds = {row["kind"] for row in manifest}
             self.assertEqual(
                 kinds,
-                {"profile_avatar", "resume", "company_logo", "person_photo", "experience_photo"},
+                {
+                    "profile_avatar",
+                    "resume",
+                    "company_logo",
+                    "person_photo",
+                    "experience_photo",
+                    "certification_attachment",
+                    "library_document",
+                },
             )
             # Every manifest path is actually present in the zip.
             for row in manifest:
@@ -394,7 +547,7 @@ class ZipBackupTests(BackupTestBase):
     def test_summary_reports_file_count(self):
         self.populate_media()
         response = self.client.get("/api/backup/summary/")
-        self.assertEqual(response.data["file_count"], 5)
+        self.assertEqual(response.data["file_count"], 7)
 
     def test_zip_round_trip_reattaches_files(self):
         self.populate_media()
@@ -402,7 +555,7 @@ class ZipBackupTests(BackupTestBase):
 
         response = self.import_zip(exported, mode="replace")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["files_attached"], 5)
+        self.assertEqual(response.data["files_attached"], 7)
 
         profile = Profile.for_user(self.user)
         self.assertTrue(profile.avatar.name.endswith(".png"))
@@ -421,6 +574,14 @@ class ZipBackupTests(BackupTestBase):
         self.assertEqual(photo.caption, "First day")
         self.assertTrue(photo.image.name.endswith(".png"))
 
+        certification = Certification.objects.get(user=self.user)
+        attachment = certification.attachments.get()
+        self.assertTrue(attachment.file.name)
+        self.assertIn("AWS", attachment.caption or attachment.original_name)
+
+        document = LibraryDocument.objects.get(user=self.user)
+        self.assertTrue(document.file.name.endswith(".pdf"))
+
     def test_zip_dry_run_reports_file_count_without_writing(self):
         self.populate_media()
         exported = self.client.get("/api/backup/export.zip").content
@@ -429,9 +590,32 @@ class ZipBackupTests(BackupTestBase):
         response = self.import_zip(exported, dry_run="true")
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["dry_run"])
-        self.assertEqual(response.data["file_count"], 5)
+        self.assertEqual(response.data["file_count"], 7)
         # Nothing written — not even a re-save of the file already there.
         self.assertEqual(Resume.objects.get(user=self.user).file.name, file_name_before)
+
+    def test_legacy_zip_rebuilds_certifications_from_media(self):
+        """Older exports had cert PDFs in the zip but no certifications sheet."""
+        self.populate_media()
+        exported = self.client.get("/api/backup/export.zip").content
+
+        buffer = BytesIO()
+        with zipfile.ZipFile(BytesIO(exported)) as src, zipfile.ZipFile(
+            buffer, "w"
+        ) as dst:
+            data = json.loads(src.read("data.json"))
+            data.pop("certifications", None)
+            dst.writestr("data.json", json.dumps(data))
+            for name in src.namelist():
+                if name == "data.json":
+                    continue
+                dst.writestr(name, src.read(name))
+
+        response = self.import_zip(buffer.getvalue(), mode="replace")
+        self.assertEqual(response.status_code, 200, response.data)
+        certification = Certification.objects.get(user=self.user)
+        self.assertEqual(certification.name, "AWS Cloud Practitioner")
+        self.assertEqual(certification.attachments.count(), 1)
 
     def test_non_zip_import_still_works_with_no_files(self):
         # The JSON-only path shouldn't regress now that import returns files_attached too.
@@ -469,3 +653,51 @@ class WorkbookShapeTests(BackupTestBase):
         self.assertEqual(parsed["applications"][0]["listings"], ["Vacationer"])
         self.assertEqual(parsed["resumes"][0]["target_companies"], ["EY"])
         self.assertTrue(parsed["resumes"][0]["is_active"])
+
+
+class FullBackupTests(BackupTestBase):
+    """The whole-database export (FR-EXPORT-06) — admin-only, everyone's data."""
+
+    def test_ordinary_user_is_refused(self):
+        response = self.client.get("/api/backup/admin/export-full.zip")
+        self.assertEqual(response.status_code, 403)
+
+    def test_developer_flag_alone_is_not_enough(self):
+        # `Profile.is_developer` reads the suggestion box; it must not also
+        # unlock everyone's data.
+        profile = Profile.for_user(self.user)
+        profile.is_developer = True
+        profile.save(update_fields=["is_developer"])
+
+        response = self.client.get("/api/backup/admin/export-full.zip")
+        self.assertEqual(response.status_code, 403)
+
+    def test_superuser_can_download_everything(self):
+        self.user.is_superuser = True
+        self.user.save(update_fields=["is_superuser"])
+
+        response = self.client.get("/api/backup/admin/export-full.zip")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+
+        with zipfile.ZipFile(BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            self.assertIn("dump.json", names)
+            self.assertIn("manifest.json", names)
+
+            dump = json.loads(archive.read("dump.json"))
+            manifest = json.loads(archive.read("manifest.json"))
+
+        # Both users' data is in there — this is the point of it.
+        usernames = {
+            row["fields"]["username"]
+            for row in dump
+            if row["model"] == "auth.user"
+        }
+        self.assertEqual(usernames, {"dave", "mallory"})
+        self.assertEqual(manifest["object_count"], len(dump))
+
+    def test_anonymous_is_refused(self):
+        self.client.force_authenticate(None)
+        response = self.client.get("/api/backup/admin/export-full.zip")
+        self.assertEqual(response.status_code, 401)

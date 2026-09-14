@@ -36,6 +36,10 @@ export type User = {
   /** Granted server-side. Lets this account read and reply to everyone's
       refinement notes; grants nothing else. */
   is_developer: boolean
+  /** Django's own admin flag, granted server-side. The only thing it unlocks
+      here is downloading the whole-database backup (every account, every
+      table) for moving the app to another machine. */
+  is_superuser: boolean
 }
 
 /** Widget ids are the frontend's vocabulary; `spans` is columns out of 4. */

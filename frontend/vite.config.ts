@@ -28,6 +28,16 @@ const https =
  */
 const proxyTarget = process.env.VITE_PROXY_TARGET
 
+/**
+ * Vite checks the request's Host header against its own allowlist,
+ * separately from Django's `ALLOWED_HOSTS` — without this, a tunnel (see
+ * `run.sh --tunnel`) gets its request rejected by Vite itself before Django
+ * ever sees it. Only the suffix is known ahead of time (a quick tunnel's
+ * hostname is random per run); a leading `.` allows that suffix and every
+ * hostname ending in it, the same convention `ALLOWED_HOSTS` uses.
+ */
+const allowedHostSuffix = process.env.VITE_ALLOWED_HOST_SUFFIX
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -74,6 +84,7 @@ export default defineConfig({
   server: {
     port: 5173,
     ...(https ? { https } : {}),
+    ...(allowedHostSuffix ? { allowedHosts: [allowedHostSuffix] } : {}),
     ...(proxyTarget
       ? {
           // `xfwd` adds X-Forwarded-Proto/Host so Django knows the page is

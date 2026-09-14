@@ -93,6 +93,11 @@ class UserSerializer(serializers.ModelSerializer):
     # notes, so it is granted server-side and can't be switched on by PATCHing
     # your own profile.
     is_developer = serializers.BooleanField(source="profile.is_developer", read_only=True)
+    # Django's own admin flag, not `is_developer` above — this is the one
+    # that can download every account's data for moving the app to another
+    # machine (backup.views.IsSuperUser). Read-only for the same reason
+    # `is_developer` is: granted server-side, never self-service.
+    is_superuser = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -122,6 +127,7 @@ class UserSerializer(serializers.ModelSerializer):
             "celebrations_enabled",
             "dashboard_layout",
             "is_developer",
+            "is_superuser",
         )
         read_only_fields = (
             "id",
@@ -131,6 +137,7 @@ class UserSerializer(serializers.ModelSerializer):
             "pinned_photo",
             "pinned_photo_caption",
             "is_developer",
+            "is_superuser",
         )
 
     def get_avatar(self, user):
