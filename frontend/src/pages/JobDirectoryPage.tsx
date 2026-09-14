@@ -29,16 +29,17 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox, MultiSelect } from '../components/ui/Combobox'
+import { CompanyMark } from '../components/ui/CompanyMark'
 import { Input, Select, Textarea } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
 import { ImagePicker } from '../components/ui/ImagePicker'
-import { InfoHint } from '../components/ui/InfoHint'
 import { Modal } from '../components/ui/Modal'
 import { EmptyState, Loading } from '../components/ui/States'
 import { useToast } from '../components/ui/toast-context'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
 import { cx, formatDate } from '../lib/format'
+import { countryFlag } from '../lib/countryFlag'
 import { rememberList, rememberViewState, readViewState } from '../lib/listState'
 
 const TABS = [
@@ -54,12 +55,19 @@ function isTab(value: string | null): value is Tab {
   return TABS.some((option) => option.value === value)
 }
 
-/** A section title with its explanation tucked behind an "i". */
+/**
+ * A section title that explains itself on hover.
+ *
+ * The explanation used to sit behind an "i" bubble beside every heading —
+ * four of them on this page, each a small piece of permanent furniture for a
+ * sentence you read once. The title itself carries it now: the app's tooltip
+ * layer styles plain `title` attributes, so the hint is one hover away and
+ * nothing extra is drawn.
+ */
 function TitleWithHint({ title, hint }: { title: string; hint: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span title={hint} className="cursor-help">
       {title}
-      <InfoHint label={hint} />
     </span>
   )
 }
@@ -100,9 +108,11 @@ export function JobDirectoryPage() {
     <>
       <PageHeader
         title={
-          <span className="inline-flex items-center gap-2">
+          <span
+            title="Shared reference data — companies, roles, listings and locations."
+            className="cursor-help"
+          >
             Job Directory
-            <InfoHint label="Shared reference data — companies, roles, listings and locations." />
           </span>
         }
         subtitle={
@@ -816,7 +826,9 @@ function ListingsTab() {
   const [search, setSearch] = useState(saved?.search ?? '')
   const [roleType, setRoleType] = useState(saved?.roleType ?? '')
   const [arrangement, setArrangement] = useState(saved?.arrangement ?? '')
-  const [openOnly, setOpenOnly] = useState(Boolean(saved?.openOnly))
+  // Closed postings are history; the useful default is what you can still
+  // apply to. Remembered per browser once you change it.
+  const [openOnly, setOpenOnly] = useState(saved?.openOnly ?? true)
 
   useEffect(() => {
     rememberViewState('job-directory-listings', { search, roleType, arrangement, openOnly })
@@ -847,7 +859,7 @@ function ListingsTab() {
   return (
     <>
       <Card padded={false}>
-        <div className="flex items-start justify-between gap-3 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
           <CardHeader
             title={
               <TitleWithHint
@@ -901,15 +913,21 @@ function ListingsTab() {
               </option>
             ))}
           </Select>
-          <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-[13px] text-ink-2">
-            <input
-              type="checkbox"
-              checked={openOnly}
-              onChange={(event) => setOpenOnly(event.target.checked)}
-              className="size-4 accent-[var(--color-brand)]"
-            />
+          <button
+            type="button"
+            onClick={() => setOpenOnly((value) => !value)}
+            aria-pressed={openOnly}
+            title={openOnly ? 'Showing only listings still open' : 'Showing every listing'}
+            className={cx(
+              'inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-4 text-sm font-medium transition-colors',
+              openOnly
+                ? 'border-brand bg-brand-soft text-brand-strong'
+                : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+            )}
+          >
+            <Icon name={openOnly ? 'check' : 'clock'} size={15} />
             Still open
-          </label>
+          </button>
         </div>
 
         {list.initial ? (
@@ -997,7 +1015,25 @@ function ListingsTab() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-2.5 text-ink-2">{listing.company_name}</td>
+                    <td className="px-4 py-2.5 text-ink-2">
+                      {/* Its own link, so the row still opens the listing but
+                          the company takes you to the company. */}
+                      <Link
+                        to={`/job-directory/companies/${listing.company}`}
+                        state={{ from: '/job-directory?tab=listings' }}
+                        onClick={(event) => event.stopPropagation()}
+                        title={`Open ${listing.company_name}`}
+                        className="flex items-center gap-2 rounded-md transition-colors hover:text-brand"
+                      >
+                        <CompanyMark
+                          name={listing.company_name}
+                          logo={listing.company_logo}
+                          size={22}
+                          className="rounded-md shadow-none"
+                        />
+                        <span className="truncate hover:underline">{listing.company_name}</span>
+                      </Link>
+                    </td>
                     <td className="px-4 py-2.5 text-ink-2">{listing.location_name ?? '—'}</td>
                     <td className="px-4 py-2.5 text-ink-2">
                       {listing.role_type_display || '—'}
@@ -1286,16 +1322,40 @@ type PlaceView = (typeof PLACE_VIEWS)[number]['value']
  * place under this state", but not "what have I actually got?", which needs
  * seeing cities and venues together with their whole chain.
  */
+/**
+ * A country's flag, falling back to a map pin for anything the platform
+ * doesn't recognise as a country — so the row always has a mark, and the
+ * mark is never a wrong flag.
+ */
+function CountryMark({ name }: { name: string }) {
+  const flag = countryFlag(name)
+  if (!flag) return <Icon name="mapPin" size={12} className="text-ink-3" />
+  return (
+    <span aria-hidden="true" className="text-[13px] leading-none">
+      {flag}
+    </span>
+  )
+}
+
 function AllPlacesView() {
   const cityList = useResource(() => locations.list(), [])
   const venueList = useResource(() => venues.list(), [])
   const [search, setSearch] = useState('')
+  // The country/state/city tables arrive seeded, so most rows are geography
+  // nobody asked for. What belongs here is the handful of places that mean
+  // something to you — a venue you actually went to, a city you actually
+  // applied in — with the rest kept behind a toggle for when you need to
+  // find one to add a venue under.
+  const [showAll, setShowAll] = useState(false)
 
   if (cityList.initial || venueList.initial) return <Loading />
 
   const cities = cityList.data ?? []
   const allVenues = venueList.data ?? []
   const needle = search.trim().toLowerCase()
+
+  const inUse = (city: Location) => city.venue_count > 0 || city.listing_count > 0
+  const unusedCount = cities.filter((city) => !inUse(city)).length
 
   // Grouped by country → state so the hierarchy stays legible, with each
   // city carrying whatever venues sit under it.
@@ -1304,6 +1364,9 @@ function AllPlacesView() {
       city,
       venues: allVenues.filter((venue) => venue.location === city.id),
     }))
+    // A search looks everywhere — if you're hunting for a city by name you
+    // want it found whether you've used it yet or not.
+    .filter(({ city }) => showAll || needle || inUse(city))
     .filter(({ city, venues: cityVenues }) => {
       if (!needle) return true
       return (
@@ -1320,22 +1383,44 @@ function AllPlacesView() {
 
   return (
     <>
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search any country, state, city or venue…"
-        wrapperClassName="mt-4"
-      />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search any country, state, city or venue…"
+          wrapperClassName="min-w-[14rem] flex-1"
+        />
+        {unusedCount > 0 && !needle ? (
+          <button
+            type="button"
+            onClick={() => setShowAll((value) => !value)}
+            aria-pressed={showAll}
+            className={cx(
+              'h-10 shrink-0 rounded-lg border px-3 text-[12.5px] font-medium transition-colors',
+              showAll
+                ? 'border-brand bg-brand-soft text-brand-strong'
+                : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+            )}
+          >
+            {showAll ? 'Hide unused' : `Show all (${unusedCount} unused)`}
+          </button>
+        ) : null}
+      </div>
 
       {!rows.length ? (
         <p className="mt-5 text-[13px] text-ink-3">
-          {cities.length ? 'Nothing matches that search.' : 'No places registered yet.'}
+          {needle
+            ? 'Nothing matches that search.'
+            : cities.length
+              ? 'No venues or applied-in cities yet — add one from Browse.'
+              : 'No places registered yet.'}
         </p>
       ) : (
         <div className="mt-4 flex flex-col gap-4">
           {[...byRegion.entries()].map(([region, regionRows]) => (
             <div key={region}>
-              <p className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+                <CountryMark name={regionRows[0]?.city.country_name ?? ''} />
                 {region}
               </p>
               <ul className="divide-y divide-line rounded-lg border border-line">
@@ -1451,7 +1536,7 @@ function PlacesTab() {
 
   return (
     <Card>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <CardHeader
           title={
             <TitleWithHint

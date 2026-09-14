@@ -52,6 +52,7 @@ class Stage(models.TextChoices):
     ASSESSMENT_CENTRE = "assessment_centre", "Assessment Center"
     FINAL_INTERVIEW = "final_interview", "Final Interview"
     OFFER = "offer", "Offer"
+    MISSED_DEADLINE = "missed_deadline", "Missed Deadline"
 class ApplicationStage(models.Model):
     """The pipeline's steps — addable, not a fixed list (FR-REF-07).
 
@@ -96,9 +97,9 @@ class ApplicationStage(models.Model):
 
         # Position is server-assigned on create. A new stage is almost always
         # another round in the funnel — a phone screen, a take-home — so it
-        # slots in just before the last one ("Offer" out of the box) rather
-        # than after it, which would place it past the finish line in the
-        # pipeline chart and in the progress ranking.
+        # slots in just before the last one ("Missed Deadline" out of the box,
+        # formerly "Offer") rather than after it, which would place it past
+        # the finish line in the pipeline chart and in the progress ranking.
         #
         # Done here rather than in the viewset because `ensure/` saves the
         # serializer directly and never reaches `perform_create`.
@@ -122,6 +123,7 @@ class Outcome(models.TextChoices):
     DECLINED = "declined", "Declined"
     WITHDRAWN = "withdrawn", "Withdrawn"
     GHOSTED = "ghosted", "Ghosted"
+    MISSED_DEADLINE = "missed_deadline", "Missed Deadline"
 
     @classmethod
     def terminal(cls):
@@ -134,6 +136,7 @@ class Outcome(models.TextChoices):
             cls.DECLINED,
             cls.WITHDRAWN,
             cls.GHOSTED,
+            cls.MISSED_DEADLINE,
         }
 
 
@@ -557,6 +560,8 @@ class Application(models.Model):
             Outcome.IN_PROGRESS,
             Outcome.DECLINED,
             Outcome.WITHDRAWN,
+            Outcome.GHOSTED,
+            Outcome.MISSED_DEADLINE,
         ):
             if winner in outcomes:
                 self.outcome = winner

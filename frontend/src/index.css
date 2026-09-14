@@ -2627,6 +2627,96 @@
   }
 }
 
+/* Application deadline chips — coloured orbit around the whole card, with a
+   5s breath. Toggle + colour live in calendarEffects (local preference). */
+@property --deadline-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes calendar-deadline-orbit {
+  to {
+    --deadline-angle: 360deg;
+  }
+}
+
+@keyframes calendar-deadline-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    filter: drop-shadow(0 0 1px color-mix(in srgb, var(--deadline-glow) 20%, transparent));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 7px color-mix(in srgb, var(--deadline-glow) 55%, transparent));
+  }
+}
+
+.calendar-deadline-chip {
+  position: relative;
+  isolation: isolate;
+  --deadline-glow: var(--color-critical);
+  border-color: color-mix(in srgb, var(--deadline-glow) 55%, transparent) !important;
+  border-width: 1.5px;
+  box-shadow: 0 1px 5px color-mix(in srgb, var(--deadline-glow) 18%, transparent);
+}
+
+.calendar-deadline-chip::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--deadline-angle),
+    transparent 0deg,
+    transparent 220deg,
+    color-mix(in srgb, var(--deadline-glow) 35%, transparent) 260deg,
+    var(--deadline-glow) 300deg,
+    color-mix(in srgb, var(--deadline-glow) 85%, white) 330deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.calendar-deadline-chip > * {
+  position: relative;
+  z-index: 1;
+}
+
+.calendar-deadline-chip[data-deadline-fx='on']::before {
+  animation:
+    calendar-deadline-orbit 5s linear infinite,
+    calendar-deadline-breathe 5s ease-in-out infinite;
+}
+
+.calendar-deadline-chip[data-deadline-fx='off']::before {
+  /* Static red ring highlight when effects are off. */
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--deadline-glow) 65%, transparent);
+  padding: 0;
+  -webkit-mask: none;
+  mask: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar-deadline-chip[data-deadline-fx='on']::before {
+    animation: none;
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--deadline-glow) 70%, transparent);
+    padding: 0;
+    -webkit-mask: none;
+    mask: none;
+  }
+}
+
 /* The glass slider on the settings page — the same hand-drawn track as the
    about screen's faders, in the app's own palette rather than on dark glass. */
 .glass-slider {

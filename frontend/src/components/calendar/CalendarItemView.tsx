@@ -92,6 +92,19 @@ export function CalendarItemView({
                       item.record.end_time ? ` – ${formatTime(item.record.end_time)}` : ''
                     }`}
               </p>
+            ) : item.record.due_time ? (
+              <p className="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-ink-2">
+                <Icon name="clock" size={13} className="text-ink-3" />
+                {formatTime(item.record.due_time)}
+                {item.record.due_end_time
+                  ? ` – ${formatTime(item.record.due_end_time)}`
+                  : ''}
+              </p>
+            ) : date ? (
+              <p className="mt-0.5 flex items-center gap-1.5 text-[12.5px] text-ink-2">
+                <Icon name="clock" size={13} className="text-ink-3" />
+                All day
+              </p>
             ) : null}
           </div>
         </div>

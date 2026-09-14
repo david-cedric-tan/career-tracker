@@ -13,7 +13,6 @@ import { PageHeader } from '../components/layout/PageHeader'
 import { Card, CardHeader } from '../components/ui/Card'
 import { ClockWeather } from '../components/ui/ClockWeather'
 import { Icon } from '../components/ui/Icon'
-import { InfoHint } from '../components/ui/InfoHint'
 import { EmptyState, ErrorState, Loading, Refreshing } from '../components/ui/States'
 import { useAuth } from '../auth/context'
 import { useResource } from '../hooks/useResource'
@@ -315,7 +314,6 @@ export function DashboardPage() {
                 title={
                   <span className="inline-flex items-center gap-1.5">
                     Recent Activity
-                    <InfoHint label="Across every domain" />
                   </span>
                 }
               />

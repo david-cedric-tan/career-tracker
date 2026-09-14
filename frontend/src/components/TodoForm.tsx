@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { applications, companies, people, todos } from '../api/resources'
 import type {
@@ -17,6 +17,7 @@ import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
 import { companyOption } from '../lib/company'
+import { usePublishDraft, type CalendarDraft, type CalendarDraftRef } from '../lib/calendarDraft'
 
 export type TodoFormProps = {
   open: boolean
@@ -26,19 +27,52 @@ export type TodoFormProps = {
   choices: TodoChoices | null
   existing?: Todo | null
   seed?: TodoSuggestion | null
+  /** Optional strip above the fields (e.g. calendar kind toggles). */
+  banner?: ReactNode
+  /** Values carried over from another calendar kind — see `CalendarDraft`. */
+  draft?: CalendarDraft | null
+  /** Lets the calendar's kind switcher read these fields back out. */
+  draftRef?: CalendarDraftRef
 }
 
-function initialForm(existing?: Todo | null, seed?: TodoSuggestion | null) {
+function initialForm(
+  existing?: Todo | null,
+  seed?: TodoSuggestion | null,
+  draft?: CalendarDraft | null,
+) {
+  // A timed draft becomes a due clock time; an all-day one leaves it blank.
+  const timed = Boolean(draft && !draft.allDay)
   return {
-    title: existing?.title ?? seed?.title ?? '',
-    description: existing?.description ?? '',
-    due_date: existing?.due_date ?? seed?.due_date ?? '',
+    title: existing?.title ?? draft?.title ?? seed?.title ?? '',
+    description: existing?.description ?? draft?.notes ?? '',
+    due_date: existing?.due_date ?? draft?.date ?? seed?.due_date ?? '',
+    // HTML time inputs want HH:MM; the API stores HH:MM:SS.
+    due_time: existing?.due_time
+      ? existing.due_time.slice(0, 5)
+      : timed
+        ? (draft?.startTime ?? '')
+        : '',
+    due_end_time: existing?.due_end_time
+      ? existing.due_end_time.slice(0, 5)
+      : timed
+        ? (draft?.endTime ?? '')
+        : '',
     priority: existing?.priority ?? 'medium',
     status: existing?.status ?? 'open',
-    application: (existing?.application ?? seed?.application ?? null) as number | null,
-    person: (existing?.person ?? seed?.person ?? null) as number | null,
-    company: (existing?.company ?? null) as number | null,
+    application: (existing?.application ?? draft?.application ?? seed?.application ?? null) as
+      | number
+      | null,
+    person: (existing?.person ?? draft?.person ?? seed?.person ?? null) as number | null,
+    company: (existing?.company ?? draft?.company ?? null) as number | null,
   }
+}
+
+function plusOneHour(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number)
+  const total = Math.min(h * 60 + m + 60, 23 * 60 + 59)
+  const nh = Math.floor(total / 60)
+  const nm = total % 60
+  return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`
 }
 
 /** Body mounts only while open, so its state is seeded once and never synced. */
@@ -55,9 +89,24 @@ function TodoFormBody({
   choices,
   existing,
   seed,
+  banner,
+  draft,
+  draftRef,
 }: TodoFormProps) {
   const { notify } = useToast()
-  const [form, setForm] = useState(() => initialForm(existing, seed))
+  const [form, setForm] = useState(() => initialForm(existing, seed, draft))
+
+  usePublishDraft(draftRef, () => ({
+    title: form.title,
+    date: form.due_date,
+    allDay: !form.due_time,
+    startTime: form.due_time,
+    endTime: form.due_end_time,
+    notes: form.description,
+    person: form.person,
+    company: form.company,
+    application: form.application,
+  }))
   const [error, setError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -87,7 +136,15 @@ function TodoFormBody({
     setSaving(true)
     setError('')
     setErrors({})
-    const payload = { ...form, due_date: form.due_date || null }
+    const dueDate = form.due_date || null
+    const dueTime = dueDate && form.due_time ? `${form.due_time}:00` : null
+    const payload = {
+      ...form,
+      due_date: dueDate,
+      due_time: dueTime,
+      due_end_time:
+        dueTime && form.due_end_time ? `${form.due_end_time}:00` : null,
+    }
     try {
       if (existing) await todos.update(existing.id, payload)
       else await todos.create(payload)
@@ -138,6 +195,7 @@ function TodoFormBody({
       }
     >
       <form id="todo-form" onSubmit={onSubmit} className="flex flex-col gap-4">
+        {banner}
         {error ? (
           <p
             role="alert"
@@ -163,8 +221,52 @@ function TodoFormBody({
             type="date"
             value={form.due_date}
             error={errors.due_date}
-            onChange={(event) => set('due_date', event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value
+              setForm((prev) => ({
+                ...prev,
+                due_date: next,
+                due_time: next ? prev.due_time : '',
+                due_end_time: next ? prev.due_end_time : '',
+              }))
+            }}
           />
+          <Input
+            label="Start"
+            type="time"
+            value={form.due_time}
+            error={errors.due_time}
+            disabled={!form.due_date}
+            help={form.due_date ? 'Optional — places it on the calendar.' : 'Pick a due date first.'}
+            onChange={(event) => {
+              const next = event.target.value
+              setForm((prev) => {
+                const end =
+                  !next
+                    ? ''
+                    : !prev.due_end_time || prev.due_end_time <= next
+                      ? plusOneHour(next)
+                      : prev.due_end_time
+                return { ...prev, due_time: next, due_end_time: end }
+              })
+            }}
+          />
+          <Input
+            label="End"
+            type="time"
+            value={form.due_end_time}
+            error={errors.due_end_time}
+            disabled={!form.due_date || !form.due_time}
+            help={
+              form.due_time
+                ? 'How long it lasts on the calendar (drag the bottom edge to resize).'
+                : 'Set a start time first.'
+            }
+            onChange={(event) => set('due_end_time', event.target.value)}
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
           <Select
             label="Priority"
             value={form.priority}
@@ -208,6 +310,7 @@ function TodoFormBody({
             options={personOptions.map((person) => ({
               id: person.id,
               label: person.full_name,
+              avatar: person.photo,
             }))}
             placeholder="None"
           />

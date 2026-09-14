@@ -17,7 +17,8 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 /**
- * Seven equal-height day columns for the week view.
+ * Week grid: stacked day rows on phones; seven columns on laptop+.
+ * Grows with content — no per-day internal scroll; the page scrolls instead.
  */
 export function WeekView({
   days,
@@ -30,6 +31,7 @@ export function WeekView({
   movingId,
   onSelectDay,
   onOpenDay,
+  onComposeDay,
   onDayDragOver,
   onDayDragLeave,
   onDayDrop,
@@ -48,6 +50,7 @@ export function WeekView({
   movingId: string | null
   onSelectDay: (iso: string) => void
   onOpenDay: (iso: string) => void
+  onComposeDay: (iso: string) => void
   onDayDragOver: (event: DragEvent, iso: string) => void
   onDayDragLeave: (iso: string) => void
   onDayDrop: (event: DragEvent, iso: string) => void
@@ -57,7 +60,12 @@ export function WeekView({
   onOpen: (event: CalendarEvent) => void
 }) {
   return (
-    <div className="grid h-[min(70dvh,44rem)] grid-cols-7 overflow-hidden rounded-xl border border-line bg-surface">
+    <div
+      className={cx(
+        'flex min-h-[22rem] flex-col rounded-xl border border-line bg-surface',
+        'md:grid md:grid-cols-7 md:items-start',
+      )}
+    >
       {days.map((date, index) => {
         const iso = toIsoDate(date)
         const isToday = isSameDay(date, today)
@@ -69,7 +77,8 @@ export function WeekView({
           <div
             key={iso}
             className={cx(
-              'flex min-h-0 flex-col border-r border-line last:border-r-0',
+              'flex flex-col border-b border-line last:border-b-0',
+              'md:min-h-[22rem] md:border-b-0 md:border-r md:last:border-r-0',
               isDropTarget && 'bg-brand-soft/50',
               isSelected && 'bg-brand-soft/20',
             )}
@@ -81,7 +90,10 @@ export function WeekView({
               type="button"
               onClick={() => onOpenDay(iso)}
               title="Open day view"
-              className="flex shrink-0 flex-col items-center gap-0.5 border-b border-line px-1 py-2 text-center hover:bg-surface-2"
+              className={cx(
+                'flex shrink-0 items-center gap-2 border-b border-line px-2.5 py-2 text-left hover:bg-surface-2',
+                'md:flex-col md:items-center md:gap-0.5 md:px-1 md:text-center',
+              )}
             >
               <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-3">
                 {WEEKDAYS[index]}
@@ -94,25 +106,38 @@ export function WeekView({
               >
                 {date.getDate()}
               </span>
+              {dayEvents.length > 0 ? (
+                <span className="ml-auto text-[11px] text-ink-3 md:hidden">
+                  {dayEvents.length} item{dayEvents.length === 1 ? '' : 's'}
+                </span>
+              ) : null}
             </button>
             <div
-              className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1.5"
+              className="flex flex-col gap-1.5 p-2 md:p-1.5"
               onClick={() => onSelectDay(iso)}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                onComposeDay(iso)
+              }}
             >
-              {dayEvents.map((event) => (
-                <DayEventChip
-                  key={event.id}
-                  event={event}
-                  denser
-                  dragging={draggingId === event.id}
-                  moving={movingId === event.id}
-                  dropBefore={dropBeforeId === event.id && dropTarget === iso}
-                  onDragStart={onChipDragStart}
-                  onDragEnd={onChipDragEnd}
-                  onDragOverChip={onChipDragOver}
-                  onOpen={() => onOpen(event)}
-                />
-              ))}
+              {dayEvents.length === 0 ? (
+                <p className="px-0.5 py-1 text-[11px] text-ink-3 md:hidden">Nothing due</p>
+              ) : (
+                dayEvents.map((event) => (
+                  <DayEventChip
+                    key={event.id}
+                    event={event}
+                    denser
+                    dragging={draggingId === event.id}
+                    moving={movingId === event.id}
+                    dropBefore={dropBeforeId === event.id && dropTarget === iso}
+                    onDragStart={onChipDragStart}
+                    onDragEnd={onChipDragEnd}
+                    onDragOverChip={onChipDragOver}
+                    onOpen={() => onOpen(event)}
+                  />
+                ))
+              )}
             </div>
           </div>
         )

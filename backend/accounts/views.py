@@ -3,11 +3,14 @@ import os
 import secrets
 import time
 
+from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Max
 from django.utils import timezone
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -62,13 +65,31 @@ from .serializers import (
 )
 
 
+class LoginThrottle(ScopedRateThrottle):
+    """Rate limit for the one endpoint worth guessing at."""
+
+    scope = "login"
+
+
 class RegisterView(generics.CreateAPIView):
     """POST /api/auth/register/ — create user + return auth token."""
 
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    # Nothing here authenticates the *caller* — the body carries the
+    # credentials. Leaving the defaults on meant `SessionAuthentication`
+    # picked up a leftover `sessionid` from whoever used the browser last and
+    # then enforced CSRF, so the request died with "CSRF Failed" before the
+    # form was ever read. See LoginView for the same reasoning.
+    authentication_classes = []
+
+    throttle_classes = [LoginThrottle]
 
     def create(self, request, *args, **kwargs):
+        if not settings.ALLOW_REGISTRATION:
+            # A personal instance signs itself up once and then shuts the
+            # door; the setting is what reopens it.
+            raise PermissionDenied("Registration is closed on this instance.")
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
@@ -83,9 +104,22 @@ class RegisterView(generics.CreateAPIView):
 
 
 class LoginView(APIView):
-    """POST /api/auth/login/ — authenticate and return auth token."""
+    """POST /api/auth/login/ — authenticate and return auth token.
+
+    `authentication_classes = []` is load-bearing, not tidying. A successful
+    login calls `login()`, which sets a `sessionid` cookie; over HTTPS the SPA
+    and the API share an origin, so the browser sends that cookie back on the
+    *next* login POST. DRF's `SessionAuthentication` would then authenticate
+    from the cookie and enforce CSRF — and the SPA, which authenticates by
+    token and holds no CSRF token, got a 403 "CSRF Failed" instead of being
+    signed in. Anyone signing in second on a shared browser hit it.
+    """
 
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    # Credential stuffing is a numbers game; a handful of tries a minute is
+    # plenty for a person and useless for a bot.
+    throttle_classes = [LoginThrottle]
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -106,6 +140,9 @@ class LogoutView(APIView):
     """POST /api/auth/logout/ — delete token + clear session."""
 
     permission_classes = [permissions.IsAuthenticated]
+    # Token only: the SPA always sends one, and falling back to the session
+    # cookie would re-introduce the CSRF enforcement described on LoginView.
+    authentication_classes = [TokenAuthentication]
 
     def post(self, request):
         Token.objects.filter(user=request.user).delete()

@@ -21,7 +21,6 @@ import { TooltipLayer } from '../ui/TooltipLayer'
 import { cx, displayName, shortName } from '../../lib/format'
 import { Avatar } from '../ui/Avatar'
 import { Icon } from '../ui/Icon'
-import { ThemeToggle } from '../ui/ThemeToggle'
 import { Wallpaper } from './Wallpaper'
 import { RefinementLog } from '../devmode/RefinementLog'
 import { useUnseenReplies } from '../devmode/useUnseenReplies'
@@ -1005,6 +1004,7 @@ export function AppLayout() {
   // Clock/weather is a dashboard-only flourish — every other page just gets
   // the plain theme toggle, so the header stays quiet on pages people work in.
   const isDashboard = location.pathname === '/'
+  const isCalendar = location.pathname.startsWith('/calendar')
 
   // FR-AUTH-07 — runs once per account until dismissed. Computed during
   // render (matching the drawer-close pattern below) rather than in an
@@ -1127,7 +1127,7 @@ export function AppLayout() {
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         <header className="glass-panel sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-line bg-surface/85 px-3 py-2.5 backdrop-blur intern:bg-surface lg:hidden">
           <button
@@ -1145,30 +1145,25 @@ export function AppLayout() {
           <div className="flex min-w-0 flex-1 justify-center">
             <Brand />
           </div>
-          <ThemeToggle />
         </header>
 
-        {/* Theme toggle, pinned to the viewport's top-right corner. `fixed`
-            rather than `sticky` — a sticky element here proved to drift
-            during scroll in real browsers (the same quirk the sidebar hit;
-            see its `fixed` fix above). The dashboard is the one exception:
-            it builds its own sticky header (greeting + clock/weather + this
-            same toggle in one row) instead of this floating overlay — see
-            DashboardPage. */}
-        {!isDashboard ? (
-          <div className="pointer-events-none fixed top-4 right-6 z-20 hidden lg:block">
-            <div className="pointer-events-auto">
-              <ThemeToggle />
-            </div>
-          </div>
-        ) : null}
+        {/* No theme toggle in here. It used to float in the top-right corner
+            of every page, which put a control you touch once a month in the
+            same spot on every screen. Theme lives in Settings → Appearance;
+            the sign-in screen keeps its own toggle, since there's no Settings
+            to reach before you're in. */}
 
         <main
           className={cx(
-            'mx-auto w-full min-w-0 max-w-7xl flex-1 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
+            'mx-auto w-full min-w-0 flex-1 overflow-x-hidden',
+            // Calendar fills the workspace (width + leftover height) with modest
+            // edge padding; other pages stay in the reading column.
+            isCalendar
+              ? 'flex max-w-none min-h-0 flex-col px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:pb-4 xl:px-6'
+              : 'max-w-7xl px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
             // Clears the fixed top-right toggle on every page except the
             // dashboard, which handles its own header spacing.
-            !isDashboard && 'lg:pt-16',
+            !isDashboard && 'lg:pt-14',
           )}
         >
           <Outlet />

@@ -10,11 +10,25 @@ import { connector, growthFor, ringLayout, type RingDims } from '../../lib/ringL
 const NO_REGION = 'No Region Tagged'
 
 /** Outcome buckets that sit after Offer in Current mode — not pipeline stages,
-    but the natural "where it ended" homes for closed applications. */
+    but the natural "where it ended" homes for closed applications.
+    Missed Deadline is a real stage (and an outcome); it shows as a stage ring,
+    not an outcome peel card. */
 const TERMINAL_OUTCOME_CARDS = [
-  { key: 'outcome:accepted', outcome: 'accepted', label: 'Accepted' },
-  { key: 'outcome:rejected', outcome: 'rejected', label: 'Rejected' },
+  { key: 'outcome:accepted', outcome: 'accepted', label: 'Accepted', icon: 'check', tone: 'good' },
+  { key: 'outcome:rejected', outcome: 'rejected', label: 'Rejected', icon: 'close', tone: 'critical' },
 ] as const
+
+const OUTCOME_HEADER: Record<string, string> = {
+  good: 'bg-good/15 text-good',
+  critical: 'bg-critical/15 text-critical',
+  warning: 'bg-warning/15 text-warning',
+}
+
+const OUTCOME_ICON: Record<string, string> = {
+  good: 'text-good',
+  critical: 'text-critical',
+  warning: 'text-warning',
+}
 
 type Cluster = {
   key: string
@@ -42,8 +56,8 @@ function buildStageClusters(
 
   for (const row of rows) {
     // Current view: Accepted / Rejected leave the pipeline and sit in their
-    // own cards after Offer. Last-stage view stays pure pipeline history —
-    // how far you got, not how it ended.
+    // own cards after Offer. Missed Deadline is a stage of its own (after
+    // Offer in STAGE_TONE order). Last-stage view stays pure pipeline history.
     if (mode === 'portfolio') {
       const terminal = TERMINAL_OUTCOME_CARDS.find((card) => card.outcome === row.outcome)
       if (terminal) {
@@ -77,7 +91,7 @@ function buildStageClusters(
     (a, b) => order.indexOf(a.key) - order.indexOf(b.key),
   )
 
-  // Accepted then Rejected, always after Offer (only when they have rows).
+  // Accepted then Rejected, always after the stage rings (incl. Missed Deadline).
   const terminals = TERMINAL_OUTCOME_CARDS.flatMap((card) => {
     const cluster = byOutcome.get(card.key)
     return cluster ? [cluster] : []
@@ -116,8 +130,9 @@ function buildRegionClusters(rows: ApplicationSummary[], companies: Company[]): 
  * bucket, or region.
  *
  * Current mode groups by where each application sits now, but peels Accepted /
- * Rejected into their own cards after Offer. Last Stage Reached stays on
- * furthest pipeline step (history), ignoring those outcome buckets.
+ * Rejected into their own cards after Offer. Missed Deadline is a pipeline
+ * stage (after Offer), so it gets a normal stage ring. Last Stage Reached
+ * stays on furthest pipeline step (history), ignoring outcome buckets.
  */
 export function ApplicationBubbleView({
   rows,
@@ -156,18 +171,19 @@ function ClusterCard({
   const location = useLocation()
   const { label, rows, kind } = cluster
   const layout = useMemo(() => ringLayout(rows.length, DIMS, GROWTH), [rows.length])
-  const hubIcon =
-    kind === 'outcome' && cluster.key === 'outcome:accepted'
-      ? 'check'
-      : kind === 'outcome' && cluster.key === 'outcome:rejected'
-        ? 'close'
-        : 'briefcase'
-  const headerTone =
-    kind === 'outcome' && cluster.key === 'outcome:accepted'
-      ? 'bg-good/15 text-good'
-      : kind === 'outcome' && cluster.key === 'outcome:rejected'
-        ? 'bg-critical/15 text-critical'
-        : 'bg-brand-soft text-brand-strong'
+  const outcomeMeta = TERMINAL_OUTCOME_CARDS.find((card) => card.key === cluster.key)
+  const isMissedDeadlineStage = kind === 'stage' && cluster.key === 'missed_deadline'
+  const hubIcon = outcomeMeta?.icon ?? (isMissedDeadlineStage ? 'clock' : 'briefcase')
+  const headerTone = outcomeMeta
+    ? OUTCOME_HEADER[outcomeMeta.tone]
+    : isMissedDeadlineStage
+      ? 'bg-warning/15 text-warning'
+      : 'bg-brand-soft text-brand-strong'
+  const hubIconClass = outcomeMeta
+    ? OUTCOME_ICON[outcomeMeta.tone]
+    : isMissedDeadlineStage
+      ? 'text-warning'
+      : 'text-ink-3'
 
   return (
     <section
@@ -209,17 +225,7 @@ function ClusterCard({
           }}
           title={label}
         >
-          <Icon
-            name={hubIcon}
-            size={22}
-            className={
-              kind === 'outcome' && cluster.key === 'outcome:accepted'
-                ? 'text-good'
-                : kind === 'outcome' && cluster.key === 'outcome:rejected'
-                  ? 'text-critical'
-                  : 'text-ink-3'
-            }
-          />
+          <Icon name={hubIcon} size={22} className={hubIconClass} />
         </div>
 
         {rows.map((row, index) => {

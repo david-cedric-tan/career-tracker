@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { formatApiError } from '../api/client'
-import { calendarEvents, dashboard, todos } from '../api/resources'
-import type { CalendarEvent, CalendarEventRecord, Todo } from '../api/types'
-import { DayEventChip } from '../components/calendar/DayEventChip'
+import { calendarEvents, catchups, dashboard, todos } from '../api/resources'
+import type { CalendarEvent, CalendarEventRecord, Catchup, Todo } from '../api/types'
+import { CALENDAR_TIME_CLASS } from '../components/calendar/DayEventChip'
 import { DayTimeline } from '../components/calendar/DayTimeline'
+import { CalendarComposeModal } from '../components/calendar/CalendarComposeModal'
+import {
+  composeOriginKind,
+  emptyCompose,
+  type CalendarComposeState,
+  type ComposeKind,
+} from '../lib/calendarCompose'
 import { CalendarItemView, type CalendarItem } from '../components/calendar/CalendarItemView'
 import { CalendarLinkedPreview } from '../components/calendar/CalendarLinkedPreview'
+import {
+  MonthDayEventStack,
+  MonthDayPeek,
+  sortMonthCellEvents,
+} from '../components/calendar/MonthDayEvents'
 import { WeekView } from '../components/calendar/WeekView'
-import { CalendarEventForm } from '../components/CalendarEventForm'
-import { TodoForm } from '../components/TodoForm'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Avatar } from '../components/ui/Avatar'
 import { Button } from '../components/ui/Button'
@@ -18,27 +28,31 @@ import { Card } from '../components/ui/Card'
 import { FilterDrawer } from '../components/ui/FilterDrawer'
 import { Icon } from '../components/ui/Icon'
 import { ErrorState, Loading } from '../components/ui/States'
+import { Switch } from '../components/ui/Switch'
 import { useToast } from '../components/ui/toast-context'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
 import {
   addDaysIso,
   minutesToTime,
-  readExpandAll,
+  parseTimeToMinutes,
   reorderIds,
   saveDayOrder,
-  sortEventsBySavedOrder,
+  sortDayEvents,
   weekDaysFor,
-  writeExpandAll,
 } from '../lib/calendarView'
+import {
+  CALENDAR_EFFECT_COLORS,
+  calendarEffectCssVar,
+  useCalendarEffects,
+} from '../lib/calendarEffects'
 import { downloadFile } from '../lib/download'
-import { cx, formatTime } from '../lib/format'
+import { cx, formatTimeRangeShort } from '../lib/format'
 import { rememberList } from '../lib/listState'
-import { CALENDAR_DOMAIN_META, TONE_CHIP, calendarEventTone } from '../lib/tones'
+import { CALENDAR_DOMAIN_META, TONE_CHIP, TONE_DOT, calendarEventTone } from '../lib/tones'
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOMAINS = Object.keys(CALENDAR_DOMAIN_META) as (keyof typeof CALENDAR_DOMAIN_META)[]
-const MAX_VISIBLE_PER_DAY = 3
 const DRAG_MIME = 'application/x-career-tracker-calendar'
 const VIEW_MODES = ['day', 'week', 'month', 'year'] as const
 type ViewMode = (typeof VIEW_MODES)[number]
@@ -48,7 +62,9 @@ function isMovable(event: CalendarEvent): boolean {
 }
 
 function isTimed(event: CalendarEvent): boolean {
-  return event.domain === 'custom' && event.all_day === false
+  return (
+    (event.domain === 'custom' || event.domain === 'todo') && event.all_day === false
+  )
 }
 
 function parseEventId(event: CalendarEvent): number {
@@ -117,20 +133,11 @@ export function CalendarPage() {
   }, [params])
 
   const [exporting, setExporting] = useState(false)
-  const [eventForm, setEventForm] = useState<{
-    open: boolean
-    existing: CalendarEventRecord | null
-    defaultAllDay?: boolean
-    defaultStartTime?: string
-  }>({ open: false, existing: null })
+  const [compose, setCompose] = useState<CalendarComposeState>(() => emptyCompose(selectedDay))
   const [viewing, setViewing] = useState<CalendarItem | null>(null)
-  const [todoForm, setTodoForm] = useState<{ open: boolean; existing: Todo | null }>({
-    open: false,
-    existing: null,
-  })
   const [linkedPreview, setLinkedPreview] = useState<CalendarEvent | null>(null)
   const [loadingEvent, setLoadingEvent] = useState<string | null>(null)
-  const [daysExpanded, setDaysExpanded] = useState(readExpandAll)
+  const [peekDay, setPeekDay] = useState<string | null>(null)
   const [orderVersion, setOrderVersion] = useState(0)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
@@ -162,6 +169,7 @@ export function CalendarPage() {
 
   const calendar = useResource(() => dashboard.calendar(range), [range.start, range.end])
   const todoChoices = useResource(() => todos.choices(), [])
+  const catchupChoices = useResource(() => catchups.choices(), [])
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>()
@@ -172,7 +180,7 @@ export function CalendarPage() {
       map.set(event.date, list)
     }
     for (const [date, list] of map) {
-      map.set(date, sortEventsBySavedOrder(date, list))
+      map.set(date, sortDayEvents(date, list))
     }
     return map
     // orderVersion forces re-sort after a same-day reorder.
@@ -185,10 +193,15 @@ export function CalendarPage() {
     [year, viewMode],
   )
 
-  const monthHasOverflow = useMemo(() => {
-    if (viewMode !== 'month') return false
-    return days.some((date) => (eventsByDay.get(toIsoDate(date))?.length ?? 0) > MAX_VISIBLE_PER_DAY)
-  }, [days, eventsByDay, viewMode])
+  // Equal week rows that grow to fill leftover viewport height.
+  const monthRowCount = Math.max(1, Math.round(days.length / 7))
+  const monthEqualRowStyle = useMemo(
+    () =>
+      ({
+        gridTemplateRows: `repeat(${monthRowCount}, minmax(4.75rem, 1fr))`,
+      }) as CSSProperties,
+    [monthRowCount],
+  )
 
   function updateParams(patch: Record<string, string | null>) {
     const next = new URLSearchParams(params)
@@ -214,9 +227,9 @@ export function CalendarPage() {
     })
   }
 
-  function setDaysExpandedAll(value: boolean) {
-    setDaysExpanded(value)
-    writeExpandAll(value)
+  function openDayPeek(iso: string) {
+    setSelectedDay(iso)
+    setPeekDay(iso)
   }
 
   function toggleDomain(domain: string) {
@@ -261,13 +274,78 @@ export function CalendarPage() {
     })
   }
 
-  function addEvent(options?: { allDay?: boolean; startTime?: string; date?: string }) {
-    if (options?.date) setSelectedDay(options.date)
-    setEventForm({
+  function openCompose(options: {
+    kind?: ComposeKind
+    date?: string
+    startTime?: string | null
+    allDay?: boolean
+    existingTodo?: Todo | null
+    existingEvent?: CalendarEventRecord | null
+    existingCatchup?: Catchup | null
+  }) {
+    const date = options.date ?? selectedDay
+    if (options.date) setSelectedDay(options.date)
+    setCompose({
       open: true,
-      existing: null,
-      defaultAllDay: options?.allDay,
-      defaultStartTime: options?.startTime,
+      kind: options.kind ?? 'event',
+      date,
+      startTime: options.startTime ?? null,
+      allDay: options.allDay ?? options.startTime == null,
+      existingTodo: options.existingTodo ?? null,
+      existingEvent: options.existingEvent ?? null,
+      existingCatchup: options.existingCatchup ?? null,
+      // A fresh open never inherits the last switch's carried-over values.
+      draft: null,
+    })
+  }
+
+  /**
+   * After a save from the compose dialog. If the kind was switched while
+   * editing, the form has just *created* the new record — so the one it
+   * replaces is removed here, which is the only point at which a switch
+   * actually changes anything.
+   */
+  async function finishCompose() {
+    const origin = composeOriginKind(compose)
+    if (origin && origin !== compose.kind) {
+      try {
+        if (origin === 'todo' && compose.existingTodo) {
+          await todos.remove(compose.existingTodo.id)
+        } else if (origin === 'event' && compose.existingEvent) {
+          await calendarEvents.remove(compose.existingEvent.id)
+        } else if (origin === 'catchup' && compose.existingCatchup) {
+          await catchups.remove(compose.existingCatchup.id)
+        }
+      } catch (err) {
+        // The new record exists either way — say what didn't happen rather
+        // than leaving them to find the duplicate themselves.
+        notify(`Saved, but the old ${origin} could not be removed: ${formatApiError(err)}`, 'error')
+      }
+    }
+    closeCompose()
+    calendar.reload()
+  }
+
+  function closeCompose() {
+    setCompose((prev) => ({ ...prev, open: false }))
+  }
+
+  function addEvent(options?: { allDay?: boolean; startTime?: string; date?: string }) {
+    openCompose({
+      kind: 'event',
+      date: options?.date,
+      allDay: options?.allDay,
+      startTime: options?.startTime,
+    })
+  }
+
+  /** Double-click a date panel → pick todo / event / catch-up for that day. */
+  function composeOnDate(iso: string, options?: { startTime?: string; allDay?: boolean }) {
+    openCompose({
+      kind: 'event',
+      date: iso,
+      startTime: options?.startTime ?? null,
+      allDay: options?.allDay ?? options?.startTime == null,
     })
   }
 
@@ -278,7 +356,7 @@ export function CalendarPage() {
     if (!Number.isFinite(id)) return
     void calendarEvents
       .get(id)
-      .then((record) => setEventForm({ open: true, existing: record }))
+      .then((record) => openCompose({ kind: 'event', date: record.date, existingEvent: record }))
       .catch((err) => notify(formatApiError(err), 'error'))
   })
 
@@ -304,21 +382,42 @@ export function CalendarPage() {
   }, [reopenId, calendar.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A plain click opens the read-only card; a drop (dateOverride) is already
-  // an edit, so that goes straight to the form with the new date filled in.
+  // an edit, so that goes straight to the compose form with the new date filled in.
   async function openCalendarItem(event: CalendarEvent, dateOverride?: string) {
     setLoadingEvent(event.id)
     if (!dateOverride) markOpen(event.id)
     try {
       if (event.domain === 'custom') {
         const record = await calendarEvents.get(parseEventId(event))
-        if (dateOverride) setEventForm({ open: true, existing: { ...record, date: dateOverride } })
-        else setViewing({ kind: 'event', record })
+        if (dateOverride) {
+          openCompose({
+            kind: 'event',
+            date: dateOverride,
+            existingEvent: { ...record, date: dateOverride },
+          })
+        } else setViewing({ kind: 'event', record })
         return
       }
       if (event.domain === 'todo') {
         const record = await todos.get(parseEventId(event))
-        if (dateOverride) setTodoForm({ open: true, existing: { ...record, due_date: dateOverride } })
-        else setViewing({ kind: 'todo', record })
+        if (dateOverride) {
+          openCompose({
+            kind: 'todo',
+            date: dateOverride,
+            existingTodo: { ...record, due_date: dateOverride },
+          })
+        } else setViewing({ kind: 'todo', record })
+        return
+      }
+      if (event.domain === 'catchup' || event.domain === 'catchup_followup') {
+        const record = await catchups.get(parseEventId(event))
+        openCompose({
+          kind: 'catchup',
+          date: dateOverride ?? record.met_on,
+          existingCatchup: dateOverride
+            ? { ...record, met_on: dateOverride }
+            : record,
+        })
         return
       }
       setLinkedPreview(event)
@@ -333,17 +432,27 @@ export function CalendarPage() {
     await openCalendarItem(event, dateOverride)
   }
 
-  /** Timed drop onto an hour: open editor with that start time on the target day. */
+  /** Timed drop onto an hour: open compose with that start time on the target day. */
   async function editTimedAtHour(event: CalendarEvent, iso: string, hour: number) {
     const id = parseEventId(event)
     setLoadingEvent(event.id)
     try {
       const record = await calendarEvents.get(id)
-      const start = minutesToTime(hour * 60)
-      const end = minutesToTime(hour * 60 + 60)
-      setEventForm({
-        open: true,
-        existing: {
+      // Preserve however long it already was — dropping an event somewhere
+      // else moves it, it doesn't reset it to an hour.
+      const previousStart = parseTimeToMinutes(event.start_time)
+      const previousEnd = parseTimeToMinutes(event.end_time)
+      const duration =
+        previousStart != null && previousEnd != null && previousEnd > previousStart
+          ? previousEnd - previousStart
+          : 60
+      const startMinutes = Math.round(hour * 60)
+      const start = minutesToTime(startMinutes)
+      const end = minutesToTime(Math.min(startMinutes + duration, 23 * 60 + 59))
+      openCompose({
+        kind: 'event',
+        date: iso,
+        existingEvent: {
           ...record,
           date: iso,
           all_day: false,
@@ -355,6 +464,64 @@ export function CalendarPage() {
       notify(formatApiError(err), 'error')
     } finally {
       setLoadingEvent(null)
+    }
+  }
+
+  /** Silent hour drop for todos — keeps duration when already timed. */
+  async function moveTodoAtHour(item: CalendarEvent, iso: string, hour: number) {
+    setMovingId(item.id)
+    try {
+      const start = hour * 60
+      const oldStart = parseTimeToMinutes(item.start_time) ?? start
+      const oldEnd = parseTimeToMinutes(item.end_time) ?? oldStart + 60
+      const duration = Math.max(15, oldEnd - oldStart)
+      const end = Math.min(start + duration, 23 * 60 + 59)
+      await todos.update(parseEventId(item), {
+        due_date: iso,
+        due_time: `${minutesToTime(start)}:00`,
+        due_end_time: `${minutesToTime(end)}:00`,
+      })
+      notify('Todo moved.')
+      calendar.reload()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+    } finally {
+      setMovingId(null)
+    }
+  }
+
+  /** Bottom-edge resize on the day timeline — snap already applied by DayTimeline. */
+  async function resizeTimedItem(item: CalendarEvent, endMinutes: number) {
+    setMovingId(item.id)
+    try {
+      const end = `${minutesToTime(Math.min(endMinutes, 23 * 60 + 59))}:00`
+      if (item.domain === 'todo') {
+        await todos.update(parseEventId(item), { due_end_time: end })
+        notify('Todo duration updated.')
+      } else {
+        const record = await calendarEvents.get(parseEventId(item))
+        await calendarEvents.update(record.id, {
+          title: record.title,
+          date: record.date,
+          all_day: false,
+          start_time: record.start_time,
+          end_time: end,
+          notes: record.notes,
+          is_done: record.is_done,
+          company: record.company,
+          application: record.application,
+          people: record.people,
+          reminders: record.reminders.map((reminder) => ({
+            minutes_before: reminder.minutes_before,
+          })),
+        })
+        notify('Event duration updated.')
+      }
+      calendar.reload()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+    } finally {
+      setMovingId(null)
     }
   }
 
@@ -403,10 +570,16 @@ export function CalendarPage() {
   }
 
   function applySameDayReorder(iso: string, dragId: string, beforeId: string | null) {
-    const current = (eventsByDay.get(iso) ?? []).map((event) => event.id)
-    if (!current.includes(dragId)) return
-    const next = reorderIds(current, dragId, beforeId)
-    saveDayOrder(iso, next)
+    const dayEvents = eventsByDay.get(iso) ?? []
+    const dragged = dayEvents.find((event) => event.id === dragId)
+    // Timed cards stay sorted by clock; custom order is for all-day only.
+    if (!dragged || isTimed(dragged)) return
+    const untimed = dayEvents.filter((event) => !isTimed(event))
+    const ids = untimed.map((event) => event.id)
+    if (!ids.includes(dragId)) return
+    const before =
+      beforeId && untimed.some((event) => event.id === beforeId) ? beforeId : null
+    saveDayOrder(iso, reorderIds(ids, dragId, before))
     setOrderVersion((value) => value + 1)
   }
 
@@ -464,6 +637,12 @@ export function CalendarPage() {
     setSelectedDay(iso)
 
     if (isTimed(item)) {
+      // Todos keep their clock time when the day changes; custom events open
+      // the editor so the user can confirm the new day.
+      if (item.domain === 'todo') {
+        await moveAllDayItem(item, iso)
+        return
+      }
       await editEvent(item, iso)
       return
     }
@@ -484,7 +663,7 @@ export function CalendarPage() {
     if (!item || !isMovable(item)) return
 
     if (item.domain === 'todo') {
-      if (item.date !== selectedDay) await moveAllDayItem(item, selectedDay)
+      await moveTodoAtHour(item, selectedDay, hour)
       return
     }
 
@@ -539,14 +718,15 @@ export function CalendarPage() {
           : cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader
+        className="mb-3 shrink-0"
         title="Calendar"
         subtitle="Every follow-up, catch-up and task due date, in one place."
         action={
           <>
-            <Button variant="primary" onClick={() => addEvent()} icon={<Icon name="plus" size={15} />}>
-              Add event
+            <Button variant="primary" onClick={() => openCompose({ kind: 'event' })} icon={<Icon name="plus" size={15} />}>
+              Add
             </Button>
             <Button
               onClick={() => void exportCalendar()}
@@ -559,7 +739,7 @@ export function CalendarPage() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-2">
         <div className="inline-flex items-center rounded-lg border border-line bg-surface p-0.5">
           <button
             type="button"
@@ -603,25 +783,15 @@ export function CalendarPage() {
             </button>
           ))}
         </div>
-
-        {viewMode === 'month' && monthHasOverflow ? (
-          <button
-            type="button"
-            onClick={() => setDaysExpandedAll(!daysExpanded)}
-            className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[12.5px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
-          >
-            {daysExpanded ? 'Collapse all' : 'Expand all'}
-          </button>
-        ) : null}
-
       </div>
 
       <FilterDrawer
         id="calendar"
         label="Show"
-        className="mb-4"
+        className="mb-2 shrink-0"
         // Hidden kinds count as live filters; all-on is the default and shows no badge.
         activeCount={DOMAINS.length - activeDomains.size}
+        trailing={<CalendarGlowSettings />}
       >
         {DOMAINS.map((domain) => {
           const meta = CALENDAR_DOMAIN_META[domain]
@@ -661,6 +831,7 @@ export function CalendarPage() {
               today={today}
               eventsByDay={eventsByDay}
               onPick={openDayInMonthView}
+              onCompose={(date) => composeOnDate(toIsoDate(date))}
             />
           ))}
         </div>
@@ -681,6 +852,7 @@ export function CalendarPage() {
               day: iso === todayIso ? null : iso,
             })
           }}
+          onComposeDay={(iso) => composeOnDate(iso)}
           onDayDragOver={onDayDragOver}
           onDayDragLeave={onDayDragLeave}
           onDayDrop={(event, iso) => void onDayDrop(event, iso)}
@@ -703,39 +875,40 @@ export function CalendarPage() {
           onDayDrop={(event, iso) => void onDayDrop(event, iso)}
           onHourDragOver={onHourDragOver}
           onHourDrop={(event, hour) => void onHourDrop(event, hour)}
+          onHourDragLeave={() => setDropHour(null)}
           onChipDragStart={onChipDragStart}
           onChipDragEnd={onChipDragEnd}
           onChipDragOver={onChipDragOver}
           onOpen={(event) => void openCalendarItem(event)}
-          onCreateAtHour={(hour) =>
-            addEvent({
+          onComposeAtHour={(hour) =>
+            composeOnDate(selectedDay, {
               allDay: false,
               startTime: minutesToTime(hour * 60),
-              date: selectedDay,
             })
           }
+          onComposeAllDay={() => composeOnDate(selectedDay, { allDay: true })}
+          onResizeEnd={(event, endMinutes) => void resizeTimedItem(event, endMinutes)}
         />
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[1fr_20rem] xl:grid-cols-[1fr_23rem]">
-          <Card padded={false}>
-            <div className="grid grid-cols-7 border-b border-line text-center text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row lg:items-stretch lg:gap-4">
+          <Card padded={false} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="grid shrink-0 grid-cols-7 border-b border-line text-center text-[11px] font-semibold uppercase tracking-wide text-ink-3">
               {WEEKDAYS.map((day) => (
                 <div key={day} className="py-2">
                   {day}
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-7">
+            <div
+              className="grid min-h-0 flex-1 grid-cols-7 overflow-hidden"
+              style={monthEqualRowStyle}
+            >
               {days.map((date) => {
                 const iso = toIsoDate(date)
                 const inMonth = date.getMonth() === month
                 const isToday = isSameDay(date, today)
                 const isSelected = iso === selectedDay
-                const dayEvents = eventsByDay.get(iso) ?? []
-                const visible = daysExpanded
-                  ? dayEvents
-                  : dayEvents.slice(0, MAX_VISIBLE_PER_DAY)
-                const overflow = dayEvents.length - MAX_VISIBLE_PER_DAY
+                const dayEvents = sortMonthCellEvents(eventsByDay.get(iso) ?? [])
                 const isDropTarget = dropTarget === iso && draggingId != null
 
                 return (
@@ -744,6 +917,7 @@ export function CalendarPage() {
                     role="button"
                     tabIndex={0}
                     onClick={() => setSelectedDay(iso)}
+                    onDoubleClick={() => composeOnDate(iso)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
@@ -754,7 +928,7 @@ export function CalendarPage() {
                     onDragLeave={() => onDayDragLeave(iso)}
                     onDrop={(event) => void onDayDrop(event, iso)}
                     className={cx(
-                      'flex min-h-20 flex-col items-stretch gap-1 border-b border-r border-line p-1.5 text-left transition-colors sm:min-h-24 xl:min-h-28',
+                      'flex h-full min-h-0 flex-col items-stretch gap-0.5 overflow-hidden border-b border-r border-line p-1 text-left transition-colors sm:p-1.5',
                       inMonth ? 'bg-surface' : 'bg-surface-2/60',
                       isSelected && 'ring-2 ring-inset ring-brand',
                       isDropTarget && 'bg-brand-soft/70 ring-2 ring-inset ring-brand',
@@ -762,76 +936,90 @@ export function CalendarPage() {
                   >
                     <span
                       className={cx(
-                        'grid size-5 place-items-center rounded-full text-[11.5px] font-medium',
+                        'mx-auto grid size-5 shrink-0 place-items-center rounded-full text-[11.5px] font-medium md:mx-0',
                         isToday ? 'bg-brand text-white' : inMonth ? 'text-ink' : 'text-ink-3',
                       )}
                     >
                       {date.getDate()}
                     </span>
-                    <span className="flex flex-col gap-0.5">
-                      {visible.map((event) => (
-                        <DayEventChip
-                          key={event.id}
-                          event={event}
-                          dragging={draggingId === event.id}
-                          moving={movingId === event.id}
-                          dropBefore={dropBeforeId === event.id && dropTarget === iso}
-                          onDragStart={onChipDragStart}
-                          onDragEnd={onChipDragEnd}
-                          onDragOverChip={onChipDragOver}
-                          onOpen={() => void openCalendarItem(event)}
-                        />
-                      ))}
-                      {overflow > 0 ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setDaysExpandedAll(!daysExpanded)
-                          }}
-                          className="text-left text-[10px] font-medium text-ink-3 transition-colors hover:text-brand"
-                        >
-                          {daysExpanded ? 'Show less' : `+${overflow} more`}
-                        </button>
-                      ) : null}
-                    </span>
+                    {/* Phones: tone dots + more — full lines need desktop width. */}
+                    {dayEvents.length > 0 ? (
+                      <span className="mt-auto flex flex-wrap items-center gap-0.5 pb-0.5 md:hidden">
+                        {dayEvents.slice(0, 4).map((event) => (
+                          <span
+                            key={event.id}
+                            className={cx(
+                              'size-1.5 rounded-full',
+                              TONE_DOT[calendarEventTone(event)],
+                            )}
+                            title={event.title}
+                          />
+                        ))}
+                        {dayEvents.length > 4 ? (
+                          <button
+                            type="button"
+                            onClick={(click) => {
+                              click.stopPropagation()
+                              openDayPeek(iso)
+                            }}
+                            className="text-[9px] font-semibold leading-none text-ink-3 hover:text-ink"
+                          >
+                            {dayEvents.length - 4} more
+                          </button>
+                        ) : null}
+                      </span>
+                    ) : null}
+                    <MonthDayEventStack
+                      events={dayEvents}
+                      draggingId={draggingId}
+                      movingId={movingId}
+                      dropBeforeId={dropBeforeId}
+                      dropTargetIso={dropTarget}
+                      cellIso={iso}
+                      onDragStart={onChipDragStart}
+                      onDragEnd={onChipDragEnd}
+                      onDragOverChip={onChipDragOver}
+                      onOpen={(event) => void openCalendarItem(event)}
+                      onMore={() => openDayPeek(iso)}
+                    />
                   </div>
                 )
               })}
             </div>
           </Card>
 
-          <DaySidebar
-            selectedDay={selectedDay}
-            selectedEvents={selectedEvents}
-            loadingEvent={loadingEvent}
-            draggingId={draggingId}
-            onAdd={() => addEvent()}
-            onOpen={(event) => void openCalendarItem(event)}
-            onChipDragStart={onChipDragStart}
-            onChipDragEnd={onChipDragEnd}
-          />
+          <div className="flex w-full shrink-0 flex-col lg:h-auto lg:w-[17.5rem] lg:self-stretch xl:w-[21rem]">
+            <DaySidebar
+              selectedDay={selectedDay}
+              selectedEvents={selectedEvents}
+              loadingEvent={loadingEvent}
+              draggingId={draggingId}
+              onAdd={() => openCompose({ kind: 'event', date: selectedDay })}
+              onOpen={(event) => void openCalendarItem(event)}
+              onChipDragStart={onChipDragStart}
+              onChipDragEnd={onChipDragEnd}
+            />
+          </div>
         </div>
       )}
 
-      <CalendarEventForm
-        open={eventForm.open}
-        existing={eventForm.existing}
-        defaultDate={selectedDay}
-        defaultAllDay={eventForm.defaultAllDay}
-        defaultStartTime={eventForm.defaultStartTime}
-        onClose={() => setEventForm({ open: false, existing: null })}
-        onSaved={() => calendar.reload()}
-        onDeleted={() => calendar.reload()}
-      />
+      {peekDay ? (
+        <MonthDayPeek
+          iso={peekDay}
+          events={eventsByDay.get(peekDay) ?? []}
+          onClose={() => setPeekDay(null)}
+          onOpen={(event) => void openCalendarItem(event)}
+          onAdd={() => openCompose({ kind: 'event', date: peekDay })}
+        />
+      ) : null}
 
-      <TodoForm
-        open={todoForm.open}
-        existing={todoForm.existing}
-        choices={todoChoices.data}
-        onClose={() => setTodoForm({ open: false, existing: null })}
-        onSaved={() => calendar.reload()}
-        onDeleted={() => calendar.reload()}
+      <CalendarComposeModal
+        state={compose}
+        todoChoices={todoChoices.data}
+        catchupChoices={catchupChoices.data}
+        onClose={closeCompose}
+        onKindChange={(kind, draft) => setCompose((prev) => ({ ...prev, kind, draft }))}
+        onSaved={() => void finishCompose()}
       />
 
       {viewing ? (
@@ -843,8 +1031,19 @@ export function CalendarPage() {
             markOpen(null)
           }}
           onEdit={() => {
-            if (viewing.kind === 'event') setEventForm({ open: true, existing: viewing.record })
-            else setTodoForm({ open: true, existing: viewing.record })
+            if (viewing.kind === 'event') {
+              openCompose({
+                kind: 'event',
+                date: viewing.record.date,
+                existingEvent: viewing.record,
+              })
+            } else {
+              openCompose({
+                kind: 'todo',
+                date: viewing.record.due_date ?? selectedDay,
+                existingTodo: viewing.record,
+              })
+            }
             setViewing(null)
           }}
         />
@@ -861,7 +1060,98 @@ export function CalendarPage() {
           onSaved={() => calendar.reload()}
         />
       ) : null}
-    </>
+    </div>
+  )
+}
+
+function CalendarGlowSettings() {
+  const [effects, setEffects] = useCalendarEffects()
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onPointerDown(event: PointerEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label="Calendar display settings"
+        className={cx(
+          'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors',
+          open || effects.enabled
+            ? 'border-brand bg-brand-soft text-brand-strong'
+            : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+        )}
+      >
+        <Icon name="settings" size={13} />
+        Effects
+      </button>
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Deadline glow"
+          className="absolute right-0 top-[calc(100%+0.4rem)] z-30 w-56 rounded-xl border border-line bg-surface-solid p-3 shadow-xl"
+        >
+          <p className="text-[12px] font-semibold text-ink">Deadline glow</p>
+          <p className="mt-0.5 text-[11px] text-ink-3">
+            Soft orbit around application closing dates.
+          </p>
+          <div className="mt-3 flex items-center justify-between gap-2">
+            <span className="text-[12.5px] text-ink-2">Enabled</span>
+            <Switch
+              checked={effects.enabled}
+              onChange={(enabled) => setEffects({ ...effects, enabled })}
+              label="Deadline glow effects"
+            />
+          </div>
+          {effects.enabled ? (
+            <div className="mt-3">
+              <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                Colour
+              </p>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Glow colour">
+                {CALENDAR_EFFECT_COLORS.map((row) => (
+                  <button
+                    key={row.value}
+                    type="button"
+                    title={row.label}
+                    aria-label={row.label}
+                    aria-pressed={effects.color === row.value}
+                    onClick={() => setEffects({ ...effects, color: row.value })}
+                    className={cx(
+                      'size-5 rounded-full border-2 transition-transform',
+                      effects.color === row.value
+                        ? 'scale-110 border-ink'
+                        : 'border-transparent opacity-70 hover:opacity-100',
+                    )}
+                    style={{ background: row.cssVar }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -884,10 +1174,12 @@ function DaySidebar({
   onChipDragStart: (event: DragEvent, item: CalendarEvent) => void
   onChipDragEnd: () => void
 }) {
+  const [effects] = useCalendarEffects()
+
   return (
-    <Card>
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-ink">
+    <Card className="flex h-full min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden">
+      <div className="flex shrink-0 items-baseline justify-between gap-2">
+        <h2 className="min-w-0 truncate text-sm font-semibold text-ink">
           {new Date(`${selectedDay}T12:00:00`).toLocaleDateString(undefined, {
             weekday: 'long',
             day: 'numeric',
@@ -899,18 +1191,23 @@ function DaySidebar({
           onClick={onAdd}
           className="shrink-0 text-[12px] font-medium text-brand hover:underline"
         >
-          + Add event
+          + Add
         </button>
       </div>
       {selectedEvents.length === 0 ? (
         <p className="mt-3 text-[13px] text-ink-3">Nothing due this day.</p>
       ) : (
-        <ul className="mt-3 flex flex-col gap-2">
+        <ul className="mt-3 flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto">
           {selectedEvents.map((event) => {
             const meta = CALENDAR_DOMAIN_META[event.domain]
             const movable = isMovable(event)
+            const timeRange =
+              event.all_day === false && event.start_time
+                ? formatTimeRangeShort(event.start_time, event.end_time)
+                : null
+            const isDeadline = event.domain === 'application_deadline' && !event.done
             return (
-              <li key={event.id}>
+              <li key={event.id} className="min-w-0">
                 <button
                   type="button"
                   draggable={movable}
@@ -919,20 +1216,29 @@ function DaySidebar({
                   onClick={() => onOpen(event)}
                   disabled={loadingEvent === event.id}
                   aria-label={`Open ${event.title}`}
+                  data-deadline-fx={isDeadline ? (effects.enabled ? 'on' : 'off') : undefined}
+                  style={
+                    isDeadline
+                      ? ({
+                          ['--deadline-glow' as string]: calendarEffectCssVar(effects.color),
+                        } as CSSProperties)
+                      : undefined
+                  }
                   className={cx(
-                    '-mx-2 flex w-[calc(100%+1rem)] items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-surface-2',
+                    'flex w-full min-w-0 max-w-full items-start gap-2.5 rounded-lg border border-transparent px-1.5 py-2 text-left transition-colors hover:bg-surface-2',
                     draggingId === event.id && 'opacity-40',
                     movable && 'cursor-grab active:cursor-grabbing',
+                    isDeadline && 'calendar-deadline-chip border-critical/40 bg-critical/5',
                   )}
                 >
                   {event.person ? (
-                    <Avatar name={event.person.full_name} src={event.person.photo} size="xs" className="mt-0.5" />
+                    <Avatar name={event.person.full_name} src={event.person.photo} size="xs" className="mt-0.5 shrink-0" />
                   ) : event.company ? (
                     <CompanyMark
                       name={event.company.name}
                       logo={event.company.logo}
                       size={28}
-                      className="mt-0.5 rounded-lg shadow-none"
+                      className="mt-0.5 shrink-0 rounded-lg shadow-none"
                     />
                   ) : (
                     <span
@@ -944,7 +1250,7 @@ function DaySidebar({
                       <Icon name={meta.icon} size={14} />
                     </span>
                   )}
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0 flex-1 overflow-hidden">
                     <span
                       className={cx(
                         'block truncate text-[13px]',
@@ -953,12 +1259,16 @@ function DaySidebar({
                     >
                       {event.title}
                     </span>
-                    <span className="block text-[11.5px] text-ink-3">
-                      {event.start_time
-                        ? `${formatTime(event.start_time)}${event.end_time ? ` – ${formatTime(event.end_time)}` : ''} · `
-                        : ''}
-                      {meta.label}
-                      {event.details ? ` · ${event.details}` : ''}
+                    <span className="mt-1 flex min-w-0 items-end justify-between gap-2">
+                      <span className="min-w-0 truncate text-[11.5px] text-ink-3">
+                        {meta.label}
+                        {event.details ? ` · ${event.details}` : ''}
+                      </span>
+                      {timeRange ? (
+                        <span className={cx('shrink-0 text-[11.5px]', CALENDAR_TIME_CLASS)}>
+                          {timeRange}
+                        </span>
+                      ) : null}
                     </span>
                   </span>
                   {loadingEvent === event.id ? (
@@ -983,6 +1293,7 @@ function MiniMonth({
   today,
   eventsByDay,
   onPick,
+  onCompose,
 }: {
   year: number
   month: number
@@ -990,6 +1301,7 @@ function MiniMonth({
   today: Date
   eventsByDay: Map<string, CalendarEvent[]>
   onPick: (date: Date) => void
+  onCompose: (date: Date) => void
 }) {
   return (
     <Card>
@@ -1013,6 +1325,11 @@ function MiniMonth({
               key={iso}
               type="button"
               onClick={() => onPick(date)}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                if (inMonth) onCompose(date)
+              }}
               disabled={!inMonth}
               className={cx(
                 'mx-auto flex size-6 flex-col items-center justify-center rounded-full text-[10.5px]',

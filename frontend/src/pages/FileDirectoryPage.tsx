@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Navigate, useSearchParams } from 'react-router-dom'
 import { fieldErrors, formatApiError } from '../api/client'
 import {
@@ -74,8 +75,10 @@ const SEARCH_PLACEHOLDER: Record<Tab, string> = {
   resumes: 'Search resume files…',
 }
 
-/** One card grid for every tab, so the page never re-flows when switching. */
-const GRID = 'grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+/** One card grid for every tab, so the page never re-flows when switching.
+    `items-start` so each card hugs its own content — stretching them to the
+    tallest in the row left a band of empty surface under the shorter ones. */
+const GRID = 'grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
 
 function parseTab(raw: string | null): Tab {
   if (raw === 'resumes' || raw === 'applications') return raw
@@ -145,7 +148,12 @@ export function FileDirectoryPage() {
     existing: null,
   })
 
-  rememberList('files', params.toString() ? `?${params}` : '')
+  // Search, sort and filters are worth remembering; the tab isn't. Coming
+  // back to File Directory should show everything, not whichever slice you
+  // happened to leave on.
+  const remembered = new URLSearchParams(params)
+  remembered.delete('tab')
+  rememberList('files', remembered.toString() ? `?${remembered}` : '')
 
   // The search box is the only piece of state typed rather than clicked, so
   // it lives in React and is mirrored to `?q=` once it settles.
@@ -841,71 +849,70 @@ function ResumeFileCard({
         <>
           <Badge tone="brand">{resume.variant_type_display}</Badge>
           {resume.is_active ? null : <Badge>Archived</Badge>}
-          <CountPill
-            icon="paperclip"
-            count={resume.application_count}
-            noun="application"
-            popover={
-              resume.applications_info?.length ? (
-                <ul className="flex flex-col gap-1">
-                  {resume.applications_info.map((row) => (
-                    <li key={row.id} className="flex items-center gap-2">
-                      <CompanyMark
-                        name={row.company_name}
-                        logo={row.company_logo}
-                        size={22}
-                        className="rounded-md shadow-none"
+          <CountTag
+            groups={[
+              {
+                icon: 'paperclip',
+                count: resume.application_count,
+                noun: 'application',
+                plural: 'applications',
+                body: (
+                  <ul className="flex flex-col gap-1">
+                    {(resume.applications_info ?? []).map((row) => (
+                      <li key={row.id} className="flex items-center gap-2">
+                        <CompanyMark
+                          name={row.company_name}
+                          logo={row.company_logo}
+                          size={20}
+                          className="rounded-md shadow-none"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink">
+                          {row.company_name}
+                        </span>
+                        <span className="shrink-0 text-[11px] text-ink-3">{row.stage_display}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ),
+              },
+              {
+                icon: 'briefcase',
+                count: resume.target_role_names.length,
+                noun: 'role',
+                plural: 'roles',
+                body: (
+                  <ul className="flex flex-col gap-1">
+                    {resume.target_role_names.map((name) => (
+                      <li key={name} className="flex items-center gap-2 text-[12px] text-ink">
+                        <span className="grid size-5 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-strong">
+                          <Icon name="briefcase" size={11} />
+                        </span>
+                        <span className="truncate">{name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ),
+              },
+              {
+                icon: 'building',
+                count: targetCompanies.length,
+                noun: 'company',
+                plural: 'companies',
+                body: (
+                  <span className="flex flex-wrap gap-1.5">
+                    {targetCompanies.map((company) => (
+                      <CompanyChip
+                        key={company.id}
+                        size="sm"
+                        label={companyLabel(company)}
+                        fullName={company.name}
+                        logo={company.logo}
                       />
-                      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink">
-                        {row.company_name}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-ink-3">{row.stage_display}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null
-            }
-          />
-          <CountPill
-            icon="briefcase"
-            count={resume.target_role_names.length}
-            noun="role"
-            popover={
-              resume.target_role_names.length ? (
-                <ul className="flex flex-col gap-1">
-                  {resume.target_role_names.map((name) => (
-                    <li key={name} className="flex items-center gap-2 text-[12px] text-ink">
-                      <span className="grid size-[22px] shrink-0 place-items-center rounded-md bg-brand-soft text-brand-strong">
-                        <Icon name="briefcase" size={12} />
-                      </span>
-                      <span className="truncate">{name}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null
-            }
-          />
-          <CountPill
-            icon="building"
-            count={targetCompanies.length}
-            noun="company"
-            plural="companies"
-            popover={
-              targetCompanies.length ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {targetCompanies.map((company) => (
-                    <CompanyChip
-                      key={company.id}
-                      size="sm"
-                      label={companyLabel(company)}
-                      fullName={company.name}
-                      logo={company.logo}
-                      companyId={company.id}
-                    />
-                  ))}
-                </div>
-              ) : null
-            }
+                    ))}
+                  </span>
+                ),
+              },
+            ]}
           />
         </>
       }
@@ -932,65 +939,107 @@ function ResumeFileCard({
   )
 }
 
-/**
- * "3 applications" as a pill; hovering (or focusing) it lists what they are.
- * Counts keep every card the same height however many targets a resume has —
- * the detail is one hover away rather than stacked on the card.
- */
-function CountPill({
-  icon,
-  count,
-  noun,
-  plural = `${noun}s`,
-  popover,
-}: {
+type CountGroup = {
   icon: string
   count: number
   noun: string
-  plural?: string
-  popover: ReactNode
-}) {
-  const [open, setOpen] = useState(false)
-  const label = `${count} ${count === 1 ? noun : plural}`
-  const hasList = Boolean(popover) && count > 0
+  plural: string
+  /** What the breakdown shows for this group, when there's anything to show. */
+  body: ReactNode
+}
+
+/**
+ * The three numbers that describe a resume — sent with, aimed at, tailored
+ * for — as one tag rather than three.
+ *
+ * Three separate pills wrapped onto a second row and spent most of their
+ * width writing "0 roles, 0 companies" on cards where the answer was
+ * nothing. Counts alone carry it; hovering opens one breakdown covering all
+ * three, so the detail is still a glance away and the card stays a card.
+ *
+ * The panel is positioned `fixed` from the tag's own rect: the page clips
+ * horizontal overflow, so an absolutely-placed panel on the last column of
+ * the grid got its right edge cut off.
+ */
+function CountTag({ groups }: { groups: CountGroup[] }) {
+  const anchor = useRef<HTMLSpanElement>(null)
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+  const total = groups.reduce((sum, group) => sum + group.count, 0)
+
+  function show() {
+    const rect = anchor.current?.getBoundingClientRect()
+    if (!rect) return
+    const width = 264
+    setAt({
+      top: rect.bottom + 6,
+      left: Math.min(Math.max(8, rect.left), window.innerWidth - width - 8),
+    })
+  }
+
+  const summary = groups
+    .map((group) => `${group.count} ${group.count === 1 ? group.noun : group.plural}`)
+    .join(', ')
 
   return (
     <span
+      ref={anchor}
       className="relative inline-flex"
-      onPointerEnter={() => setOpen(true)}
-      onPointerLeave={() => setOpen(false)}
-      onFocusCapture={() => setOpen(true)}
-      onBlurCapture={() => setOpen(false)}
+      onPointerEnter={show}
+      onPointerLeave={() => setAt(null)}
+      onFocusCapture={show}
+      onBlurCapture={() => setAt(null)}
     >
       <span
-        tabIndex={hasList ? 0 : -1}
-        aria-label={label}
+        tabIndex={total > 0 ? 0 : -1}
+        aria-label={summary}
         className={cx(
-          'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-5',
-          count > 0 ? 'border-line bg-surface-2 text-ink-2' : 'border-line/60 bg-surface text-ink-3',
-          hasList && 'cursor-default hover:border-line-strong hover:text-ink',
+          'inline-flex items-center divide-x divide-line overflow-hidden rounded-full border border-line',
+          'bg-surface-2 text-[11px] font-medium leading-5 transition-colors',
+          total > 0 && 'cursor-default hover:border-line-strong',
         )}
       >
-        <Icon name={icon} size={11} />
-        {count}
-        <span className="sr-only sm:not-sr-only sm:text-ink-3">{count === 1 ? noun : plural}</span>
-      </span>
-      {hasList ? (
-        <span
-          role="tooltip"
-          aria-hidden={!open}
-          className={cx(
-            'absolute left-0 top-full z-40 mt-1.5 w-56 max-w-[70vw] rounded-lg border border-line bg-surface-solid p-2 shadow-lg',
-            'transition-opacity duration-150',
-            open ? 'opacity-100' : 'pointer-events-none opacity-0',
-          )}
-        >
-          <span className="mb-1.5 block text-[10.5px] font-medium uppercase tracking-wide text-ink-3">
-            {label}
+        {groups.map((group) => (
+          <span
+            key={group.noun}
+            className={cx(
+              // Tight enough that the tag and the variant badge share one
+              // line at card width instead of wrapping the card taller.
+              'inline-flex items-center gap-1 px-1.5 py-0.5 tabular-nums',
+              // A zero stays in place so the tag is the same shape on every
+              // card, just quieter — the row reads as a set, not a jumble.
+              group.count > 0 ? 'text-ink-2' : 'text-ink-3/60',
+            )}
+          >
+            <Icon name={group.icon} size={11} />
+            {group.count}
           </span>
-          {popover}
-        </span>
-      ) : null}
+        ))}
+      </span>
+
+      {at && total > 0
+        ? createPortal(
+            <span
+              role="tooltip"
+              style={{ top: at.top, left: at.left, width: 264 }}
+              className="pointer-events-none fixed z-50 flex flex-col gap-2.5 rounded-xl border border-line bg-surface-solid p-2.5 shadow-xl"
+            >
+              {groups.map((group) => (
+                <span key={group.noun} className="flex flex-col gap-1.5">
+                  <span className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-ink-3">
+                    <Icon name={group.icon} size={11} />
+                    {group.count} {group.count === 1 ? group.noun : group.plural}
+                  </span>
+                  {group.count > 0 ? (
+                    group.body
+                  ) : (
+                    <span className="text-[11.5px] text-ink-3">None yet</span>
+                  )}
+                </span>
+              ))}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   )
 }

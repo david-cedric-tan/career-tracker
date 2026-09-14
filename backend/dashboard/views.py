@@ -455,8 +455,13 @@ def companies(request):
     # Scoped to the same window as the rest of the dashboard, so the panel
     # lists the companies behind the numbers beside it rather than every
     # company you've ever applied to.
-    rows = Application.objects.filter(user=request.user)
-    since = _window_start(_period(request), timezone.localdate())
+    today = timezone.localdate()
+    rows = Application.objects.filter(user=request.user).annotate(
+        # The soonest closing date across the listings this application
+        # covers — the one that actually constrained it.
+        deadline=Min("listing_links__job_listing__closing_at")
+    )
+    since = _window_start(_period(request), today)
     if since is not None:
         rows = rows.filter(applied_at__gte=since)
 
@@ -470,6 +475,7 @@ def companies(request):
         "stage",
         "applied_at",
         "awaiting_response",
+        "deadline",
     ):
         entry = tally.get(row["company_id"])
         if entry is None:
@@ -484,12 +490,23 @@ def companies(request):
                 "rejected": 0,
                 # Live applications where the ball is in their court.
                 "waiting": 0,
+                # Closing dates that went by unanswered.
+                "missed": 0,
                 "stage_rank": -1,
                 "last_applied": None,
             }
             tally[row["company_id"]] = entry
 
         entry["count"] += 1
+        # Either you said so outright, or the listing shut while it was still
+        # sitting unsubmitted — both are the same missed chance.
+        if row["stage"] == Stage.MISSED_DEADLINE or (
+            row["stage"] == Stage.NOT_SUBMITTED
+            and row["outcome"] == Outcome.IN_PROGRESS
+            and row["deadline"] is not None
+            and row["deadline"] < today
+        ):
+            entry["missed"] += 1
         if row["outcome"] == Outcome.IN_PROGRESS:
             entry["active"] += 1
             if row["awaiting_response"]:
@@ -545,6 +562,7 @@ def companies(request):
                 "count": entry["count"],
                 "active": entry["active"],
                 "waiting": entry["waiting"],
+                "missed": entry["missed"],
                 "offers": entry["offers"],
                 "rejected": entry["rejected"],
             }
@@ -715,6 +733,24 @@ def _collect_calendar_events(user, start, end, request=None):
                 "done": todo.status == TodoStatus.DONE,
                 "target_url": "/todos",
                 "person": _person_ref(todo.person, request),
+                # Timed when due_time is set — day/week timelines place the
+                # chip on that hour; null keeps the previous all-day strip.
+                "all_day": todo.due_time is None,
+                "start_time": todo.due_time.isoformat() if todo.due_time else None,
+                "end_time": (
+                    todo.due_end_time.isoformat()
+                    if todo.due_time and todo.due_end_time
+                    else (
+                        (
+                            datetime.combine(todo.due_date, todo.due_time)
+                            + timedelta(hours=1)
+                        )
+                        .time()
+                        .isoformat()
+                        if todo.due_time
+                        else None
+                    )
+                ),
             }
         )
 

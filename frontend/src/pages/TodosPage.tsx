@@ -20,7 +20,7 @@ import { EmptyState, ErrorState, Loading, Refreshing } from '../components/ui/St
 import { useToast } from '../components/ui/toast-context'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
-import { cx, relativeDay } from '../lib/format'
+import { cx, formatTime, relativeDay } from '../lib/format'
 import {
   useTodoSuggestionsExpanded,
   useTodoSuggestionsHidden,
@@ -444,6 +444,11 @@ export function TodosPage() {
                         >
                           <Icon name={todo.is_overdue ? 'alert' : 'calendar'} size={12} />
                           {relativeDay(todo.due_date)}
+                          {todo.due_time
+                            ? ` · ${formatTime(todo.due_time)}${
+                                todo.due_end_time ? `–${formatTime(todo.due_end_time)}` : ''
+                              }`
+                            : ''}
                         </span>
                       ) : null}
                       {todo.application ? (

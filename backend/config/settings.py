@@ -34,12 +34,21 @@ def env_list(name, default):
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-^061t7t9&ia@w3(d)ltt^avfs=v8ol&w$m5lg^r$f4h8=(mhs!",
-)
+INSECURE_DEV_SECRET = "django-insecure-^061t7t9&ia@w3(d)ltt^avfs=v8ol&w$m5lg^r$f4h8=(mhs!"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", INSECURE_DEV_SECRET)
 
 DEBUG = env_bool("DJANGO_DEBUG", True)
+
+# The dev key is in the repository, so anyone who has seen the source can
+# forge sessions and password-reset tokens with it. Fine on a laptop, fatal
+# on anything reachable from the internet — so a production boot refuses to
+# start on it rather than running quietly compromised.
+if not DEBUG and SECRET_KEY == INSECURE_DEV_SECRET:
+    raise RuntimeError(
+        "DJANGO_SECRET_KEY is still the development default. Generate one "
+        "(python -c \"import secrets; print(secrets.token_urlsafe(64))\") "
+        "and set it in the environment before running with DEBUG off."
+    )
 
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1", "[::1]"])
 
@@ -166,6 +175,20 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
+    # Rate limits, aimed at the one endpoint worth guessing at: sign-in.
+    # `anon` covers the login and register views (no authenticated user yet);
+    # `user` is a generous ceiling that a person can't reach by hand but a
+    # script hammering the API would.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": os.getenv("THROTTLE_ANON", "30/min"),
+        "user": os.getenv("THROTTLE_USER", "1000/min"),
+        # Applied by name on the sign-in view — see accounts.views.LoginView.
+        "login": os.getenv("THROTTLE_LOGIN", "10/min"),
+    },
 }
 
 # CORS (Vite frontend)
@@ -190,6 +213,28 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [])
 # https://, so a secure page can actually load them. Only the dev proxy sits in
 # front of this server, so the header can't be spoofed from outside.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Hardening that only applies once this is served for real. Kept behind
+# `not DEBUG` so a LAN/dev run over plain HTTP doesn't redirect-loop or drop
+# its own cookies, while a hosted deployment gets the lot by default.
+if not DEBUG:
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", True)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    CSRF_COOKIE_SAMESITE = "Lax"
+    # Six months, and tell browsers to remember it for subdomains too.
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", 60 * 60 * 24 * 180))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = False
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+    X_FRAME_OPTIONS = "DENY"
+
+# Whether strangers who find the URL can create an account. A personal
+# instance wants this off: you sign yourself up once, then close the door.
+ALLOW_REGISTRATION = env_bool("ALLOW_REGISTRATION", True)
 
 # The account that can read and reply to every user's refinement notes. This
 # grants nothing else — it is not staff, and it opens no admin.

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { catchups, people } from '../api/resources'
 import type { Catchup, CatchupChoices, Person } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
 import { useFormDirty } from '../hooks/useFormDirty'
 import { cx, today } from '../lib/format'
+import { usePublishDraft, type CalendarDraft, type CalendarDraftRef } from '../lib/calendarDraft'
 import { MESSAGE_CHANNEL_ICON } from '../lib/tones'
 import { Icon } from './ui/Icon'
 import { Button } from './ui/Button'
@@ -25,6 +26,14 @@ type Props = {
   existing?: Catchup | null
   /** Pre-selects the contact when opened from their profile. */
   personId?: number | null
+  /** Prefills met_on when logging from the calendar. */
+  defaultMetOn?: string | null
+  /** Optional strip above the fields (e.g. calendar kind toggles). */
+  banner?: ReactNode
+  /** Values carried over from another calendar kind — see `CalendarDraft`. */
+  draft?: CalendarDraft | null
+  /** Lets the calendar's kind switcher read these fields back out. */
+  draftRef?: CalendarDraftRef
 }
 
 /** Body mounts only while open, so its state is seeded once and never synced. */
@@ -40,22 +49,40 @@ function CatchupFormBody({
   choices,
   existing,
   personId,
+  defaultMetOn,
+  banner,
+  draft,
+  draftRef,
 }: Props) {
   const { notify } = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const celebrate = useCelebrate()
   const [form, setForm] = useState(() => ({
-    person: (existing?.person ?? personId ?? null) as number | null,
-    met_on: existing?.met_on ?? today(),
-    title: existing?.title ?? '',
+    person: (existing?.person ?? personId ?? draft?.person ?? null) as number | null,
+    met_on: existing?.met_on ?? defaultMetOn ?? draft?.date ?? today(),
+    title: existing?.title ?? draft?.title ?? '',
     format: existing?.format ?? 'coffee',
     format_other: existing?.format_other ?? '',
     message_channel: existing?.message_channel ?? 'linkedin',
     location: existing?.location ?? '',
-    minutes: existing?.minutes ?? '',
+    minutes: existing?.minutes ?? draft?.notes ?? '',
     takeaways: existing?.takeaways ?? '',
     follow_up_on: existing?.follow_up_on ?? '',
   }))
+  usePublishDraft(draftRef, () => ({
+    title: form.title,
+    date: form.met_on,
+    // A catch-up is a thing that happened on a day, not a slot — switching
+    // to an event starts it all-day rather than inventing a time.
+    allDay: true,
+    startTime: '',
+    endTime: '',
+    notes: form.minutes,
+    person: form.person,
+    company: null,
+    application: null,
+  }))
+
   const [personOptions, setPersonOptions] = useState<Person[]>([])
   const [error, setError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -147,6 +174,7 @@ function CatchupFormBody({
       }
     >
       <form id="catchup-form" onSubmit={onSubmit} className="flex flex-col gap-4">
+        {banner}
         {error ? (
           <p role="alert" className="rounded-lg border border-critical/25 bg-critical/10 px-3 py-2 text-[13px] text-ink">
             {error}

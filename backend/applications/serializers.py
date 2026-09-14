@@ -111,13 +111,22 @@ class LocationSerializer(serializers.ModelSerializer):
     country = serializers.IntegerField(source="state.country_id", read_only=True)
     country_name = serializers.CharField(source="state.country.name", read_only=True)
     full_name = serializers.SerializerMethodField()
+    # How much this city is actually worth showing. The country/state/city
+    # tables ship seeded, so most rows are scaffolding nobody has used —
+    # these let the Places list lead with the ones that mean something.
+    venue_count = serializers.IntegerField(source="venues.count", read_only=True)
+    listing_count = serializers.IntegerField(source="listings.count", read_only=True)
 
     class Meta:
         model = Location
         fields = [
             "id", "name", "state", "state_name", "country", "country_name", "full_name",
+            "venue_count", "listing_count",
         ]
-        read_only_fields = ["id", "state_name", "country", "country_name", "full_name"]
+        read_only_fields = [
+            "id", "state_name", "country", "country_name", "full_name",
+            "venue_count", "listing_count",
+        ]
 
     def get_full_name(self, obj):
         return f"{obj.name}, {obj.state.name}, {obj.state.country.name}"
@@ -346,6 +355,7 @@ class ResumeSerializer(serializers.ModelSerializer):
 
 class JobListingSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.display_name", read_only=True)
+    company_logo = serializers.SerializerMethodField()
     role_name = serializers.CharField(source="role.name", read_only=True)
     location_name = serializers.CharField(
         source="location.name", read_only=True, default=None
@@ -363,7 +373,7 @@ class JobListingSerializer(serializers.ModelSerializer):
         model = JobListing
         fields = [
             "id",
-            "company", "company_name",
+            "company", "company_name", "company_logo",
             "role", "role_name",
             "location", "location_name",
             "role_type", "role_type_display",
@@ -377,10 +387,18 @@ class JobListingSerializer(serializers.ModelSerializer):
             "linkedin_application_count",
         ]
         read_only_fields = [
-            "id", "company_name", "role_name", "location_name",
+            "id", "company_name", "company_logo", "role_name", "location_name",
             "role_type_display", "work_arrangement_display",
             "skills_list", "linkedin_application_count",
         ]
+
+    def get_company_logo(self, listing):
+        """Absolute URL of the company's mark, so a row can show whose it is."""
+        logo = listing.company.logo
+        if not logo:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(logo.url) if request else logo.url
 
     def get_skills_list(self, listing):
         return [skill.strip() for skill in listing.skills.split(",") if skill.strip()]

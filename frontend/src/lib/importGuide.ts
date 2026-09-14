@@ -23,7 +23,7 @@ Output ONLY the JSON object below, filled in — no explanation, no markdown cod
       "role": "string, optional — primary job title (creates/links a listing)",
       "roles": "array of strings, optional — extra titles if one application covers several roles at the same company",
       "stage": "one of: not_submitted | applied | online_assessment | video_interview | assessment_centre | final_interview | offer",
-      "outcome": "one of: in_progress | rejected | offer_received | accepted | declined | withdrawn | ghosted",
+      "outcome": "one of: in_progress | rejected | offer_received | accepted | declined | withdrawn | ghosted | missed_deadline",
       "applied_at": "YYYY-MM-DD, optional — when I applied",
       "source": "string, optional — how I found it (referral, LinkedIn, careers site, ...)",
       "notes": "string, optional — anything worth remembering, including why it was rejected",

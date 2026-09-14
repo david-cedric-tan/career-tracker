@@ -1022,7 +1022,8 @@ function StageDoneModal({
     outcome === 'rejected' ||
     outcome === 'ghosted' ||
     outcome === 'withdrawn' ||
-    outcome === 'declined'
+    outcome === 'declined' ||
+    outcome === 'missed_deadline'
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -1097,7 +1098,8 @@ function StageDoneModal({
                   next === 'rejected' ||
                   next === 'ghosted' ||
                   next === 'withdrawn' ||
-                  next === 'declined'
+                  next === 'declined' ||
+                  next === 'missed_deadline'
                 ) {
                   setStage(pipelineStage)
                 }

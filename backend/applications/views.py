@@ -68,6 +68,7 @@ from .serializers import (
     VenueSerializer,
 )
 from .services import (
+    LOG_GAP,
     diff,
     end_waiting,
     log_change,
@@ -1027,7 +1028,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 .exclude(pk=event.pk)
                 .exists()
             ):
-                changed_at += timedelta(microseconds=1)
+                changed_at += LOG_GAP
             event.changed_at = changed_at
 
         if "note" in request.data:

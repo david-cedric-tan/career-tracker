@@ -55,6 +55,27 @@ export function formatTime(value: string): string {
   })
 }
 
+/** Compact clock for calendar chips: always "10:00am", "10:30pm". */
+export function formatCompactTime(value: string): string {
+  const [hours, minutes = 0] = value.split(':').map(Number)
+  if (Number.isNaN(hours)) return value
+  const suffix = hours < 12 ? 'am' : 'pm'
+  const h12 = hours % 12 === 0 ? 12 : hours % 12
+  return `${h12}:${String(Number.isNaN(minutes) ? 0 : minutes).padStart(2, '0')}${suffix}`
+}
+
+/**
+ * Calendar range — always paired clocks: "10:00am – 11:00am", "10:30pm – 11:30pm".
+ */
+export function formatTimeRangeShort(
+  start: string | null | undefined,
+  end?: string | null,
+): string {
+  if (!start) return ''
+  if (!end) return formatCompactTime(start)
+  return `${formatCompactTime(start)} – ${formatCompactTime(end)}`
+}
+
 /** Whole days from today; negative means in the past. */
 export function daysFromToday(value: string): number {
   const target = parse(value)

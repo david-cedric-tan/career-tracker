@@ -861,7 +861,7 @@ class ApplicationStageCatalogTests(APITestCase):
             [row["key"] for row in response.data],
             [
                 "not_submitted", "applied", "online_assessment", "video_interview",
-                "assessment_centre", "final_interview", "offer",
+                "assessment_centre", "final_interview", "offer", "missed_deadline",
             ],
         )
         self.assertTrue(all(row["is_preset"] for row in response.data))
@@ -875,8 +875,9 @@ class ApplicationStageCatalogTests(APITestCase):
         self.assertFalse(response.data["is_preset"])
 
         order = [row["key"] for row in self.client.get("/api/application-stages/").data]
-        # Just before "Offer" — another round in the funnel, not past the end.
-        self.assertEqual(order[-2:], ["phone_interview", "offer"])
+        # Just before the last preset ("Missed Deadline") — another round in
+        # the funnel, not past the end.
+        self.assertEqual(order[-2:], ["phone_interview", "missed_deadline"])
 
     def test_ensure_is_idempotent_by_name(self):
         first = self.client.post(

@@ -9,6 +9,7 @@ export const STAGE_TONE: Record<string, Tone> = {
   assessment_centre: 'brand',
   final_interview: 'brand',
   offer: 'good',
+  missed_deadline: 'warning',
 }
 
 /**
@@ -30,6 +31,7 @@ export const OUTCOME_TONE: Record<string, Tone> = {
   declined: 'neutral',
   withdrawn: 'neutral',
   ghosted: 'serious',
+  missed_deadline: 'warning',
 }
 
 export const PRIORITY_TONE: Record<string, Tone> = {
@@ -93,7 +95,8 @@ export const CALENDAR_DOMAIN_META: Record<
   custom: { label: 'Event', tone: 'neutral', icon: 'calendar' },
 }
 
-/** A closing date's colour by how close it is — the "urgency vibe". */
+/** A closing date's colour by how close it is — used outside the calendar
+ *  chips (e.g. application lists). Calendar deadline chips stay critical. */
 export const DEADLINE_URGENCY_TONE: Record<string, Tone> = {
   past: 'neutral',
   critical: 'critical',
@@ -101,11 +104,10 @@ export const DEADLINE_URGENCY_TONE: Record<string, Tone> = {
   later: 'good',
 }
 
-/** The chip colour for a calendar entry — urgency wins for deadlines. */
+/** The chip colour for a calendar entry.
+ *  Application deadlines always use critical red — matches the filter legend. */
 export function calendarEventTone(event: { domain: string; urgency?: string }): Tone {
-  if (event.domain === 'application_deadline' && event.urgency) {
-    return DEADLINE_URGENCY_TONE[event.urgency] ?? 'critical'
-  }
+  if (event.domain === 'application_deadline') return 'critical'
   return CALENDAR_DOMAIN_META[event.domain]?.tone ?? 'neutral'
 }
 
@@ -116,8 +118,19 @@ export const TONE_CHIP: Record<Tone, string> = {
   good: 'bg-good/10 text-good border-good/25',
   warning: 'bg-warning/15 text-[#8a5d00] dark:text-warning border-warning/30',
   serious: 'bg-serious/15 text-[#a04a1f] dark:text-serious border-serious/30',
-  critical: 'bg-critical/10 text-critical border-critical/25',
+  critical: 'bg-critical/10 text-critical border-critical/40',
   info: 'bg-info/10 text-info border-info/25',
+}
+
+/** Solid dot for cramped month cells on phones. */
+export const TONE_DOT: Record<Tone, string> = {
+  neutral: 'bg-ink-3',
+  brand: 'bg-brand',
+  good: 'bg-good',
+  warning: 'bg-warning',
+  serious: 'bg-serious',
+  critical: 'bg-critical',
+  info: 'bg-info',
 }
 
 

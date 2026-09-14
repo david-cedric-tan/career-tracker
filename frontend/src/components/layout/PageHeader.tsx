@@ -7,6 +7,7 @@ export function PageHeader({
   action,
   mark,
   subtitleClassName,
+  className,
 }: {
   title: ReactNode
   subtitle?: ReactNode
@@ -14,9 +15,10 @@ export function PageHeader({
   /** An identifying image beside the title — a company's logo, say. */
   mark?: ReactNode
   subtitleClassName?: string
+  className?: string
 }) {
   return (
-    <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <header className={cx('mb-5 flex flex-wrap items-end justify-between gap-3', className)}>
       <div className="page-header-text flex min-w-0 items-center gap-3">
         {mark}
         <div className="min-w-0">

@@ -379,6 +379,37 @@ class CalendarEventsTests(APITestCase):
         self.assertEqual(event["domain"], "custom")
         self.assertTrue(event["done"])
 
+    def test_todo_with_due_time_is_timed_on_calendar(self):
+        from datetime import time
+
+        Todo.objects.create(
+            user=self.user,
+            title="Call at 3",
+            due_date=self.today,
+            due_time=time(15, 0),
+            due_end_time=time(16, 30),
+        )
+        Todo.objects.create(
+            user=self.user,
+            title="All day prep",
+            due_date=self.today,
+        )
+        Todo.objects.create(
+            user=self.user,
+            title="Default hour",
+            due_date=self.today,
+            due_time=time(9, 0),
+        )
+        response = self.client.get("/api/dashboard/calendar/")
+        by_title = {e["title"]: e for e in response.data["events"] if e["domain"] == "todo"}
+        timed = by_title["Call at 3"]
+        self.assertFalse(timed["all_day"])
+        self.assertEqual(timed["start_time"], "15:00:00")
+        self.assertEqual(timed["end_time"], "16:30:00")
+        self.assertEqual(by_title["Default hour"]["end_time"], "10:00:00")
+        self.assertTrue(by_title["All day prep"]["all_day"])
+        self.assertIsNone(by_title["All day prep"]["start_time"])
+
     def test_requires_auth(self):
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get("/api/dashboard/calendar/").status_code, 401)

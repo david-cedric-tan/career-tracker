@@ -31,6 +31,8 @@ class TodoSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "due_date",
+            "due_time",
+            "due_end_time",
             "priority", "priority_display",
             "status", "status_display",
             "application", "application_label", "application_logo",
@@ -89,6 +91,27 @@ class TodoSerializer(serializers.ModelSerializer):
 
         title = attrs.get("title", getattr(self.instance, "title", ""))
         due = attrs.get("due_date", getattr(self.instance, "due_date", None))
+        # No date → no clock times. Keeps all-day as the default when the due
+        # date is cleared.
+        if due is None and "due_date" in attrs:
+            attrs["due_time"] = None
+            attrs["due_end_time"] = None
+
+        due_time = attrs.get(
+            "due_time", getattr(self.instance, "due_time", None) if self.instance else None
+        )
+        if due_time is None and ("due_time" in attrs or (due is None and "due_date" in attrs)):
+            attrs["due_end_time"] = None
+
+        due_end = attrs.get(
+            "due_end_time",
+            getattr(self.instance, "due_end_time", None) if self.instance else None,
+        )
+        if due_time is not None and due_end is not None and due_end <= due_time:
+            raise serializers.ValidationError(
+                {"due_end_time": "End time must be after the start time."}
+            )
+
         status = attrs.get("status", getattr(self.instance, "status", TodoStatus.OPEN))
         if status != TodoStatus.OPEN:
             return attrs

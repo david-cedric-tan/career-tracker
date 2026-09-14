@@ -65,6 +65,10 @@ export type State = { id: number; name: string; country: number; country_name: s
 export type Location = {
   id: number
   name: string
+  /** Venues recorded under this city, and listings that point at it — what
+      separates a place you use from seeded geography. */
+  venue_count: number
+  listing_count: number
   state: number
   state_name: string
   country: number
@@ -183,6 +187,8 @@ export type JobListing = {
   id: number
   company: number
   company_name: string
+  /** Absolute URL of the company's mark, or null. */
+  company_logo: string | null
   role: number
   role_name: string
   location: number | null
@@ -393,6 +399,10 @@ export type Todo = {
   title: string
   description: string
   due_date: string | null
+  /** Clock time on the due date; null = all-day on the calendar. */
+  due_time: string | null
+  /** End of a timed block; null with due_time defaults to one hour on the calendar. */
+  due_end_time: string | null
   priority: string
   priority_display: string
   status: string
@@ -558,6 +568,8 @@ export type CompanyStat = {
   active: number
   /** Live applications waiting on the company's reply. */
   waiting: number
+  /** Closing dates that went by with the application unsubmitted. */
+  missed: number
   offers: number
   rejected: number
 }

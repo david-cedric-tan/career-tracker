@@ -86,18 +86,23 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
     })
   }, [])
 
-  // FR-APP-03: only this company's listings can be attached.
-  const companyListings = useMemo<Option[]>(
-    () =>
-      listings
-        .filter((listing) => listing.company === form.company)
-        .map((listing) => ({
-          id: listing.id,
-          label: listing.role_name,
-          hint: listing.location_name ?? undefined,
-        })),
-    [listings, form.company],
-  )
+  // FR-APP-03: only this company's listings can be attached. Each row shows
+  // the company's mark and links through to the listing, so "is this the
+  // right posting?" is one click rather than a separate trip to the
+  // Job Directory.
+  const companyListings = useMemo<Option[]>(() => {
+    const logo = companyOptions.find((row) => row.id === form.company)?.logo ?? null
+    return listings
+      .filter((listing) => listing.company === form.company)
+      .map((listing) => ({
+        id: listing.id,
+        label: listing.role_name,
+        hint: listing.location_name ?? undefined,
+        avatar: logo,
+        avatarShape: 'square' as const,
+        to: `/job-directory/listings/${listing.id}`,
+      }))
+  }, [listings, form.company, companyOptions])
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -341,7 +346,7 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
                 ? 'No listings for this company yet — add one below.'
                 : 'Pick a company first.'
             }
-            help="One application can cover several roles at the same company."
+            help="One application can cover several roles at the same company. Open one with → to check the posting."
           />
           {errors.listing_ids ? (
             <p className="mt-1 text-[12px] text-critical">{errors.listing_ids}</p>
