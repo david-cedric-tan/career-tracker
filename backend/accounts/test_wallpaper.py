@@ -4,11 +4,12 @@ import os
 import shutil
 import tempfile
 from io import BytesIO
+from unittest import skipUnless
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
-from PIL import Image
+from PIL import Image, features
 from rest_framework.test import APITestCase
 
 from .models import Profile
@@ -23,6 +24,13 @@ def image_file(name="photo.jpg", size=(3000, 1200)):
     Image.new("RGB", size, (30, 60, 90)).save(buffer, format="JPEG")
     buffer.seek(0)
     return SimpleUploadedFile(name, buffer.read(), content_type="image/jpeg")
+
+
+def avif_file(name="photo.avif", size=(3000, 1200)):
+    buffer = BytesIO()
+    Image.new("RGB", size, (30, 60, 90)).save(buffer, format="AVIF")
+    buffer.seek(0)
+    return SimpleUploadedFile(name, buffer.read(), content_type="image/avif")
 
 
 @override_settings(MEDIA_ROOT=MEDIA)
@@ -48,6 +56,22 @@ class WallpaperApiTests(APITestCase):
             # Contained, not cropped: a 2.5:1 wide photo stays 2.5:1, capped
             # at the wallpaper ceiling rather than a square or a fixed box.
             self.assertAlmostEqual(saved.width / saved.height, 3000 / 1200, places=2)
+            self.assertLessEqual(saved.width, 1920)
+
+    @skipUnless(features.check("avif"), "this Pillow build has no AVIF support")
+    def test_accepts_an_avif_upload(self):
+        """AVIF is what a modern phone or export tool hands you, and it must
+        survive the same contain-and-store path as a JPEG."""
+        response = self.client.post(
+            "/api/auth/me/wallpaper/", {"wallpaper": avif_file()}, format="multipart"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+
+        profile = Profile.objects.get(user=self.user)
+        with Image.open(profile.custom_wallpaper.path) as saved:
+            # Re-encoded on the way in, so nothing downstream has to be able to
+            # read AVIF — the browser only ever sees a JPEG.
+            self.assertEqual(saved.format, "JPEG")
             self.assertLessEqual(saved.width, 1920)
 
     def test_wallpaper_is_null_until_uploaded(self):

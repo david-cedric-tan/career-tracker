@@ -12,3 +12,21 @@ export const MARKERS = {
   underline: '__',
   strike: '~~',
 } as const
+
+/** A whole line of these becomes a horizontal rule in `RichText`. */
+export const RULE_MARKERS = {
+  dashed: '---',
+  dotted: '···',
+} as const
+
+/** The text with markers stripped — for a clipped preview, where chips and
+    bold would only get in the way of the first few lines. */
+export function plainText(text: string): string {
+  return text
+    .replace(/\*\*|__|~~|(?<!\w)[*_](?!\s)|(?<!\s)[*_](?!\w)/g, '')
+    .replace(/^\s*(?:-{3,}|[.·]{3,})\s*$/gm, '')
+    .replace(/^\s*(?:-|\d+\.)\s+/gm, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+}
+

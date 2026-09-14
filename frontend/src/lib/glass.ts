@@ -14,7 +14,15 @@ import { useEffect, useState } from 'react'
 const KEY = 'career-tracker:glass'
 const EVENT = 'glass-change'
 
-export const DEFAULT_GLASS = 0
+/**
+ * On, at full strength, until someone turns it down.
+ *
+ * It's the look the app is designed around, so a new account seeing flat
+ * panels is seeing a fallback rather than the product. Anyone who finds it
+ * heavy — or whose laptop does — has the slider in Settings, and that choice
+ * is remembered per browser.
+ */
+export const DEFAULT_GLASS = 1
 
 export function readGlass(): number {
   try {
@@ -37,6 +45,9 @@ export function readGlass(): number {
 export function applyGlass(level: number) {
   const root = document.documentElement
   root.style.setProperty('--glass', String(level))
+  // The chosen level, kept under its own name so rules that impose a floor
+  // (the sign-in card) can read it without a circular reference to `--glass`.
+  root.style.setProperty('--glass-user', String(level))
   if (level > 0) root.dataset.glass = 'on'
   else delete root.dataset.glass
 }

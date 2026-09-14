@@ -17,7 +17,10 @@ export type FiredAlert = {
   subtitle: string
   /** ISO timestamp of when it fired. */
   firedAt: string
+  /** Where clicking it goes — a calendar deep link, or nothing for tickets. */
   to: string
+  /** A ticket alert opens the refinement log on that ticket instead. */
+  ticketId?: number
 }
 
 const MAX_KEPT = 30

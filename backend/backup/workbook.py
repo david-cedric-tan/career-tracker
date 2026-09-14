@@ -29,14 +29,19 @@ LIST_COLUMNS = {
     "applications",
     "photo_captions",
     "industries",
+    "attachment_captions",
+    "screens",
+    "people",
+    "reminders",
+    "tags",
 }
 # …of which these hold ids, not names. A spreadsheet cell is text, so without
 # coercing them back to ints the restore's id lookups silently find nothing.
-ID_LIST_COLUMNS = {"applications"}
+ID_LIST_COLUMNS = {"applications", "reminders"}
 # Columns carrying structured JSON that must survive the round trip verbatim.
 JSON_COLUMNS = {"changes"}
-BOOL_COLUMNS = {"is_active", "is_preferred"}
-INT_COLUMNS = {"id", "application"}
+BOOL_COLUMNS = {"is_active", "is_preferred", "has_image", "all_day", "is_done"}
+INT_COLUMNS = {"id", "application", "note", "message", "position"}
 
 
 def _to_cell(column, value):
@@ -84,6 +89,7 @@ def write_workbook(archive) -> bytes:
     meta.append(["key", "value"])
     meta.append(["version", archive["version"]])
     meta.append(["username", archive["username"]])
+    meta.append(["profile", json.dumps(archive.get("profile") or {})])
     for cell in meta[1]:
         cell.fill, cell.font = HEADER_FILL, HEADER_FONT
 
@@ -124,7 +130,7 @@ def read_workbook(handle):
             {"file": "That file isn’t a readable spreadsheet."}
         )
 
-    archive = {"version": ARCHIVE_VERSION, "username": ""}
+    archive = {"version": ARCHIVE_VERSION, "username": "", "profile": {}}
 
     if META_SHEET in book.sheetnames:
         for key, value in book[META_SHEET].iter_rows(min_row=2, values_only=True):
@@ -132,6 +138,11 @@ def read_workbook(handle):
                 archive["version"] = int(value)
             elif key == "username" and value is not None:
                 archive["username"] = str(value)
+            elif key == "profile" and value:
+                try:
+                    archive["profile"] = json.loads(str(value))
+                except json.JSONDecodeError:
+                    archive["profile"] = {}
 
     for name, columns in SHEETS.items():
         rows = []

@@ -31,7 +31,7 @@ class PersonStatus(models.TextChoices):
 # plus NamedCatalogViewSet's search + get-or-create `ensure/` endpoint.
 PRESET_RELATIONSHIPS = [
     "Mentor", "Alumni", "Classmate", "Colleague", "Manager", "Recruiter",
-    "Interviewer", "Industry contact", "Academic", "Other",
+    "Interviewer", "Industry Contact", "Academic", "Other",
 ]
 PRESET_MET_SOURCES = [
     "University event", "Professional event", "Internship", "Workplace",
@@ -94,6 +94,13 @@ def add_months(start: date, months: int) -> date:
     return date(year, month, day)
 
 
+class MessageChannel(models.TextChoices):
+    LINKEDIN = "linkedin", "LinkedIn"
+    EMAIL = "email", "Email"
+    SMS = "sms", "Text / WhatsApp"
+    OTHER = "other", "Other"
+
+
 class Person(models.Model):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="people"
@@ -125,6 +132,13 @@ class Person(models.Model):
     connections = models.ManyToManyField("self", blank=True)
 
     last_meeting_at = models.DateField(null=True, blank=True)
+    # A message isn't a meeting: pinging someone on LinkedIn shouldn't read as
+    # having caught up with them, nor reset the catch-up cadence. Tracked
+    # separately, with the channel it went through.
+    last_messaged_at = models.DateField(null=True, blank=True)
+    last_message_channel = models.CharField(
+        max_length=20, blank=True, choices=MessageChannel.choices
+    )
     next_chat_at = models.DateField(null=True, blank=True)
     # Null means "use DEFAULT_CADENCE_MONTHS" — a contact you catch up with
     # monthly and one you catch up with yearly shouldn't share one fixed

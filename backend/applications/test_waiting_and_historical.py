@@ -36,6 +36,13 @@ class WaitingStateTests(APITestCase):
         self.assertEqual(r.data["stage"], Stage.VIDEO_INTERVIEW)
         self.assertEqual(r.data["outcome"], Outcome.IN_PROGRESS)
         self.assertIn("waiting_started", self.events())
+        self.assertIn("stage_done", self.events())
+        waiting = next(
+            e
+            for e in self.client.get(f"/api/applications/{self.app.id}/").data["event_logs"]
+            if e["event_type"] == "waiting_started"
+        )
+        self.assertEqual(waiting["curr_stage"], Stage.VIDEO_INTERVIEW)
 
     def test_moving_stage_clears_waiting_and_logs_the_end(self):
         self.mark_waiting()

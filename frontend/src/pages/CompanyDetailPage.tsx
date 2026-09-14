@@ -116,7 +116,6 @@ export function CompanyDetailPage() {
                 size="lg"
                 shape="square"
                 label="logo"
-                helpText="Shared reference data — shows up everywhere this company appears."
                 onUpload={async (file) => {
                   detail.setData(await companies.uploadLogo(company.id, file))
                   notify('Logo updated.')
@@ -288,7 +287,7 @@ export function CompanyDetailPage() {
                   to={`/applications?company=${company.id}`}
                   className="text-[12.5px] font-medium text-brand hover:underline"
                 >
-                  All applications
+                  All Applications
                 </Link>
               }
             />

@@ -11,6 +11,7 @@ from .views import (
     ExtraCurricularViewSet,
     LoginView,
     LogoutView,
+    PinnedPhotoView,
     ProfileAddressViewSet,
     ProfileLinkViewSet,
     RefinementNoteViewSet,
@@ -34,6 +35,7 @@ urlpatterns = [
     path("me/", AccountView.as_view(), name="auth-account"),
     path("me/avatar/", AvatarView.as_view(), name="auth-avatar"),
     path("me/wallpaper/", WallpaperView.as_view(), name="auth-wallpaper"),
+    path("me/pinned-photo/", PinnedPhotoView.as_view(), name="auth-pinned-photo"),
     path("me/delete-data/", DeleteAllDataView.as_view(), name="auth-delete-data"),
     path("", include(router.urls)),
 ]

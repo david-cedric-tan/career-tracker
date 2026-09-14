@@ -7,7 +7,7 @@ import { Tooltip } from '../ui/Tooltip'
 export const GHOSTING_SUGGESTION_DAYS = 30
 
 /**
- * "Waiting for response" — the employer owes the next move.
+ * "Waiting For Response" — the employer owes the next move.
  *
  * Sits alongside the stage and outcome badges rather than replacing either:
  * you are still *at* the video interview and still *in progress*; all that's
@@ -54,7 +54,7 @@ export function WaitingBadge({
             it's interactive, gone in under a second so it never nags. */}
         <span className="waiting-ripple" aria-hidden="true" />
         <span className="waiting-dot size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true" />
-        Waiting for response
+        Waiting For Response
       </span>
     </Tooltip>
   )

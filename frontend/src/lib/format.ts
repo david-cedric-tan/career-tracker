@@ -55,6 +55,27 @@ export function formatTime(value: string): string {
   })
 }
 
+/** Compact clock for calendar chips: always "10:00am", "10:30pm". */
+export function formatCompactTime(value: string): string {
+  const [hours, minutes = 0] = value.split(':').map(Number)
+  if (Number.isNaN(hours)) return value
+  const suffix = hours < 12 ? 'am' : 'pm'
+  const h12 = hours % 12 === 0 ? 12 : hours % 12
+  return `${h12}:${String(Number.isNaN(minutes) ? 0 : minutes).padStart(2, '0')}${suffix}`
+}
+
+/**
+ * Calendar range — always paired clocks: "10:00am – 11:00am", "10:30pm – 11:30pm".
+ */
+export function formatTimeRangeShort(
+  start: string | null | undefined,
+  end?: string | null,
+): string {
+  if (!start) return ''
+  if (!end) return formatCompactTime(start)
+  return `${formatCompactTime(start)} – ${formatCompactTime(end)}`
+}
+
 /** Whole days from today; negative means in the past. */
 export function daysFromToday(value: string): number {
   const target = parse(value)
@@ -73,6 +94,13 @@ export function relativeDay(value: string | null | undefined): string {
   if (days < 0) return `${Math.abs(days)} days ago`
   if (days < 7) return `In ${days} days`
   return formatDate(value)
+}
+
+/** Whole days elapsed since a timestamp — how long something has been sitting. */
+export function daysSince(value: string): number {
+  const started = new Date(value).getTime()
+  if (Number.isNaN(started)) return 0
+  return Math.max(0, Math.floor((Date.now() - started) / 86_400_000))
 }
 
 export function relativeTime(value: string): string {
@@ -95,6 +123,13 @@ export function displayName(
 ): string {
   const full = [user?.first_name, user?.last_name].filter(Boolean).join(' ')
   return full || user?.username || ''
+}
+
+/** The short name the app addresses you by — preferred name, else first name. */
+export function shortName(
+  user: { preferred_name?: string; first_name?: string; username?: string } | null | undefined,
+): string {
+  return user?.preferred_name?.trim() || user?.first_name?.trim() || user?.username || ''
 }
 
 export function initials(name: string): string {

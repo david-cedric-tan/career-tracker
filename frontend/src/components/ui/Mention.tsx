@@ -5,8 +5,9 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type InputHTMLAttributes,
-  type TextareaHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import {
   applications,
@@ -18,7 +19,7 @@ import {
 } from '../../api/resources'
 import { useResource } from '../../hooks/useResource'
 import { cx } from '../../lib/format'
-import { MARKERS } from '../../lib/richTextMarkers'
+import { markersToHtml, serializeRichDom } from '../../lib/richText'
 import { FieldShell } from './Field'
 import { Icon } from './Icon'
 
@@ -378,76 +379,16 @@ function useMention({
   }
 }
 
-type Edit = { value: string; start: number; end: number }
-
-/** Wraps (or unwraps) the selection in a marker pair. With nothing selected
-    it drops the pair in and puts the caret between them, so you can turn
-    formatting on and keep typing. */
-function toggleWrap(value: string, start: number, end: number, marker: string): Edit {
-  const selected = value.slice(start, end)
-  const len = marker.length
-
-  // Already wrapped, either inside the selection or just outside it.
-  if (selected.length >= len * 2 && selected.startsWith(marker) && selected.endsWith(marker)) {
-    const inner = selected.slice(len, -len)
-    return {
-      value: value.slice(0, start) + inner + value.slice(end),
-      start,
-      end: start + inner.length,
-    }
-  }
-  if (value.slice(start - len, start) === marker && value.slice(end, end + len) === marker) {
-    return {
-      value: value.slice(0, start - len) + selected + value.slice(end + len),
-      start: start - len,
-      end: end - len,
-    }
-  }
-
-  const wrapped = `${marker}${selected}${marker}`
-  return {
-    value: value.slice(0, start) + wrapped + value.slice(end),
-    start: start + len,
-    end: start + len + selected.length,
-  }
-}
-
-/** Adds or removes a list prefix on every line the selection touches. */
-function toggleLines(
-  value: string,
-  start: number,
-  end: number,
-  kind: 'bullet' | 'number',
-): Edit {
-  const from = value.lastIndexOf('\n', start - 1) + 1
-  const toRaw = value.indexOf('\n', end)
-  const to = toRaw === -1 ? value.length : toRaw
-  const lines = value.slice(from, to).split('\n')
-  const prefixOf = (index: number) => (kind === 'bullet' ? '- ' : `${index + 1}. `)
-  const matches = (line: string) =>
-    kind === 'bullet' ? line.startsWith('- ') : /^\d+\.\s/.test(line)
-
-  // Only strip when every line already has it — a partly-listed selection
-  // reads as "make all of these a list", not "unlist the ones that are".
-  const allListed = lines.every((line) => !line.trim() || matches(line))
-  const next = lines
-    .map((line, index) => {
-      if (!line.trim()) return line
-      if (allListed) return line.replace(kind === 'bullet' ? /^- / : /^\d+\.\s/, '')
-      return matches(line) ? line : prefixOf(index) + line
-    })
-    .join('\n')
-
-  return { value: value.slice(0, from) + next + value.slice(to), start: from, end: from + next.length }
-}
-
+/** Toolbar actions for the WYSIWYG notes editor. */
 const TOOLS = [
-  { key: 'bold', label: 'Bold', shortcut: 'b', icon: 'bold', marker: MARKERS.bold },
-  { key: 'italic', label: 'Italic', shortcut: 'i', icon: 'italic', marker: MARKERS.italic },
-  { key: 'underline', label: 'Underline', shortcut: 'u', icon: 'underline', marker: MARKERS.underline },
-  { key: 'strike', label: 'Strikethrough', icon: 'strikethrough', marker: MARKERS.strike },
-  { key: 'bullet', label: 'Bulleted list', icon: 'list', list: 'bullet' },
-  { key: 'number', label: 'Numbered list', icon: 'listOrdered', list: 'number' },
+  { key: 'bold', label: 'Bold', shortcut: 'b', icon: 'bold', command: 'bold' },
+  { key: 'italic', label: 'Italic', shortcut: 'i', icon: 'italic', command: 'italic' },
+  { key: 'underline', label: 'Underline', shortcut: 'u', icon: 'underline', command: 'underline' },
+  { key: 'strike', label: 'Strikethrough', icon: 'strikethrough', command: 'strikeThrough' },
+  { key: 'bullet', label: 'Bulleted list', icon: 'list', command: 'insertUnorderedList' },
+  { key: 'number', label: 'Numbered list', icon: 'listOrdered', command: 'insertOrderedList' },
+  { key: 'dashed', label: 'Dashed line', icon: 'lineDashed', rule: 'dashed' as const },
+  { key: 'dotted', label: 'Dotted line', icon: 'lineDotted', rule: 'dotted' as const },
 ] as const
 
 function FormatToolbar({ onApply }: { onApply: (tool: (typeof TOOLS)[number]) => void }) {
@@ -457,7 +398,7 @@ function FormatToolbar({ onApply }: { onApply: (tool: (typeof TOOLS)[number]) =>
         <button
           key={tool.key}
           type="button"
-          // mousedown, not click — the textarea keeps focus and its selection,
+          // mousedown, not click — the editor keeps focus and its selection,
           // which is the whole input to the edit.
           onMouseDown={(event) => {
             event.preventDefault()
@@ -538,30 +479,37 @@ type SharedProps = {
   onChange: (value: string) => void
 }
 
-type MentionTextareaProps = Omit<
-  TextareaHTMLAttributes<HTMLTextAreaElement>,
-  'value' | 'onChange'
-> &
-  SharedProps & {
-    /** Formatting buttons above the field. On by default — every use of this
-        component is a notes field. */
-    toolbar?: boolean
-    /** Ceiling for the auto-grow, past which it scrolls instead of pushing
-        the rest of the form off screen. */
-    maxHeight?: number
-  }
+type MentionTextareaProps = SharedProps & {
+  /** Formatting buttons above the field. On by default — every use of this
+      component is a notes field. */
+  toolbar?: boolean
+  /** Ceiling for the auto-grow, past which it scrolls instead of pushing
+      the rest of the form off screen. */
+  maxHeight?: number
+  rows?: number
+  placeholder?: string
+  disabled?: boolean
+  id?: string
+  className?: string
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void
+}
+
+function caretPlainContext(root: HTMLElement): { text: string; caret: number } | null {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return null
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.startContainer)) return null
+  const before = range.cloneRange()
+  before.selectNodeContents(root)
+  before.setEnd(range.startContainer, range.startOffset)
+  const prefix = before.toString()
+  return { text: root.innerText.replace(/\u00a0/g, ' '), caret: prefix.length }
+}
 
 /**
- * A `Textarea` that offers @mention autocomplete over the account's own
- * people, companies, cities and venues — type `@`, keep typing to narrow the
- * list, then Tab/Enter to accept the highlighted match or Arrow keys to move
- * through it.
- *
- * Deliberately plain-text: accepting a suggestion inserts `@TheirName` as
- * literal characters, the same way Slack or Notion's "@" quick-mention
- * inserts a name before you've necessarily linked anything — this isn't a
- * relational field, and the note stays a normal string everywhere else in
- * the app reads it.
+ * A notes field that shows formatting live (bold, lists, rules) while still
+ * storing the same marker plain text `RichText` reads back — and keeps `@`
+ * mentions as literal tags.
  */
 export function MentionTextarea({
   label,
@@ -575,90 +523,298 @@ export function MentionTextarea({
   onKeyDown,
   toolbar = true,
   maxHeight = 520,
-  ...rest
+  rows = 3,
+  placeholder,
+  disabled,
 }: MentionTextareaProps) {
   const generatedId = useId()
   const id = providedId ?? generatedId
-  const fieldRef = useRef<HTMLTextAreaElement>(null)
-  const mention = useMention({ value, onChange, fieldRef, multiline: true })
+  const editorRef = useRef<HTMLDivElement>(null)
+  const lastEmitted = useRef(value)
+  const suppressMention = useRef(false)
+  const options = useMentionOptions()
 
-  // Grow with the text instead of making you scroll a three-line window —
-  // notes routinely run long. Height is read back off scrollHeight rather
-  // than counted from the string, so wrapped lines stay honest. Past
-  // `maxHeight` it scrolls (overflow-y-auto) rather than pushing the rest of
-  // the form off screen. Still `resize-y`, so a manual drag wins until the
-  // next keystroke.
-  useEffect(() => {
-    const field = fieldRef.current
-    if (!field) return
-    field.style.height = 'auto'
-    field.style.height = `${Math.min(field.scrollHeight, maxHeight)}px`
-  }, [value, maxHeight])
+  const [empty, setEmpty] = useState(!value.trim())
+  const [mentionStart, setMentionStart] = useState<number | null>(null)
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [caretPos, setCaretPos] = useState({ top: 0, left: 0 })
 
-  /** Runs a toolbar action against the live selection, then restores it so
-      you can keep typing (or hit the same button again to toggle back). */
-  function applyTool(tool: (typeof TOOLS)[number]) {
-    const field = fieldRef.current
-    if (!field) return
-    const { selectionStart: start, selectionEnd: end } = field
-    const edit =
-      'list' in tool
-        ? toggleLines(value, start, end, tool.list)
-        : toggleWrap(value, start, end, tool.marker)
-    onChange(edit.value)
-    requestAnimationFrame(() => {
-      field.focus()
-      field.setSelectionRange(edit.start, edit.end)
-    })
+  const matches = useMemo(() => {
+    if (mentionStart === null) return []
+    const needle = query.trim().toLowerCase()
+    if (needle) {
+      return options
+        .filter((option) => option.label.toLowerCase().includes(needle))
+        .slice(0, MAX_SUGGESTIONS)
+    }
+    const byKind = new Map<MentionOption['kind'], MentionOption[]>()
+    for (const option of options) {
+      const bucket = byKind.get(option.kind)
+      if (bucket) bucket.push(option)
+      else byKind.set(option.kind, [option])
+    }
+    const buckets = [...byKind.values()]
+    const spread: MentionOption[] = []
+    for (let depth = 0; spread.length < MAX_SUGGESTIONS; depth++) {
+      if (!buckets.some((bucket) => bucket.length > depth)) break
+      for (const bucket of buckets) {
+        if (bucket[depth] && spread.length < MAX_SUGGESTIONS) spread.push(bucket[depth])
+      }
+    }
+    return spread
+  }, [options, mentionStart, query])
+
+  const mentionOpen = mentionStart !== null && matches.length > 0
+
+  function paint(next: string) {
+    const el = editorRef.current
+    if (!el) return
+    el.innerHTML = markersToHtml(next) || ''
+    const text = el.innerText.replace(/\u00a0/g, ' ').trim()
+    setEmpty(!text && !el.querySelector('hr'))
   }
+
+  // External value changes (form reset / load) — not our own keystrokes.
+  useEffect(() => {
+    if (value === lastEmitted.current) return
+    lastEmitted.current = value
+    paint(value)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- paint closes over editorRef
+  }, [value])
+
+  useEffect(() => {
+    paint(value)
+    // initial mount only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const el = editorRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, rows * 24), maxHeight)}px`
+  }, [value, maxHeight, rows, empty])
+
+  const recheckMention = useCallback(() => {
+    if (suppressMention.current) {
+      suppressMention.current = false
+      return
+    }
+    const el = editorRef.current
+    if (!el) return
+    const ctx = caretPlainContext(el)
+    if (!ctx) {
+      setMentionStart(null)
+      return
+    }
+    const mention = activeMention(ctx.text, ctx.caret)
+    if (!mention) {
+      setMentionStart(null)
+      return
+    }
+    setMentionStart(mention.start)
+    setQuery(mention.query)
+    setActiveIndex(0)
+
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    const box = el.getBoundingClientRect()
+    setCaretPos({
+      top: rect.bottom - box.top + el.scrollTop + 4,
+      left: Math.min(Math.max(0, rect.left - box.left), el.clientWidth - 8),
+    })
+  }, [])
+
+  function emit() {
+    const el = editorRef.current
+    if (!el) return
+    const next = serializeRichDom(el)
+    lastEmitted.current = next
+    const text = el.innerText.replace(/\u00a0/g, ' ').trim()
+    setEmpty(!text && !el.querySelector('hr'))
+    onChange(next)
+    recheckMention()
+  }
+
+  function insertMention(option: MentionOption) {
+    const el = editorRef.current
+    if (!el || mentionStart === null) return
+    const ctx = caretPlainContext(el)
+    if (!ctx) return
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return
+
+    // Replace "@query" by deleting backward from the caret, then insert the tag.
+    const deleteCount = ctx.caret - mentionStart
+    for (let i = 0; i < deleteCount; i++) {
+      document.execCommand('delete', false)
+    }
+    suppressMention.current = true
+    setMentionStart(null)
+    document.execCommand('insertText', false, `@${option.tag} `)
+    emit()
+    el.focus()
+  }
+
+  function applyTool(tool: (typeof TOOLS)[number]) {
+    const el = editorRef.current
+    if (!el || disabled) return
+    el.focus()
+    if ('rule' in tool) {
+      const hr =
+        tool.rule === 'dotted'
+          ? '<hr data-rule="dotted" class="ticket-rule ticket-rule-dotted">'
+          : '<hr data-rule="dashed" class="ticket-rule ticket-rule-dashed">'
+      document.execCommand('insertHTML', false, `${hr}<p><br></p>`)
+    } else {
+      document.execCommand(tool.command, false)
+    }
+    emit()
+  }
+
+  function onPaste(event: ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const html = event.clipboardData.getData('text/html')
+    const plain = event.clipboardData.getData('text/plain')
+
+    function insertPlain(text: string) {
+      const escaped = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+      const blocks = escaped
+        .split(/\r\n|\r|\n/)
+        .map((line) => `<p>${line || '<br>'}</p>`)
+        .join('')
+      document.execCommand('insertHTML', false, blocks || '<p><br></p>')
+    }
+
+    if (html) {
+      const tmp = document.createElement('div')
+      tmp.innerHTML = html
+      const markers = serializeRichDom(tmp)
+      const meaningful = markers.replace(/[\s*\-_#.·]/g, '')
+      const plainMeaningful = plain.replace(/\s/g, '')
+      // Word / Docs often paste a lone rule or nearly empty HTML — fall back
+      // to the plain text so multi-line notes survive.
+      if (safeEnough(meaningful, plainMeaningful)) {
+        const safe = markersToHtml(markers)
+        if (safe) document.execCommand('insertHTML', false, safe)
+        else insertPlain(plain)
+      } else if (plain) {
+        insertPlain(plain)
+      } else {
+        const safe = markersToHtml(markers)
+        if (safe) document.execCommand('insertHTML', false, safe)
+      }
+    } else if (plain) {
+      insertPlain(plain)
+    }
+    emit()
+  }
+
+  function safeEnough(fromHtml: string, fromPlain: string) {
+    if (!fromHtml) return false
+    if (!fromPlain) return true
+    return fromHtml.length >= Math.max(8, fromPlain.length * 0.35)
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (mentionOpen) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        event.stopPropagation()
+        setActiveIndex((i) => (i + 1) % matches.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        event.stopPropagation()
+        setActiveIndex((i) => (i - 1 + matches.length) % matches.length)
+        return
+      }
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        insertMention(matches[activeIndex])
+        return
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        setMentionStart(null)
+        return
+      }
+    }
+
+    if (toolbar && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      const tool = TOOLS.find(
+        (candidate) =>
+          'shortcut' in candidate && candidate.shortcut === event.key.toLowerCase(),
+      )
+      if (tool) {
+        event.preventDefault()
+        applyTool(tool)
+        return
+      }
+    }
+    onKeyDown?.(event)
+  }
+
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const el = editorRef.current
+      if (!el || document.activeElement !== el) return
+      recheckMention()
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [recheckMention])
 
   return (
     <FieldShell label={label} error={error} help={help} id={id} className={wrapperClassName}>
       {toolbar ? <FormatToolbar onApply={applyTool} /> : null}
       <div className="relative">
-        <textarea
-          ref={fieldRef}
+        <div
+          ref={editorRef}
           id={id}
-          rows={3}
+          role="textbox"
+          aria-multiline="true"
           aria-invalid={error ? true : undefined}
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value)
-            mention.recheck(event.target.selectionStart, event.target.value)
-          }}
-          onKeyDown={(event) => {
-            if (mention.handleKeyDown(event)) return
-            if (toolbar && (event.metaKey || event.ctrlKey)) {
-              const tool = TOOLS.find(
-                (candidate) =>
-                  'shortcut' in candidate && candidate.shortcut === event.key.toLowerCase(),
-              )
-              if (tool) {
-                event.preventDefault()
-                applyTool(tool)
-                return
-              }
-            }
-            onKeyDown?.(event)
-          }}
-          onBlur={mention.close}
+          aria-label={label || placeholder || 'Notes'}
+          aria-placeholder={placeholder}
+          contentEditable={!disabled}
+          suppressContentEditableWarning
+          data-empty={empty ? 'true' : 'false'}
+          onInput={emit}
+          onKeyDown={handleKeyDown}
+          onPaste={onPaste}
+          onBlur={() => setMentionStart(null)}
           className={cx(
-            'w-full resize-y overflow-y-auto rounded-lg border border-line bg-surface px-3 py-2 text-[13.5px] text-ink outline-none transition-colors placeholder:text-ink-3 focus:border-brand-ring',
+            'rich-notes-editor w-full resize-y overflow-y-auto rounded-lg border border-line bg-surface px-3 py-2 text-[13.5px] leading-relaxed text-ink outline-none transition-colors focus:border-brand-ring',
+            '[&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5',
+            '[&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5',
+            '[&_b]:font-semibold [&_strong]:font-semibold',
+            '[&_i]:italic [&_em]:italic',
+            '[&_u]:underline',
+            '[&_s]:line-through [&_strike]:line-through',
+            'data-[empty=true]:before:pointer-events-none data-[empty=true]:before:text-ink-3 data-[empty=true]:before:content-[attr(aria-placeholder)]',
             error && 'border-critical',
+            disabled && 'cursor-not-allowed opacity-60',
             className,
           )}
-          {...rest}
+          style={{ minHeight: `${Math.max(rows, 2) * 1.5}rem`, maxHeight }}
         />
 
-        {mention.mirror}
-
-        {mention.open ? (
+        {mentionOpen ? (
           <MentionMenu
-            matches={mention.matches}
-            activeIndex={mention.activeIndex}
-            caretPos={mention.caretPos}
-            onPick={mention.insert}
-            onHover={mention.setActiveIndex}
+            matches={matches}
+            activeIndex={activeIndex}
+            caretPos={caretPos}
+            onPick={insertMention}
+            onHover={setActiveIndex}
           />
         ) : null}
       </div>

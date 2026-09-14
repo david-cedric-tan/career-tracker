@@ -9,8 +9,9 @@ import { TaggedInPanel } from '../components/TaggedInPanel'
 import { PageHeader } from '../components/layout/PageHeader'
 import { Avatar } from '../components/ui/Avatar'
 import { Badge } from '../components/ui/Badge'
+import { CompanyChip } from '../components/ui/CompanyChip'
 import { ImagePicker } from '../components/ui/ImagePicker'
-import { CHANNEL_ICON, PERSON_STATUS_TONE, PRIORITY_TONE } from '../lib/tones'
+import { CHANNEL_ICON, MESSAGE_CHANNEL_ICON, PERSON_STATUS_TONE, PRIORITY_TONE } from '../lib/tones'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Input } from '../components/ui/Field'
@@ -123,7 +124,6 @@ export function PersonDetailPage() {
                 src={person.photo}
                 size="lg"
                 label="photo"
-                helpText="Shown wherever this contact appears."
                 onUpload={async (file) => {
                   detail.setData(await people.uploadPhoto(person.id, file))
                   notify('Photo updated.')
@@ -137,9 +137,52 @@ export function PersonDetailPage() {
                 <Detail label="Met via" value={person.source_display || '—'} />
                 <Detail
                   label="Companies"
-                  value={person.company_names.length ? person.company_names.join(', ') : '—'}
+                  value={
+                    person.company_details.length ? (
+                      <span className="flex flex-wrap gap-1.5">
+                        {person.company_details.map((company) => (
+                          <CompanyChip
+                            key={company.id}
+                            size="sm"
+                            label={company.name}
+                            fullName={
+                              company.is_past
+                                ? `${company.full_name} · past`
+                                : company.full_name
+                            }
+                            logo={company.logo}
+                            companyId={company.id}
+                            className={cx(company.is_past && 'opacity-60')}
+                          />
+                        ))}
+                      </span>
+                    ) : (
+                      '—'
+                    )
+                  }
                 />
-                <Detail label="Last meeting" value={formatDate(person.last_meeting_at)} />
+                <Detail label="Last met" value={formatDate(person.last_meeting_at)} />
+                <Detail
+                  label="Last messaged"
+                  value={
+                    person.last_messaged_at ? (
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        {formatDate(person.last_messaged_at)}
+                        {person.last_message_channel ? (
+                          <Badge>
+                            <Icon
+                              name={MESSAGE_CHANNEL_ICON[person.last_message_channel] ?? 'mail'}
+                              size={11}
+                            />
+                            {person.last_message_channel_display}
+                          </Badge>
+                        ) : null}
+                      </span>
+                    ) : (
+                      '—'
+                    )
+                  }
+                />
                 <Detail
                   label="Next chat"
                   value={
@@ -254,7 +297,7 @@ export function PersonDetailPage() {
                   to={`/catchups?person=${person.id}`}
                   className="text-[12.5px] font-medium text-brand hover:underline"
                 >
-                  All catch-ups
+                  All Catch-Ups
                 </Link>
               }
             />
@@ -310,7 +353,7 @@ export function PersonDetailPage() {
               title="Tasks"
               action={
                 <Link to="/todos" className="text-[12.5px] font-medium text-brand hover:underline">
-                  All todos
+                  All Todos
                 </Link>
               }
             />

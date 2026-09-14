@@ -20,7 +20,7 @@ export function outcomeHint(
 ): string {
   if (outcome === 'in_progress') {
     return changedAt
-      ? `In progress since ${formatDate(changedAt.slice(0, 10))}`
+      ? `In Progress since ${formatDate(changedAt.slice(0, 10))}`
       : 'Still in progress'
   }
   if (!changedAt) return label

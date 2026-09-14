@@ -8,13 +8,13 @@
  * a flat sine beep, played as a rising two-note figure.
  *
  * It repeats, because one ding is easy to miss if you're looking elsewhere —
- * but it stops the moment the banner is dismissed, and gives up after three
+ * but it stops the moment the banner is dismissed, and gives up after two
  * either way rather than nagging indefinitely.
  */
 
 import { readMedia } from './mediaSettings'
 
-const REPEATS = 3
+const REPEATS = 2
 const REPEAT_GAP_MS = 2200
 
 type AudioContextClass = typeof AudioContext

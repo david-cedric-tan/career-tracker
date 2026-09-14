@@ -5,7 +5,6 @@ Django admin stay available for debugging.
 """
 
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
@@ -24,4 +23,19 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Uploads are opened inside the app's own document viewer, which embeds
+    # PDFs in an <iframe>. The clickjacking middleware's default DENY header
+    # makes the browser refuse that frame ("refused to connect"), so media
+    # is served without it — the files are the user's own uploads, not pages
+    # that could be tricked into acting on a click.
+    from django.urls import re_path
+    from django.views.decorators.clickjacking import xframe_options_exempt
+    from django.views.static import serve
+
+    urlpatterns += [
+        re_path(
+            r"^media/(?P<path>.*)$",
+            xframe_options_exempt(serve),
+            {"document_root": settings.MEDIA_ROOT},
+        ),
+    ]

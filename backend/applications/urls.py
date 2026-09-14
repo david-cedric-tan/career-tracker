@@ -6,6 +6,7 @@ from .views import (
     CompanyViewSet,
     CountryViewSet,
     IndustryViewSet,
+    LibraryDocumentViewSet,
     LocationViewSet,
     RoleViewSet,
     StateViewSet,
@@ -27,6 +28,7 @@ router.register(r'roles', RoleViewSet)
 router.register(r'states', StateViewSet)
 router.register(r'venues', VenueViewSet)
 router.register(r'resumes', ResumeViewSet)
+router.register(r'library-documents', LibraryDocumentViewSet)
 router.register(r'job-listings', JobListingViewSet)
 router.register(r'applications', ApplicationViewSet)
 router.register(r'application-job-listings', ApplicationJobListingViewSet)

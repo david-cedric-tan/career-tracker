@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
-from applications.models import Application, ApplicationDocument, Company
+from applications.models import Application, Company, LibraryDocument
 
 U = get_user_model()
 
@@ -41,7 +41,7 @@ class ApplicationDocumentTests(APITestCase):
 
     def test_edit_title_and_description(self):
         self.upload(title="Old")
-        doc = ApplicationDocument.objects.get()
+        doc = LibraryDocument.objects.get()
         r = self.client.patch(
             f"/api/applications/{self.app.id}/documents/{doc.id}/",
             {"title": "New", "description": "Updated"},
@@ -52,15 +52,15 @@ class ApplicationDocumentTests(APITestCase):
 
     def test_delete_removes_the_document(self):
         self.upload(title="Bye")
-        doc = ApplicationDocument.objects.get()
+        doc = LibraryDocument.objects.get()
         r = self.client.delete(f"/api/applications/{self.app.id}/documents/{doc.id}/")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["documents"], [])
-        self.assertFalse(ApplicationDocument.objects.exists())
+        self.assertFalse(LibraryDocument.objects.exists())
 
     def test_cannot_touch_another_users_document(self):
         self.upload(title="Mine")
-        doc = ApplicationDocument.objects.get()
+        doc = LibraryDocument.objects.get()
         self.client.force_authenticate(self.other)
         other_app = Application.objects.create(user=self.other, company=self.company)
         r = self.client.patch(

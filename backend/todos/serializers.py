@@ -10,14 +10,19 @@ class TodoSerializer(serializers.ModelSerializer):
     )
     is_overdue = serializers.BooleanField(read_only=True)
     application_label = serializers.CharField(
-        source="application.company.name", read_only=True, default=None
+        source="application.company.display_name", read_only=True, default=None
     )
     person_name = serializers.CharField(
         source="person.full_name", read_only=True, default=None
     )
     company_name = serializers.CharField(
-        source="company.name", read_only=True, default=None
+        source="company.display_name", read_only=True, default=None
     )
+    # Marks for the calendar's view card — one round-trip, no follow-up
+    # fetches just to draw a face and two logos.
+    application_logo = serializers.SerializerMethodField()
+    person_photo = serializers.SerializerMethodField()
+    company_logo = serializers.SerializerMethodField()
 
     class Meta:
         model = Todo
@@ -26,11 +31,13 @@ class TodoSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "due_date",
+            "due_time",
+            "due_end_time",
             "priority", "priority_display",
             "status", "status_display",
-            "application", "application_label",
-            "person", "person_name",
-            "company", "company_name",
+            "application", "application_label", "application_logo",
+            "person", "person_name", "person_photo",
+            "company", "company_name", "company_logo",
             "is_overdue",
             "position",
             "completed_at",
@@ -40,8 +47,24 @@ class TodoSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "status_display", "priority_display", "is_overdue",
             "application_label", "person_name", "company_name",
+            "application_logo", "person_photo", "company_logo",
             "completed_at", "created_at", "updated_at",
         ]
+
+    def _absolute(self, image):
+        if not image:
+            return None
+        request = self.context.get("request")
+        return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_application_logo(self, todo):
+        return self._absolute(todo.application.company.logo) if todo.application_id else None
+
+    def get_person_photo(self, todo):
+        return self._absolute(todo.person.photo) if todo.person_id else None
+
+    def get_company_logo(self, todo):
+        return self._absolute(todo.company.logo) if todo.company_id else None
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -68,6 +91,27 @@ class TodoSerializer(serializers.ModelSerializer):
 
         title = attrs.get("title", getattr(self.instance, "title", ""))
         due = attrs.get("due_date", getattr(self.instance, "due_date", None))
+        # No date → no clock times. Keeps all-day as the default when the due
+        # date is cleared.
+        if due is None and "due_date" in attrs:
+            attrs["due_time"] = None
+            attrs["due_end_time"] = None
+
+        due_time = attrs.get(
+            "due_time", getattr(self.instance, "due_time", None) if self.instance else None
+        )
+        if due_time is None and ("due_time" in attrs or (due is None and "due_date" in attrs)):
+            attrs["due_end_time"] = None
+
+        due_end = attrs.get(
+            "due_end_time",
+            getattr(self.instance, "due_end_time", None) if self.instance else None,
+        )
+        if due_time is not None and due_end is not None and due_end <= due_time:
+            raise serializers.ValidationError(
+                {"due_end_time": "End time must be after the start time."}
+            )
+
         status = attrs.get("status", getattr(self.instance, "status", TodoStatus.OPEN))
         if status != TodoStatus.OPEN:
             return attrs

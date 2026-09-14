@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Career Tracker v1.2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    /* Neutrals biased a touch toward the product's own blue, so the greys
+       read as chosen rather than inherited. */
+    --ground: #fbfcfe;
+    --raised: #ffffff;
+    --ink: #131a26;
+    --ink-2: #3d4756;
+    --ink-3: #6b7789;
+    --line: #e2e8f1;
+    --line-strong: #cbd5e3;
+    /* Lifted from the app's own tokens (--color-brand and friends). */
+    --accent: #2563eb;
+    --accent-soft: #e8effd;
+    --new: #2563eb;
+    --new-soft: #e8effd;
+    --improved: #0a8a2f;
+    --improved-soft: #e3f5e8;
+    --fixed: #b45309;
+    --fixed-soft: #fdf1e0;
+
+    --measure: 68ch;
+    --step-0: 1rem;
+    --step-1: 1.16rem;
+    --step-2: 1.45rem;
+    --step-3: 2rem;
+    --step-4: 3.05rem;
+  }
+
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ground: #0f151f;
+      --raised: #151d2a;
+      --ink: #e9eef6;
+      --ink-2: #b9c4d4;
+      --ink-3: #8b98ab;
+      --line: #232d3d;
+      --line-strong: #33404f;
+      --accent: #6699ff;
+      --accent-soft: #17233a;
+      --new: #6699ff;
+      --new-soft: #17233a;
+      --improved: #56cc7a;
+      --improved-soft: #122b1b;
+      --fixed: #e0a35c;
+      --fixed-soft: #2c2113;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #0f151f;
+    --raised: #151d2a;
+    --ink: #e9eef6;
+    --ink-2: #b9c4d4;
+    --ink-3: #8b98ab;
+    --line: #232d3d;
+    --line-strong: #33404f;
+    --accent: #6699ff;
+    --accent-soft: #17233a;
+    --new: #6699ff;
+    --new-soft: #17233a;
+    --improved: #56cc7a;
+    --improved-soft: #122b1b;
+    --fixed: #e0a35c;
+    --fixed-soft: #2c2113;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'Public Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: clamp(2rem, 5vw, 4.5rem) clamp(1.15rem, 4vw, 3rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 3.5rem;
+  }
+
+  /* ---------------------------------------------------------- masthead */
+
+  .masthead { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  .eyebrow {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .eyebrow .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--line-strong); }
+
+  h1 {
+    font-family: 'Fraunces', ui-serif, Georgia, serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: var(--step-4);
+    line-height: 1.02;
+    letter-spacing: -0.022em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    max-width: var(--measure);
+    font-size: var(--step-1);
+    color: var(--ink-2);
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  /* ------------------------------------------------------------- stats */
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .stat {
+    padding: 1.15rem 1.25rem 1.15rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .stat b {
+    font-family: 'Fraunces', ui-serif, Georgia, serif;
+    font-size: var(--step-3);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat span {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* -------------------------------------------------------- stage rail */
+
+  .rail-wrap { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .rail-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  .rail { overflow-x: auto; padding-bottom: 0.35rem; }
+
+  .rail ol {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    min-width: max-content;
+  }
+
+  .rail li {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.95rem 0.5rem 0;
+    font-size: 0.88rem;
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+
+  .rail li::after {
+    content: "";
+    width: 1.4rem;
+    height: 1px;
+    background: var(--line-strong);
+    margin-left: 0.35rem;
+  }
+
+  .rail li:last-child::after { display: none; }
+
+  .pip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex: none;
+  }
+
+  .rail li.terminal .pip { background: var(--improved); }
+  .rail li.pending .pip { background: var(--line-strong); }
+
+  .rail li.custom {
+    color: var(--ink-3);
+    font-style: italic;
+  }
+  .rail li.custom .pip {
+    background: transparent;
+    border: 1.5px dashed var(--line-strong);
+  }
+
+  /* ---------------------------------------------------------- sections */
+
+  section { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .section-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  h2 {
+    font-family: 'Fraunces', ui-serif, Georgia, serif;
+    font-weight: 600;
+    font-size: var(--step-2);
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .section-head p {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--ink-3);
+    font-size: 0.94rem;
+  }
+
+  .entries { display: flex; flex-direction: column; }
+
+  .entry {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.35rem 1.25rem;
+    padding: 1.05rem 0;
+    border-bottom: 1px solid var(--line);
+    align-items: start;
+  }
+
+  .entry:last-child { border-bottom: none; }
+
+  .tag {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    padding: 0.24rem 0.5rem;
+    border-radius: 3px;
+    justify-self: start;
+    margin-top: 0.15rem;
+    white-space: nowrap;
+  }
+
+  .tag.new { color: var(--new); background: var(--new-soft); }
+  .tag.improved { color: var(--improved); background: var(--improved-soft); }
+  .tag.fixed { color: var(--fixed); background: var(--fixed-soft); }
+
+  .entry h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.005em;
+  }
+
+  .entry p {
+    grid-column: 2;
+    margin: 0.3rem 0 0;
+    max-width: var(--measure);
+    color: var(--ink-2);
+    font-size: 0.94rem;
+    text-wrap: pretty;
+  }
+
+  .entry .why {
+    grid-column: 2;
+    margin: 0.5rem 0 0;
+    padding-left: 0.85rem;
+    border-left: 2px solid var(--line-strong);
+    color: var(--ink-3);
+    font-size: 0.89rem;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.86em;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 0.08em 0.34em;
+    border-radius: 3px;
+  }
+
+  /* ------------------------------------------------------------- close */
+
+  .colophon {
+    border-top: 1px solid var(--line);
+    padding-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    color: var(--ink-3);
+    font-size: 0.9rem;
+    max-width: var(--measure);
+  }
+
+  .colophon b { color: var(--ink-2); font-weight: 600; }
+
+  /* ------------------------------------------------------------ figures */
+
+  .shot {
+    margin: 0.35rem 0 0.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    /* The app's own chrome is light; a faint ring keeps the edge legible on
+       the dark ground without inventing a frame. */
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  }
+
+  .shot figcaption {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* A figure inside an entry spans the full width, not just the text column. */
+  .entry .shot { grid-column: 2; max-width: 46rem; }
+  @media (max-width: 34rem) { .entry .shot { grid-column: 1; } }
+
+  /* The lead image sits between the stats and the first section. */
+  .hero-shot { max-width: none; }
+  .hero-shot img { border-radius: 10px; }
+
+  @media (max-width: 34rem) {
+    .entry { grid-template-columns: 1fr; }
+    .entry h3, .entry p, .entry .why { grid-column: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <p class="eyebrow">Career Tracker <span class="dot"></span> Release notes <span class="dot"></span> v1.2</p>
+      <h1>File Directory, calendar depth, short names, and LAN HTTPS</h1>
+      <p class="standfirst">
+        Everything since the v1.1 waiting-state / documents / network baseline: one document home,
+        company short names end-to-end, a calendar that carries deadlines and stage history,
+        catch-up cards with last-messaged separate from last-met, aligned bubble screens,
+        one upload and viewer pattern, ticket notifications both ways, and a home-network HTTPS path
+        so weather and installs work on other devices on the same Wi-Fi.
+      </p>
+    </header>
+
+    <div class="stats">
+      <div class="stat"><b>180</b><span>files touched</span></div>
+      <div class="stat"><b>+18k</b><span>lines (approx.)</span></div>
+      <div class="stat"><b>v1.1</b><span>baseline commit</span></div>
+      <div class="stat"><b>LAN</b><span>https ready</span></div>
+    </div>
+
+    <div class="rail-wrap">
+      <p class="rail-label">What this release is for</p>
+      <div class="rail"><ol>
+        <li><span class="pip"></span> Keep documents findable</li>
+        <li><span class="pip"></span> Say company names the short way</li>
+        <li><span class="pip"></span> See the hunt on a calendar</li>
+        <li><span class="pip"></span> Share the Mac over home Wi-Fi</li>
+        <li class="terminal"><span class="pip"></span> Ship the working tree</li>
+      </ol></div>
+    </div>
+
+    <section>
+      <div class="section-head">
+        <h2>File Directory</h2>
+        <p>Resumes become a single place for every document you keep for the job hunt.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>File Directory replaces Resumes</h3>
+        <p>Nav item is File Directory (<code>/files</code>). Old <code>/resumes</code> bookmarks redirect to the Resume Files tab. Application documents move into a shared library; resumes stay as their own file type.</p>
+        <p class="why">One screen instead of splitting docs on the application from resume versions.</p>
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>All / Application Files / Resume Files</h3>
+        <p>Three tabs. <b>All</b> mixes both, with Recent / Oldest / Name sort. Application Files keeps Linked / General / tag filters. Resume Files keeps Active, variant type, and Archived.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/file-directory.jpg" alt="File Directory — Application Files with company chips and search">
+          <figcaption>File Directory — Application Files with company chips and search</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Scoped search on every tab</h3>
+        <p>Same search bar style as Network and Applications. All searches both kinds; Application Files only library docs; Resume Files only resumes. Query sticks in the URL.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Link a file to an application, a company, or neither</h3>
+        <p>Upload form uses Nothing / An application / A company. Company-linked files show a short-name chip with logo. General files use tags.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Smaller cards, counts instead of walls of chips</h3>
+        <p>Resume cards show N applications · N roles · N companies. Hover (or focus) lists them with logos. Uniform card size across the grid.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Thumbnails, comments, downloads by label</h3>
+        <p>PDF/Word thumbnails on cards (cached after first render). Viewer has a comments panel that saves to resume notes or file description. Downloads save as the label/title plus the real extension. Editable File name is reference-only.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag fixed">fixed</span>
+        <h3>PDF preview reliability</h3>
+        <p>pdf.js no longer fights React StrictMode on one canvas. Media embeds no longer send <code>X-Frame-Options: DENY</code>, so in-app PDF reading works over the LAN HTTPS proxy.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Company names everywhere</h2>
+        <p>Short form is the default label. Full legal name stays for search and tooltips.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>display_name at the source</h3>
+        <p>Backend <code>Company.display_name</code> prefers short_name, then name. Serializers for applications, listings, event logs, network, catch-ups, todos, calendar, experiences, dashboard, and mentions all use it.</p>
+        <p class="why">Stops every screen inventing its own truncation.</p>
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Pickers and chips</h3>
+        <p>Company pickers show short name + logo; full name is searchable but not drawn. Shared <code>CompanyChip</code> with looser padding and a larger mark. Add firm on Log application offers a short-name field when missing (suggested acronym).</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/company-chip.png" alt="Company chip — short name, visible logo">
+          <figcaption>Company chip — short name, visible logo</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Clickable company surfaces + Back</h3>
+        <p>Network cards, bubbles, catch-up tags, and File Directory chips link to the company page. Back restores the previous list/filter/popup state via remembered <code>from</code>.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Applications</h2>
+        <p>Waiting, bubbles, and outcomes line up with how you actually track firms.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Bubble modes</h3>
+        <p>Bubbles first and default. Modes: Current, Last Stage Reached, By Region. Accepted and Rejected sit as outcome cards after Offer rather than fake stages.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/applications-bubbles.png" alt="Applications bubbles">
+          <figcaption>Applications bubbles</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Waiting for response</h3>
+        <p>Waiting is tied to a stage you choose and can edit. Marking done is logged. Badge contrast fixed. Wrong-stage waiting corrected.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Title Case labels system-wide</h3>
+        <p>Assessment Center, Video Interview, Online Assessment, No Region Tagged, catch-up formats, relationship labels — first letter of each word.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Offers tile</h3>
+        <p>Dashboard Offers opens applications with outcome Offer received or Accepted (matches the stat).</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Got a reply / history notes</h3>
+        <p>Reply flow surfaces outcome context. Notes use the same resizable rich-text controls as the rest of the app.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Calendar</h2>
+        <p>More of your pipeline lands on the calendar, colour-coded, with a read view first.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Week and day timelines</h3>
+        <p>Month, week, and day views. Expand all / collapse all for +more rows. Reorder within a day. Drag across days (all-day moves silently; timed opens edit).</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Catch-ups, deadlines, stage moves</h3>
+        <p>Catch-ups appear on the day they happened. Application deadlines use urgency colours and company logos. Stage/outcome log entries appear on the day they were recorded. Each family is a toggle in Show.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Colour legend + timed ranges</h3>
+        <p>Filter chips double as the legend. Timed items show start–end on the chip.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/calendar.png" alt="Calendar with colour-coded domains">
+          <figcaption>Calendar with colour-coded domains</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Read card before edit</h3>
+        <p>Click opens a view card (date, badges, Linked to with logos/photos, notes). Edit is a separate button. Faces and company marks link out with Back restoring the popup.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Todo description hint</h3>
+        <p>Subtitle removed; description help text: use @ to link an application, person, or company.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Catch-ups and contacts</h2>
+        <p>Cards for scanning, last met vs last messaged, and photo-backed pickers.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Cards view (default, stateful)</h3>
+        <p>Face, name, company chip, meet-up details, label strip with format icon, View minutes. Filters and search live in the URL.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/catchups.png" alt="Catch-up cards">
+          <figcaption>Catch-up cards</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Last met vs last messaged</h3>
+        <p>Messages format updates last messaged + channel (LinkedIn / Email / Text / Other) only — does not change last met, does not roll next chat, does not appear on the calendar. Other formats still update last met. Both dates clearable and nullable on the person form.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Format and person pickers</h3>
+        <p>Icon chip row for formats (shared in form and filters). Who did you meet shows photos. Dead subtitles removed.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Network and Job Directory</h2>
+        <p>Bubbles align; industries get out of the way; Places remembers All Places first.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Network bubbles and legend</h3>
+        <p>Dense packing matches Job Directory. Legend (No longer here / Recruiter / Interviewer) sits in a glass pill so it stays readable on any wallpaper. Company hubs and chips link through.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/network.png" alt="Network bubbles">
+          <figcaption>Network bubbles</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Companies tab like Network</h3>
+        <p>No wrapping card. Toolbar on the page; industry rings full width. Industries managed from a modal. Roles collapse to N roles listed with a proper popover. Places defaults to All Places, listed first, stateful.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/job-directory.png" alt="Job Directory company rings">
+          <figcaption>Job Directory company rings</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Job Directory copy</h3>
+        <p>Long subtitles moved into info hints. Header shows how many companies are logged.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Documents, profile, uploads</h2>
+        <p>One viewer and one upload gesture across the app.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>In-app DocumentViewer</h3>
+        <p>Blur modal, thumbnails, paper size, download, comments. Read vs Original kept for Word/text; removed for PDF/image so links stay clickable.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>UploadDialog everywhere</h3>
+        <p>Pick → preview → save. Photos, logos, school/issuer icons, resumes, library files, education/cert/extra-curricular attachments, experience photos. Zones that accept either kind use one combined mark (photo + document + plus).</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/upload.png" alt="Shared upload dialog">
+          <figcaption>Shared upload dialog</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Upload zone motion</h3>
+        <p>Radar brand pulse on empty attach panels. Plus (and paperclip) idle spin; hover stops the idle motion, grows and thickens the mark.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Profile attachments parity</h3>
+        <p>Education, certifications, extra-curriculars match experience: icons, attachment galleries, same viewer. Image change is a popup with current → new preview.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/profile.png" alt="Profile / attachments">
+          <figcaption>Profile / attachments</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Preferred name</h3>
+        <p>Profile preferred name feeds the nav and Hi greeting (falls back to first name).</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Mentions, rich text, filters</h2>
+        <p>What you type is what you see after save.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag fixed">fixed</span>
+        <h3>Bold/italic across line breaks</h3>
+        <p>Markers that spanned a newline used to show raw markers after save. Inline formatting now runs across the whole paragraph.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>@mentions as links</h3>
+        <p>Resolved people/companies/applications/places render with face/logo/pin and Back-aware links. Commas inside venue tags no longer split the mention.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>FilterDrawer</h3>
+        <p>Calendar Show, Catch-up Format, File Directory filters fold behind one button. Phones unfold down; desktop unfolds sideways with a springy chip animation. Open state remembered per page.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Dashboard, notifications, developer mode</h2>
+        <p>Tickets ring both ways; calendar reminders behave like before; mobile stops stretching.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Waiting badge on company panel</h3>
+        <p>Amber clock when a live application is waiting — beside green offer and red reject.</p>
+        
+        
+        <figure class="shot">
+          <img src="releasenotes-shots/dashboard.png" alt="Dashboard">
+          <figcaption>Dashboard</figcaption>
+        </figure>
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Region map on phones</h3>
+        <p>Pinch-to-zoom, larger zoom controls, global min-width fixes so maps and bubbles no longer blow out horizontal scroll.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Ticket notifications both directions</h3>
+        <p>Background watcher (~6s, also on tab focus). New tickets, chat both ways, status moves. Own actions do not notify you. Tickets feed is separate from the everyday bell. Clear all respects the active feed.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>Done requires a reply</h3>
+        <p>Developer Done opens What changed? and only closes via Mark done and reply.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Talk to a Dev</h3>
+        <p>Dev mode on by default. Quick-access rung only while Dev mode is on. Floating secondary launcher removed. Tools icon on log and ticket alerts. Phone log is a near-full-screen sheet.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Notification banners</h3>
+        <p>Fixed dark card with white text on every theme, rotating colour rim and breathing shadow. Calendar ding rings twice; deep-links open the item popup.</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>LAN hosting and appearance</h2>
+        <p>Same Wi-Fi access without pretending this is a public deploy.</p>
+      </div>
+      <div class="entries">
+        
+      <article class="entry">
+        <span class="tag new">new</span>
+        <h3>./run.sh local and ./run.sh lan --https</h3>
+        <p>One script for both servers. LAN mode binds to the Mac IP. HTTPS uses mkcert when available so geolocation/weather work on other devices.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag fixed">fixed</span>
+        <h3>Media URLs over HTTPS</h3>
+        <p>Vite proxies forward <code>X-Forwarded-Proto</code>; Django trusts it so photo/logo URLs are https and Windows no longer blocks them as mixed content.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Access log</h3>
+        <p>Coloured API lines with username and client IP.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag improved">improved</span>
+        <h3>Appearance defaults</h3>
+        <p>Calibri / Times New Roman, Rouge theme, login liquid-glass defaults, location permission prompt with insecure-origin guidance.</p>
+        
+        
+      </article>
+      <article class="entry">
+        <span class="tag fixed">fixed</span>
+        <h3>Known: CSRF on login from another device (HTTPS LAN)</h3>
+        <p>Same-origin HTTPS proxy sends session cookies; login also creates a Django session while the SPA only uses tokens and never sends a CSRF header. Symptom: 403 CSRF token missing on <code>/api/auth/login/</code>. Workaround: clear site cookies or use a private window. Proper fix still outstanding (stop session login for token auth, or drop SessionAuthentication for the API).</p>
+        
+        
+      </article>
+      </div>
+    </section>
+
+    <footer class="colophon">
+      <p><b>Baseline.</b> Diff is against commit <code>adfbc94</code> (v1.1: waiting state, supporting documents, network history, dashboard polish) on branch <code>feat/v1.1</code>.</p>
+      <p><b>How to open this page.</b> Open <code>releasenotes.html</code> next to the <code>releasenotes-shots/</code> folder so the figures load (file:// or any static server).</p>
+      <p><b>Hosting note.</b> Prefer <code>./run.sh lan --https</code> with <code>mkcert -install</code> on the Mac, then trust the CA once on each other device. Plain HTTP on a LAN IP will block location.</p>
+    </footer>
+  </div>
+</body>
+</html>

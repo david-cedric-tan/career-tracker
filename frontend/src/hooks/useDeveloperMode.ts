@@ -5,11 +5,13 @@ const EVENT = 'developer-mode-change'
 
 function read(): boolean {
   try {
-    return localStorage.getItem(KEY) === '1'
+    // On unless explicitly switched off — talking to the developer should
+    // be there from the first visit, not something to discover in Settings.
+    return localStorage.getItem(KEY) !== '0'
   } catch {
     // Private windows and blocked site data throw on access rather than
-    // returning null, so the mode simply stays off.
-    return false
+    // returning null; default to on there too.
+    return true
   }
 }
 

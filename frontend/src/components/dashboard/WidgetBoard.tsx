@@ -5,9 +5,12 @@ import { useAuth } from '../../auth/context'
 import { cx } from '../../lib/format'
 import {
   DEFAULT_WIDGETS,
+  HEIGHTS,
+  HEIGHT_CLASS,
   SPAN_CLASS,
   SPANS,
   WIDGET_META,
+  type WidgetHeight,
   type WidgetId,
   type WidgetSpan,
 } from '../../lib/widgets'
@@ -31,6 +34,7 @@ type Layout = {
   order: WidgetId[]
   hidden: WidgetId[]
   spans: Partial<Record<WidgetId, WidgetSpan>>
+  heights: Partial<Record<WidgetId, WidgetHeight>>
 }
 
 /** Per-user, so two accounts on one machine don't share a board. */
@@ -43,6 +47,7 @@ function defaultLayout(): Layout {
     order: ALL_WIDGETS,
     hidden: ALL_WIDGETS.filter((id) => !DEFAULT_WIDGETS.includes(id)),
     spans: {},
+    heights: {},
   }
 }
 
@@ -62,12 +67,24 @@ function normalise(parsed: Partial<Layout> | null): Layout {
     }
   }
 
+  const heights: Partial<Record<WidgetId, WidgetHeight>> = {}
+  for (const [id, height] of Object.entries(parsed.heights ?? {})) {
+    if (id in WIDGET_META && HEIGHTS.includes(height as WidgetHeight)) {
+      heights[id as WidgetId] = height as WidgetHeight
+    }
+  }
+
   // Widgets added in a later release aren't in the stored order yet — the
   // defaults join the visible board, anything else starts in the Hidden tray
   // so it stays discoverable without crowding an existing arrangement.
   const missing = ALL_WIDGETS.filter((id) => !order.includes(id) && !hidden.includes(id))
   const newlyHidden = missing.filter((id) => !DEFAULT_WIDGETS.includes(id))
-  return { order: [...order, ...missing], hidden: [...hidden, ...newlyHidden], spans }
+  return {
+    order: [...order, ...missing],
+    hidden: [...hidden, ...newlyHidden],
+    spans,
+    heights,
+  }
 }
 
 function readLocal(userId: number | null): Layout | null {
@@ -80,7 +97,7 @@ function readLocal(userId: number | null): Layout | null {
 }
 
 /**
- * The dashboard board (FR-WIDGET-*): every panel is a widget that can be
+ * The dashboard board: every panel below the four headline stats can be
  * moved, resized, hidden and brought back.
  *
  * Drag to move, or use the arrow buttons — drag is never the only way to
@@ -232,7 +249,6 @@ export function WidgetBoard({
 
       const reordered = [...visible]
       reordered.splice(to, 0, ...reordered.splice(from, 1))
-      // Keep hidden widgets in the stored order so unhiding restores a place.
       persist({
         ...layout,
         order: [...reordered, ...layout.order.filter((e) => layout.hidden.includes(e))],
@@ -272,6 +288,15 @@ export function WidgetBoard({
       const target = (layout.spans[id] ?? WIDGET_META[id].span) + delta
       if (target < 1 || target > 4) return
       persist({ ...layout, spans: { ...layout.spans, [id]: target as WidgetSpan } })
+    },
+    [layout, persist],
+  )
+
+  const restack = useCallback(
+    (id: WidgetId, delta: number) => {
+      const target = (layout.heights[id] ?? 1) + delta
+      if (target < 1 || target > 4) return
+      persist({ ...layout, heights: { ...layout.heights, [id]: target as WidgetHeight } })
     },
     [layout, persist],
   )
@@ -332,6 +357,7 @@ export function WidgetBoard({
         {visible.map((id, index) => {
           const meta = WIDGET_META[id]
           const span = layout.spans[id] ?? meta.span
+          const height = layout.heights[id] ?? 1
           const controls = editing ? (
             <span className="flex shrink-0 items-center gap-0.5">
               <button
@@ -376,6 +402,33 @@ export function WidgetBoard({
               >
                 <Icon name="plus" size={13} />
               </button>
+              <span className="mx-0.5 h-3.5 w-px bg-line" />
+              {/* Height, in the same steps as width. A pinned photo or the
+                  map is worth more room vertically, which widening alone
+                  can't give it. */}
+              <button
+                type="button"
+                onClick={() => restack(id, -1)}
+                disabled={height <= 1}
+                aria-label={`Make ${meta.label} shorter`}
+                title="Shorter"
+                className="rounded p-0.5 text-ink-3 hover:bg-surface-2 hover:text-ink disabled:opacity-30"
+              >
+                <Icon name="chevronUp" size={13} />
+              </button>
+              <span className="w-3 text-center text-[10.5px] tabular-nums text-ink-3">
+                {height}
+              </span>
+              <button
+                type="button"
+                onClick={() => restack(id, 1)}
+                disabled={height >= 4}
+                aria-label={`Make ${meta.label} taller`}
+                title="Taller"
+                className="rounded p-0.5 text-ink-3 hover:bg-surface-2 hover:text-ink disabled:opacity-30"
+              >
+                <Icon name="chevronDown" size={13} />
+              </button>
               <button
                 type="button"
                 onClick={() => toggle(id)}
@@ -394,7 +447,6 @@ export function WidgetBoard({
               onPointerDown={startHold}
               onPointerUp={cancelHold}
               onPointerLeave={cancelHold}
-              // Any real movement means a scroll or a drag, not a hold.
               onPointerMove={cancelHold}
               onDragStart={() => setDragging(id)}
               onDragOver={(event) => {
@@ -405,38 +457,28 @@ export function WidgetBoard({
               className={cx(
                 'relative flex flex-col',
                 SPAN_CLASS[span],
-                // Transform and shadow as well as opacity, so a tile lifts off
-                // the board while it's held rather than just fading.
+                HEIGHT_CLASS[height],
                 'transition-[opacity,transform,box-shadow] duration-200 ease-out',
                 dragging === id
                   ? 'scale-[0.97] opacity-60 shadow-lg'
                   : 'scale-100 opacity-100',
-                // Everything else slides aside rather than jumping, which is
-                // what makes a drop read as rearranging instead of redrawing.
                 dragging !== null && dragging !== id && 'transition-transform',
                 editing && 'cursor-grab active:cursor-grabbing',
-                // Suppresses the OS text-selection and callout that a long
-                // press would otherwise trigger mid-hold.
                 editing && 'select-none',
-                // A `bare` widget brings its own Card; everything else gets
-                // the board's own tile chrome.
                 !meta.bare &&
-                  'rounded-card border bg-surface p-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] intern:backdrop-blur-xl',
+                  'glass-panel rounded-card border bg-surface p-3.5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]',
                 !meta.bare && (editing ? 'border-dashed border-brand-ring' : 'border-line'),
                 meta.bare && editing && 'rounded-card ring-1 ring-dashed ring-brand-ring',
               )}
             >
               {meta.bare ? (
                 <>
-                  {/* Floats on the card's top edge rather than inside it — a
-                      panel's own header action (the chart/table toggle)
-                      already lives in that corner. */}
                   {editing ? (
                     <div className="absolute -top-3 right-3 z-10 flex items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-1 shadow-md">
                       {controls}
                     </div>
                   ) : null}
-                  <div className="flex-1">{render(id)}</div>
+                  <div className="min-h-0 flex-1">{render(id)}</div>
                 </>
               ) : (
                 <>
@@ -447,7 +489,7 @@ export function WidgetBoard({
                     </h3>
                     {controls}
                   </div>
-                  <div className="flex-1">{render(id)}</div>
+                  <div className="min-h-0 flex-1">{render(id)}</div>
                 </>
               )}
             </li>
@@ -491,7 +533,6 @@ export function WidgetBoard({
     </section>
   )
 }
-
 
 /** A keycap, so the shortcut reads as a key rather than as a word. */
 function Key({ children }: { children: ReactNode }) {

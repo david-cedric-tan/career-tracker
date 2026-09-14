@@ -1,0 +1,36 @@
+---
+description: Keep Profile page left/right columns in a sensible fixed story order
+globs: frontend/src/pages/ProfilePage.tsx,frontend/src/components/profile/**/*.tsx,frontend/src/components/ExperiencePanel.tsx
+alwaysApply: false
+---
+
+# Profile two-column layout
+
+`ProfilePage` uses a **fixed** `lg:grid-cols-2` story order. Do not auto-pack
+or shuffle panels by height — that made the page unreadable. Columns may
+stretch to equal height (`items-stretch`); content order must stay intentional.
+
+## Required order
+
+| Left | Right |
+|------|--------|
+| Identity | Experience |
+| Addresses | Certifications |
+| Education | Extra-curriculars |
+| — | Links |
+
+## When you add a panel
+
+1. Personal / location / school → **left**, under Identity (Addresses stays
+   directly under Identity). Education rows use a leading school logo mark
+   (like Experience’s company logo) so the two stacks feel balanced.
+2. Career / credentials / extras → **right**, under Experience in a sensible
+   sequence (certs before extracurriculars before links).
+3. Prefer this story over equalising column length. A taller right column is
+   fine.
+
+## Avoid
+
+- Measure-and-pack / masonry that moves panels between columns
+- Dumping every new section under Identity on the left
+- Balancing Settings with this rule unless it shares the same panel pattern

@@ -71,6 +71,17 @@ export function removeWallpaper(): Promise<User> {
   return api<User>('/auth/me/wallpaper/', { method: 'DELETE' })
 }
 
+export function uploadPinnedPhoto(file: Blob, caption = ''): Promise<User> {
+  const body = new FormData()
+  body.append('photo', file, file instanceof File ? file.name : 'pinned.jpg')
+  if (caption) body.append('caption', caption)
+  return api<User>('/auth/me/pinned-photo/', { method: 'POST', body })
+}
+
+export function removePinnedPhoto(): Promise<User> {
+  return api<User>('/auth/me/pinned-photo/', { method: 'DELETE' })
+}
+
 /** Clears everything the account tracks; the account itself survives.
     `confirm` is required server-side so this can't fire on a stray POST. */
 export function deleteAllData(): Promise<{ deleted: Record<string, number> }> {

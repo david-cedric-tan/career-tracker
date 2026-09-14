@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { applications, companies, jobListings, resumes, roles } from '../api/resources'
 import type { Application, ApplicationChoices, Company, JobListing, Resume, Role } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
+import { useFormDirty } from '../hooks/useFormDirty'
 import { movedForward } from '../lib/pipeline'
 import { Button } from './ui/Button'
 import { Combobox, MultiSelect, type Option } from './ui/Combobox'
@@ -11,6 +12,7 @@ import { MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { useToast } from './ui/toast-context'
 import { today } from '../lib/format'
+import { companyOption } from '../lib/company'
 
 type Props = {
   open: boolean
@@ -62,6 +64,12 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
   const [listings, setListings] = useState<JobListing[]>([])
   const [creatingListing, setCreatingListing] = useState(false)
   const [newRole, setNewRole] = useState<number | null>(null)
+  // Offered when the chosen firm has no short form yet — "CBA" for
+  // Commonwealth Bank — since this is where most companies first get logged
+  // and the short name is what every card, bubble and chip then shows.
+  const [shortName, setShortName] = useState('')
+  const dirty = useFormDirty({ form, listingIds, shortName })
+  const guardedCloseRef = useRef<(() => void) | null>(null)
 
   // Load the pickers once the dialog mounts, not on every page render.
   useEffect(() => {
@@ -78,18 +86,23 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
     })
   }, [])
 
-  // FR-APP-03: only this company's listings can be attached.
-  const companyListings = useMemo<Option[]>(
-    () =>
-      listings
-        .filter((listing) => listing.company === form.company)
-        .map((listing) => ({
-          id: listing.id,
-          label: listing.role_name,
-          hint: listing.location_name ?? undefined,
-        })),
-    [listings, form.company],
-  )
+  // FR-APP-03: only this company's listings can be attached. Each row shows
+  // the company's mark and links through to the listing, so "is this the
+  // right posting?" is one click rather than a separate trip to the
+  // Job Directory.
+  const companyListings = useMemo<Option[]>(() => {
+    const logo = companyOptions.find((row) => row.id === form.company)?.logo ?? null
+    return listings
+      .filter((listing) => listing.company === form.company)
+      .map((listing) => ({
+        id: listing.id,
+        label: listing.role_name,
+        hint: listing.location_name ?? undefined,
+        avatar: logo,
+        avatarShape: 'square' as const,
+        to: `/job-directory/listings/${listing.id}`,
+      }))
+  }, [listings, form.company, companyOptions])
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
@@ -145,6 +158,12 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
     }
 
     try {
+      if (selectedCompany && !selectedCompany.short_name && shortName.trim()) {
+        const updated = await companies.update(selectedCompany.id, {
+          short_name: shortName.trim(),
+        })
+        setCompanyOptions((prev) => prev.map((row) => (row.id === updated.id ? updated : row)))
+      }
       const saved = existing
         ? await applications.update(existing.id, payload)
         : await applications.create(payload)
@@ -165,11 +184,14 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
   }
 
   const stageChanged = existing ? form.stage !== existing.stage || form.outcome !== existing.outcome : false
+  const selectedCompany = companyOptions.find((row) => row.id === form.company) ?? null
 
   return (
     <Modal
       open={open}
       onClose={onClose}
+      dirty={dirty}
+      guardedCloseRef={guardedCloseRef}
       size="lg"
       title={existing ? 'Edit application' : 'Log an application'}
       description={
@@ -179,7 +201,7 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
       }
       footer={
         <>
-          <Button type="button" onClick={onClose}>
+          <Button type="button" onClick={() => guardedCloseRef.current?.()}>
             Cancel
           </Button>
           <Button type="submit" form="application-form" variant="primary" loading={saving}>
@@ -200,12 +222,7 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
           required
           value={form.company}
           error={errors.company}
-          options={companyOptions.map((company) => ({
-            id: company.id,
-            label: company.name,
-            avatar: company.logo,
-            avatarShape: 'square' as const,
-          }))}
+          options={companyOptions.map(companyOption)}
           onChange={(id) => {
             set('company', id)
             setListingIds([])
@@ -215,11 +232,21 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
             setCompanyOptions((prev) =>
               prev.some((entry) => entry.id === created.id) ? prev : [...prev, created],
             )
-            return { id: created.id, label: created.name }
+            return companyOption(created)
           }}
           placeholder="Search or add a company…"
           help="Not in the list? Type a name and create it inline."
         />
+
+        {selectedCompany && !selectedCompany.short_name ? (
+          <Input
+            label="Short name"
+            value={shortName}
+            onChange={(event) => setShortName(event.target.value)}
+            placeholder={`e.g. ${suggestShortName(selectedCompany.name)}`}
+            help={`Optional — how ${selectedCompany.name} is shown on cards, bubbles and tags.`}
+          />
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Select
@@ -251,7 +278,7 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
         {stageChanged ? (
           <Input
             label="What changed?"
-            placeholder="e.g. Invited to the assessment centre"
+            placeholder="e.g. Invited to the Assessment Center"
             value={form.event_note}
             onChange={(event) => set('event_note', event.target.value)}
             help="Saved with this transition in the application’s history."
@@ -319,7 +346,7 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
                 ? 'No listings for this company yet — add one below.'
                 : 'Pick a company first.'
             }
-            help="One application can cover several roles at the same company."
+            help="One application can cover several roles at the same company. Open one with → to check the posting."
           />
           {errors.listing_ids ? (
             <p className="mt-1 text-[12px] text-critical">{errors.listing_ids}</p>
@@ -361,4 +388,11 @@ function ApplicationFormBody({ open, onClose, onSaved, choices, existing }: Prop
       </form>
     </Modal>
   )
+}
+
+/** "Commonwealth Bank of Australia" -> "CBA"; a one-word name stays as is. */
+function suggestShortName(name: string): string {
+  const words = name.split(/\s+/).filter((word) => /^[A-Za-z]/.test(word) && !/^(of|and|the|&)$/i.test(word))
+  if (words.length < 2) return name
+  return words.map((word) => word[0]!.toUpperCase()).join('')
 }

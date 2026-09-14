@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import { cx } from '../../lib/format'
 import { Avatar } from './Avatar'
 import { Icon } from './Icon'
@@ -9,11 +10,23 @@ export type Option = {
   id: number
   label: string
   hint?: string
+  /** Keep the hint for matching only — don't render it on the row. */
+  hintHidden?: boolean
+  /** Adds an "open this record" link at the end of the row (MultiSelect). */
+  to?: string
   /** Optional mark for the row — a person's photo or a company's logo. Falls
       back to initials, so a row never renders an empty hole. */
   avatar?: string | null
   /** Logos are square, faces are round. */
   avatarShape?: 'circle' | 'square'
+}
+
+/** Label or hint — so a company shown as "IBM" is still found by typing "International". */
+function optionMatches(option: Option, needle: string): boolean {
+  return (
+    option.label.toLowerCase().includes(needle) ||
+    Boolean(option.hint && option.hint.toLowerCase().includes(needle))
+  )
 }
 
 /**
@@ -67,7 +80,7 @@ export function Combobox({
     const needle = query.trim().toLowerCase()
     if (!needle) return options.slice(0, 50)
     return options
-      .filter((option) => option.label.toLowerCase().includes(needle))
+      .filter((option) => optionMatches(option, needle))
       .slice(0, 50)
   }, [options, query])
 
@@ -159,7 +172,17 @@ export function Combobox({
           }}
         >
           {selected && !query ? (
-            <span className="flex min-w-0 items-center gap-1 rounded-md bg-brand-soft px-1.5 py-0.5 text-[13px] font-medium text-brand-strong">
+            <span className="flex min-w-0 items-center gap-1.5 rounded-md bg-brand-soft py-0.5 pl-1 pr-1.5 text-[13px] font-medium text-brand-strong">
+              {/* A face, not just a name — the same mark the list rows use, so
+                  what you picked looks like what you picked it from. */}
+              {selected.avatar !== undefined ? (
+                <Avatar
+                  name={selected.label}
+                  src={selected.avatar}
+                  size="xxs"
+                  shape={selected.avatarShape ?? 'circle'}
+                />
+              ) : null}
               <span className="truncate">{selected.label}</span>
               <button
                 type="button"
@@ -189,7 +212,9 @@ export function Combobox({
             required={required && !selected}
             value={query}
             placeholder={selected ? '' : placeholder}
-            onFocus={() => setOpen(true)}
+            // Deliberately no `onFocus` open: an autofocused picker would
+            // throw the whole catalog over the form before you've asked for
+            // anything. Clicking the field, typing, or ArrowDown opens it.
             onChange={(event) => {
               setQuery(event.target.value)
               setOpen(true)
@@ -232,7 +257,7 @@ export function Combobox({
                     />
                   ) : null}
                   <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                  {option.hint ? (
+                  {option.hint && !option.hintHidden ? (
                     <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
                       {option.hint}
                     </span>
@@ -305,6 +330,7 @@ export function MultiSelect({
   searchPlaceholder?: string
 }) {
   const [query, setQuery] = useState('')
+  const location = useLocation()
 
   function toggle(id: number) {
     onChange(value.includes(id) ? value.filter((entry) => entry !== id) : [...value, id])
@@ -312,7 +338,7 @@ export function MultiSelect({
 
   const needle = query.trim().toLowerCase()
   const visible = needle
-    ? options.filter((option) => option.label.toLowerCase().includes(needle))
+    ? options.filter((option) => optionMatches(option, needle))
     : options
   // Ticked-but-filtered-out entries stay ticked (the value is untouched),
   // they just don't render — so a search never silently drops a selection.
@@ -348,35 +374,51 @@ export function MultiSelect({
           <p className="px-2 py-3 text-center text-[13px] text-ink-3">No matches.</p>
         ) : (
           visible.map((option) => (
-            <label
+            // The link sits beside the label rather than inside it: a click
+            // anywhere in a <label> toggles its checkbox, which would tick
+            // the row on the way out to the record you asked to open.
+            <div
               key={option.id}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-ink transition-colors hover:bg-surface-2"
+              className="flex items-center rounded-lg transition-colors hover:bg-surface-2"
             >
-              <input
-                type="checkbox"
-                checked={value.includes(option.id)}
-                onChange={() => toggle(option.id)}
-                className="size-4 shrink-0 cursor-pointer rounded border-line-strong accent-[var(--color-brand)]"
-              />
-              {option.avatar !== undefined ? (
-                <Avatar
-                  name={option.label}
-                  src={option.avatar}
-                  size="xs"
-                  shape={option.avatarShape ?? 'circle'}
+              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 px-2 py-1.5 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  checked={value.includes(option.id)}
+                  onChange={() => toggle(option.id)}
+                  className="size-4 shrink-0 cursor-pointer rounded border-line-strong accent-[var(--color-brand)]"
                 />
+                {option.avatar !== undefined ? (
+                  <Avatar
+                    name={option.label}
+                    src={option.avatar}
+                    size="xs"
+                    shape={option.avatarShape ?? 'circle'}
+                  />
+                ) : null}
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {/* Capped and truncating rather than `shrink-0`: a long hint used
+                    to win the fight for width and squeeze the name down to an
+                    ellipsis, which is backwards — the name is the thing you're
+                    picking by. */}
+                {option.hint && !option.hintHidden ? (
+                  <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
+                    {option.hint}
+                  </span>
+                ) : null}
+              </label>
+              {option.to ? (
+                <Link
+                  to={option.to}
+                  state={{ from: `${location.pathname}${location.search}` }}
+                  title={`Open ${option.label}`}
+                  aria-label={`Open ${option.label}`}
+                  className="mr-1 shrink-0 rounded-md p-1.5 text-ink-3 transition-colors hover:bg-surface hover:text-brand"
+                >
+                  <Icon name="arrowRight" size={13} />
+                </Link>
               ) : null}
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-              {/* Capped and truncating rather than `shrink-0`: a long hint used
-                  to win the fight for width and squeeze the name down to an
-                  ellipsis, which is backwards — the name is the thing you're
-                  picking by. */}
-              {option.hint ? (
-                <span className="min-w-0 max-w-[45%] shrink truncate text-[11px] text-ink-3">
-                  {option.hint}
-                </span>
-              ) : null}
-            </label>
+            </div>
           ))
         )}
       </div>

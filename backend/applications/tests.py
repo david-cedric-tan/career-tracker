@@ -861,26 +861,27 @@ class ApplicationStageCatalogTests(APITestCase):
             [row["key"] for row in response.data],
             [
                 "not_submitted", "applied", "online_assessment", "video_interview",
-                "assessment_centre", "final_interview", "offer",
+                "assessment_centre", "final_interview", "offer", "missed_deadline",
             ],
         )
         self.assertTrue(all(row["is_preset"] for row in response.data))
 
     def test_adding_a_stage_derives_a_key_and_lands_before_the_last(self):
         response = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         )
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["key"], "phone_interview")
         self.assertFalse(response.data["is_preset"])
 
         order = [row["key"] for row in self.client.get("/api/application-stages/").data]
-        # Just before "Offer" — another round in the funnel, not past the end.
-        self.assertEqual(order[-2:], ["phone_interview", "offer"])
+        # Just before the last preset ("Missed Deadline") — another round in
+        # the funnel, not past the end.
+        self.assertEqual(order[-2:], ["phone_interview", "missed_deadline"])
 
     def test_ensure_is_idempotent_by_name(self):
         first = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Take-home assessment"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Take-Home Assessment"}, format="json"
         )
         second = self.client.post(
             "/api/application-stages/ensure/", {"name": "take-home assessment"}, format="json"
@@ -890,7 +891,7 @@ class ApplicationStageCatalogTests(APITestCase):
 
     def test_an_application_can_move_to_a_custom_stage(self):
         stage = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Take-home assessment"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Take-Home Assessment"}, format="json"
         ).data
         application = Application.objects.create(user=self.user, company=self.company)
         response = self.client.post(
@@ -901,7 +902,7 @@ class ApplicationStageCatalogTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["stage"], "take_home_assessment")
         # The name resolves through the catalog, not Django's enum fallback.
-        self.assertEqual(response.data["stage_display"], "Take-home assessment")
+        self.assertEqual(response.data["stage_display"], "Take-Home Assessment")
 
     def test_an_unknown_stage_is_still_rejected(self):
         application = Application.objects.create(user=self.user, company=self.company)
@@ -912,7 +913,7 @@ class ApplicationStageCatalogTests(APITestCase):
 
     def test_backfill_accepts_a_custom_stage(self):
         stage = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         ).data
         application = Application.objects.create(
             user=self.user, company=self.company, applied_at="2026-01-01"
@@ -927,7 +928,7 @@ class ApplicationStageCatalogTests(APITestCase):
 
     def test_the_event_log_names_a_custom_stage(self):
         stage = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         ).data
         application = Application.objects.create(user=self.user, company=self.company)
         self.client.post(
@@ -935,15 +936,15 @@ class ApplicationStageCatalogTests(APITestCase):
             {"stage": stage["key"]}, format="json",
         )
         logs = self.client.get(f"/api/applications/{application.id}/").data["event_logs"]
-        self.assertIn("Phone interview", [log["curr_stage_display"] for log in logs])
+        self.assertIn("Phone Interview", [log["curr_stage_display"] for log in logs])
 
     def test_choices_offers_custom_stages_to_the_pickers(self):
         self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         )
         stages = self.client.get("/api/applications/choices/").data["stage"]
         self.assertIn("phone_interview", [row["value"] for row in stages])
-        self.assertIn("Phone interview", [row["label"] for row in stages])
+        self.assertIn("Phone Interview", [row["label"] for row in stages])
 
     def test_a_preset_cannot_be_deleted(self):
         preset = ApplicationStage.objects.get(key="offer")
@@ -954,7 +955,7 @@ class ApplicationStageCatalogTests(APITestCase):
 
     def test_a_stage_still_in_use_cannot_be_deleted(self):
         stage = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         ).data
         Application.objects.create(
             user=self.user, company=self.company, stage=stage["key"]
@@ -965,7 +966,7 @@ class ApplicationStageCatalogTests(APITestCase):
 
     def test_an_unused_custom_stage_deletes(self):
         stage = self.client.post(
-            "/api/application-stages/ensure/", {"name": "Phone interview"}, format="json"
+            "/api/application-stages/ensure/", {"name": "Phone Interview"}, format="json"
         ).data
         response = self.client.delete(f"/api/application-stages/{stage['id']}/")
         self.assertEqual(response.status_code, 204)

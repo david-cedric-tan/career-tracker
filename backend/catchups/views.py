@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from network.models import Person
 
-from .models import Catchup
+from .models import Catchup, CatchupFormat
 from .serializers import CatchupSerializer, choice_payload
 
 
@@ -80,6 +80,16 @@ class CatchupViewSet(viewsets.ModelViewSet):
         must not rewind `last_meeting_at`.
         """
         person = catchup.person
+        # A message moves "last messaged" only — it isn't a meeting and
+        # shouldn't roll the next chat forward.
+        if catchup.format == CatchupFormat.MESSAGE:
+            if person.last_messaged_at and person.last_messaged_at > catchup.met_on:
+                return
+            person.last_messaged_at = catchup.met_on
+            person.last_message_channel = catchup.message_channel
+            person.save(update_fields=["last_messaged_at", "last_message_channel", "updated_at"])
+            return
+
         if person.last_meeting_at and person.last_meeting_at >= catchup.met_on:
             return
 
@@ -92,9 +102,19 @@ class CatchupViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _recompute_last_meeting(person: Person):
-        latest = person.catchups.order_by("-met_on").first()
+        meetings = person.catchups.exclude(format=CatchupFormat.MESSAGE)
+        latest = meetings.order_by("-met_on").first()
         person.last_meeting_at = latest.met_on if latest else None
-        person.save(update_fields=["last_meeting_at", "updated_at"])
+        latest_message = (
+            person.catchups.filter(format=CatchupFormat.MESSAGE).order_by("-met_on").first()
+        )
+        person.last_messaged_at = latest_message.met_on if latest_message else None
+        person.last_message_channel = latest_message.message_channel if latest_message else ""
+        person.save(
+            update_fields=[
+                "last_meeting_at", "last_messaged_at", "last_message_channel", "updated_at",
+            ]
+        )
 
     @action(detail=False, methods=["get"])
     def choices(self, request):

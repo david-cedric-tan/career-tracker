@@ -22,6 +22,10 @@ ALLOWED_DOCUMENTS = {
     ".odt": "OpenDocument",
     ".rtf": "Rich text",
     ".txt": "Plain text",
+    ".md": "Markdown",
+    ".markdown": "Markdown",
+    ".pptx": "PowerPoint",
+    ".ppt": "PowerPoint",
 }
 
 # First bytes that prove the container type, where one exists. A .pages bundle
@@ -31,7 +35,9 @@ SIGNATURES = {
     ".docx": [b"PK\x03\x04"],
     ".pages": [b"PK\x03\x04"],
     ".odt": [b"PK\x03\x04"],
+    ".pptx": [b"PK\x03\x04"],
     ".doc": [b"\xd0\xcf\x11\xe0", b"PK\x03\x04"],
+    ".ppt": [b"\xd0\xcf\x11\xe0", b"PK\x03\x04"],
     ".rtf": [b"{\\rtf"],
 }
 

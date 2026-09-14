@@ -15,7 +15,7 @@ from .images import validate_image
 # config.images validates by decoding with Pillow, which doesn't care about
 # the extension — but classification has to happen before that decode, so the
 # extension list here is deliberately a superset of what Pillow would accept.
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 
 
 def classify_and_validate(upload):

@@ -30,9 +30,9 @@ export type PresetSeed = {
       inventing new ones. */
   series2: string
   series3: string
-  /** Firms have a signature typeface too — picking this preset switches the
-      site font to match (see AppearanceProvider's setPreset). Omitted for
-      the plain syntax-theme presets, which have no font opinion. */
+  /** Firms have a signature typeface too — noted here as a suggestion, not
+      applied automatically. Picking a theme only changes colours; font is
+      its own setting. */
   font?: FontId
 }
 
@@ -168,6 +168,21 @@ export const PRESET_THEMES: Record<string, PresetSeed> = {
     brand: '#c6797e',
     series2: '#1e6378',
     series3: '#ea9881',
+  },
+  rougeLight: {
+    // The same dusty-rose accent read against paper instead of navy-black.
+    // The brand red is taken several steps darker than the dark theme's
+    // #c6797e, which would sit at roughly 2:1 against white — nowhere near
+    // readable as text or a button fill.
+    label: 'Rouge Light',
+    base: 'light',
+    page: '#f7f1f1',
+    surface: '#fffcfc',
+    ink: '#2b2430',
+    brand: '#9b3b45',
+    series2: '#1e6378',
+    series3: '#c26a4e',
+    font: 'timesNewRoman',
   },
 
   // ---------------------------------------------------------------- firms

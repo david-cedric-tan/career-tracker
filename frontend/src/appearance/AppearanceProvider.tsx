@@ -26,8 +26,9 @@ import {
   type Wallpaper,
 } from '../lib/appearance'
 import { applyFont, type FontId } from '../lib/fonts'
-import { applyPreset, PRESET_THEMES, type PresetId } from '../lib/presetThemes'
-import { isDaytime, isDaytimeFallback, resolveCoords } from '../lib/sunTimes'
+import { applyPreset, type PresetId } from '../lib/presetThemes'
+import { LOCATION_EVENT, resolveCoords } from '../lib/location'
+import { isDaytime, isDaytimeFallback } from '../lib/sunTimes'
 import { AppearanceContext } from './context'
 
 const DYNAMIC_POLL_MS = 60_000
@@ -103,8 +104,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   const resolvedTheme: Theme = theme === 'dynamic' ? (dynamicIsDay ? 'light' : 'dark') : theme
 
-  // While Dynamic mode is active, ask for a location once (cached across
-  // reloads — see resolveCoords) and re-check the sun every minute. A minute
+  // While Dynamic mode is active, use cached coordinates (only after this
+  // account has allowed location) and re-check the sun every minute. A minute
   // is cheap and means the switch at actual sunrise/sunset never needs a
   // page reload to take effect.
   useEffect(() => {
@@ -116,15 +117,21 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       setDynamicIsDay(coords ? isDaytime(coords.lat, coords.lon) : isDaytimeFallback())
     }
 
-    void resolveCoords().then((resolved) => {
-      if (cancelled) return
-      coords = resolved
-      recompute()
-    })
+    function loadCoords() {
+      void resolveCoords().then((resolved) => {
+        if (cancelled) return
+        coords = resolved
+        recompute()
+      })
+    }
+
+    loadCoords()
     recompute()
+    window.addEventListener(LOCATION_EVENT, loadCoords)
     const interval = window.setInterval(recompute, DYNAMIC_POLL_MS)
     return () => {
       cancelled = true
+      window.removeEventListener(LOCATION_EVENT, loadCoords)
       window.clearInterval(interval)
     }
   }, [theme])
@@ -213,16 +220,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     (next: PresetId) => {
       persistPreset(next)
       setPresetState(next)
-      // A few presets (the firm-branded ones) carry a signature font — switch
-      // to it too, so one click gives both the colours and the typeface.
-      const font = next !== 'none' ? PRESET_THEMES[next]?.font : undefined
-      if (font) {
-        persistFont(font)
-        setFontState(font)
-        syncProfile({ color_preset: next, font_family: font })
-      } else {
-        syncProfile({ color_preset: next })
-      }
+      syncProfile({ color_preset: next })
     },
     [syncProfile],
   )

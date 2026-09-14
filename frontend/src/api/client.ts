@@ -153,6 +153,8 @@ const FIELD_LABELS: Record<string, string> = {
   applied_at: 'Applied on',
   follow_up_date: 'Follow-up',
   due_date: 'Due date',
+  due_time: 'Due time',
+  due_end_time: 'End time',
   closing_at: 'Closing date',
   opened_at: 'Opening date',
   job_url: 'Job URL',

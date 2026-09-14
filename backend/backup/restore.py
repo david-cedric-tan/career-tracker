@@ -10,13 +10,26 @@ Shared catalog rows (companies, roles, locations) are *ensured*, never deleted
 """
 
 from datetime import datetime
+import os
 
+from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
 from django.core.files.base import ContentFile
 from django.db import transaction
-from django.utils.dateparse import parse_date, parse_datetime
+from django.utils.dateparse import parse_date, parse_datetime, parse_time
 from rest_framework import serializers
 
-from accounts.models import Experience, ExperiencePhoto, Profile
+from accounts.models import (
+    AttachmentKind,
+    Certification,
+    Experience,
+    ExperiencePhoto,
+    Profile,
+    ProfileAttachment,
+    RefinementEventLog,
+    RefinementMessage,
+    RefinementNote,
+)
 from applications.models import (
     Application,
     ApplicationJobListing,
@@ -25,16 +38,22 @@ from applications.models import (
     Country,
     Industry,
     JobListing,
+    LibraryDocument,
     Location,
     Resume,
     Role,
     State,
 )
 from catchups.models import Catchup
+from events.models import CalendarEvent, EventReminder
 from network.models import ContactMethod, MetSourceTag, Person, RelationshipTag
 from todos.models import Todo
 
 from .archive import ARCHIVE_VERSION, archive_counts
+
+User = get_user_model()
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
 def _date(value):
@@ -48,6 +67,10 @@ def _datetime(value):
     if parsed is None and isinstance(value, datetime):
         return value
     return parsed
+
+
+def _time_value(value):
+    return parse_time(value) if value else None
 
 
 def validate_archive(archive):
@@ -67,13 +90,32 @@ def validate_archive(archive):
 def wipe(user):
     """Remove everything the user owns, in dependency order."""
     # Event logs and junction rows cascade from Application; contact methods
-    # and catch-ups cascade from Person.
+    # and catch-ups cascade from Person. Refinement messages/events cascade
+    # from RefinementNote; certification attachments cascade via GFK cleanup
+    # on section delete.
     Todo.objects.filter(user=user).delete()
+    CalendarEvent.objects.filter(user=user).delete()
+    LibraryDocument.objects.filter(user=user).delete()
     Catchup.objects.filter(user=user).delete()
     Person.objects.filter(user=user).delete()
     Experience.objects.filter(user=user).delete()
     Application.objects.filter(user=user).delete()
     Resume.objects.filter(user=user).delete()
+    Certification.objects.filter(user=user).delete()
+    RefinementNote.objects.filter(user=user).delete()
+
+
+def _actor_for(username, restoring_user, archive_username):
+    """Map an exported username onto a live User row.
+
+    The archive owner always becomes the restoring account. Anyone else (a
+    developer who replied on the ticket) is looked up by username when they
+    exist here, otherwise we fall back to the restoring user — message.user
+    is required, and losing the text over a missing actor would be worse.
+    """
+    if not username or username == archive_username:
+        return restoring_user
+    return User.objects.filter(username=username).first() or restoring_user
 
 
 @transaction.atomic
@@ -87,6 +129,27 @@ def restore(user, archive):
     """
     validate_archive(archive)
     wipe(user)
+    archive_username = archive.get("username") or ""
+
+    # --- appearance & dashboard layout --------------------------------------
+    # Absent (rather than falsy) means an archive from before this was
+    # tracked — leave the restoring account's own settings alone.
+    profile_row = archive.get("profile")
+    if profile_row:
+        profile = Profile.for_user(user)
+        for field in (
+            "theme_mode",
+            "wallpaper",
+            "wallpaper_blur",
+            "wallpaper_opacity",
+            "color_preset",
+            "font_family",
+            "celebrations_enabled",
+            "dashboard_layout",
+        ):
+            if field in profile_row:
+                setattr(profile, field, profile_row[field])
+        profile.save()
 
     # --- shared catalogs: ensure, never delete ----------------------------
     companies = {}
@@ -287,6 +350,8 @@ def restore(user, archive):
             met_on=met_on,
             title=row.get("title") or "",
             format=row.get("format") or "other",
+            format_other=row.get("format_other") or "",
+            message_channel=row.get("message_channel") or "",
             location=row.get("location") or "",
             minutes=row.get("minutes") or "",
             takeaways=row.get("takeaways") or "",
@@ -302,17 +367,63 @@ def restore(user, archive):
             title=row["title"],
             description=row.get("description") or "",
             due_date=_date(row.get("due_date")),
+            due_time=_time_value(row.get("due_time")),
+            due_end_time=_time_value(row.get("due_end_time")),
             priority=row.get("priority") or "medium",
             status=row.get("status") or "open",
             application=applications.get(row.get("application")),
             person=people.get(row.get("person")),
             company=company_for(row.get("company")),
             completed_at=_datetime(row.get("completed_at")),
+            position=row.get("position") or 0,
         )
         # A hand-edited spreadsheet can claim `done` with no completion stamp;
         # reconcile rather than hitting the DB constraint.
         todo.sync_completion()
         todo.save()
+
+    # --- calendar events -----------------------------------------------------
+    for row in archive.get("calendar_events", []):
+        event_date = _date(row.get("date"))
+        if not row.get("title") or not event_date:
+            continue
+        event = CalendarEvent.objects.create(
+            user=user,
+            title=row["title"],
+            date=event_date,
+            all_day=row.get("all_day", True),
+            start_time=_time_value(row.get("start_time")),
+            end_time=_time_value(row.get("end_time")),
+            notes=row.get("notes") or "",
+            is_done=row.get("is_done", False),
+            company=company_for(row.get("company")),
+            application=applications.get(row.get("application")),
+        )
+        event.people.set(
+            [p for p in (people.get(n) for n in row.get("people") or []) if p]
+        )
+        for minutes in row.get("reminders") or []:
+            EventReminder.objects.get_or_create(event=event, minutes_before=minutes)
+
+    # --- library documents (files ride along via reattach_media below,
+    #     matched on the old id this dict is keyed by) ------------------------
+    library_documents = {}  # old id → new instance
+    for row in archive.get("library_documents", []):
+        if not row.get("title"):
+            continue
+        document = LibraryDocument.objects.create(
+            user=user,
+            title=row["title"],
+            description=row.get("description") or "",
+            original_name=row.get("original_name") or "",
+            kind=row.get("kind") or "",
+            tags=list(row.get("tags") or []),
+            position=row.get("position") or 0,
+            application=applications.get(row.get("application")),
+            company=company_for(row.get("company")),
+        )
+        if row.get("id") is not None:
+            library_documents[row["id"]] = document
 
     # --- experience (galleries are files, so only the captions survive here
     #     — reattach_media below re-adds the actual photos from a zip) -------
@@ -334,13 +445,105 @@ def restore(user, archive):
         )
         experiences[(company.name, row["title"], row["started_on"])] = experience
 
+    # --- certifications ----------------------------------------------------
+    certifications = {}  # name → instance
+    for row in archive.get("certifications", []):
+        if not row.get("name"):
+            continue
+        certification = Certification.objects.create(
+            user=user,
+            name=row["name"],
+            issuer=row.get("issuer") or "",
+            issued_on=_date(row.get("issued_on")),
+            expires_on=_date(row.get("expires_on")),
+            credential_url=row.get("credential_url") or "",
+            description=row.get("description") or "",
+        )
+        certifications[row["name"]] = certification
+
+    # --- refinement trail (notes → messages → events) ----------------------
+    refinement_notes = {}  # old id → new instance
+    refinement_messages = {}  # old id → new instance
+    for row in archive.get("refinement_notes", []):
+        if not row.get("body"):
+            continue
+        note = RefinementNote(
+            user=user,
+            body=row["body"],
+            kind=row.get("kind") or "improvement",
+            status=row.get("status") or "open",
+            page=row.get("page") or "",
+            screens=list(row.get("screens") or []),
+            resolution=row.get("resolution") or "",
+            resolved_at=_datetime(row.get("resolved_at")),
+            resolved_by=_actor_for(row.get("resolved_by"), user, archive_username)
+            if row.get("resolved_by")
+            else None,
+            resolution_seen_at=_datetime(row.get("resolution_seen_at")),
+            owner_read_at=_datetime(row.get("owner_read_at")),
+            developer_read_at=_datetime(row.get("developer_read_at")),
+        )
+        # Preserve the original raise time so the log reads in the same order.
+        created_at = _datetime(row.get("created_at"))
+        if created_at is not None:
+            note.created_at = created_at
+        note.save()
+        if row.get("id") is not None:
+            refinement_notes[row["id"]] = note
+
+    for row in archive.get("refinement_messages", []):
+        note = refinement_notes.get(row.get("note"))
+        created_at = _datetime(row.get("created_at"))
+        if not note:
+            continue
+        message = RefinementMessage(
+            note=note,
+            user=_actor_for(row.get("author"), user, archive_username),
+            body=row.get("body") or "",
+        )
+        if created_at is not None:
+            message.created_at = created_at
+        message.save()
+        if row.get("id") is not None:
+            refinement_messages[row["id"]] = message
+
+    for row in archive.get("refinement_events", []):
+        note = refinement_notes.get(row.get("note"))
+        created_at = _datetime(row.get("created_at"))
+        if not note or not row.get("event_type"):
+            continue
+        event = RefinementEventLog(
+            note=note,
+            event_type=row["event_type"],
+            detail=row.get("detail") or "",
+            actor=_actor_for(row.get("actor"), user, archive_username)
+            if row.get("actor")
+            else None,
+        )
+        if created_at is not None:
+            event.created_at = created_at
+        event.save()
+
     refs = {
         "companies": companies,
         "resumes": resumes,
         "people": people,
         "experiences": experiences,
+        "certifications": certifications,
+        "refinement_notes": refinement_notes,
+        "refinement_messages": refinement_messages,
+        "library_documents": library_documents,
     }
     return archive_counts(archive), refs
+
+
+def _attachment_kind(filename, explicit=None):
+    if explicit in {AttachmentKind.IMAGE, AttachmentKind.DOCUMENT}:
+        return explicit
+    extension = os.path.splitext(filename or "")[1].lower()
+    if extension in IMAGE_EXTENSIONS:
+        return AttachmentKind.IMAGE
+    return AttachmentKind.DOCUMENT
 
 
 def reattach_media(user, refs, manifest_rows, media_bytes):
@@ -349,9 +552,16 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
     Best-effort by design: a row `restore()` skipped (a bad archive row) or a
     file `read_zip_archive` couldn't find just gets silently left without its
     file, rather than failing the whole restore over one photo.
+
+    Older zips shipped certification PDFs in the media tree without matching
+    `certifications` rows in data.json — for those, we recreate a shell
+    credential from the manifest match name so the PDFs still land.
     """
     profile = Profile.for_user(user)
     attached = 0
+    cert_content_type = ContentType.objects.get_for_model(Certification)
+    certifications = refs.setdefault("certifications", {})
+    refinement_messages = refs.setdefault("refinement_messages", {})
 
     for row in manifest_rows:
         data = media_bytes.get(row.get("path"))
@@ -370,6 +580,10 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
             resume = refs["resumes"].get(match.get("label"))
             if resume:
                 resume.file.save(name, content, save=True)
+        elif kind == "library_document":
+            document = refs.get("library_documents", {}).get(match.get("id"))
+            if document:
+                document.file.save(name, content, save=True)
         elif kind == "company_logo":
             company = refs["companies"].get(match.get("company"))
             if company:
@@ -385,6 +599,52 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
                 ExperiencePhoto.objects.create(
                     experience=experience, image=content, caption=row.get("caption") or ""
                 )
+        elif kind == "certification_icon":
+            cert_name = match.get("name")
+            if not cert_name:
+                continue
+            certification = certifications.get(cert_name)
+            if certification is None:
+                certification, _ = Certification.objects.get_or_create(
+                    user=user, name=cert_name
+                )
+                certifications[cert_name] = certification
+            certification.icon.save(name, content, save=True)
+        elif kind == "certification_attachment":
+            cert_name = match.get("name")
+            if not cert_name:
+                continue
+            certification = certifications.get(cert_name)
+            if certification is None:
+                # Pre-certification-sheet zip: media only. Recreate the shell.
+                certification, _ = Certification.objects.get_or_create(
+                    user=user, name=cert_name
+                )
+                certifications[cert_name] = certification
+            original_name = (row.get("original_name") or name or "").strip()
+            caption = (row.get("caption") or "").strip()
+            ProfileAttachment.objects.create(
+                content_type=cert_content_type,
+                object_id=certification.id,
+                file=content,
+                original_name=original_name,
+                kind=_attachment_kind(original_name or name, row.get("attachment_kind")),
+                caption=caption,
+            )
+        elif kind == "refinement_message_image":
+            message = refinement_messages.get(match.get("message"))
+            if message is None:
+                # Fall back when ids shifted but created_at survived the export.
+                created_at = _datetime(match.get("created_at"))
+                note = refs.get("refinement_notes", {}).get(match.get("note"))
+                if note is not None and created_at is not None:
+                    message = (
+                        RefinementMessage.objects.filter(note=note, created_at=created_at)
+                        .order_by("id")
+                        .first()
+                    )
+            if message:
+                message.image.save(name, content, save=True)
         else:
             continue
         attached += 1

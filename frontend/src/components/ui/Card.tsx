@@ -13,7 +13,7 @@ export function Card({
   return (
     <section
       className={cx(
-        'glass-panel rounded-card border border-line bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)] intern:backdrop-blur-xl',
+        'glass-panel rounded-card border border-line bg-surface shadow-[0_1px_2px_rgba(16,24,40,0.04)]',
         padded && 'p-4 sm:p-5',
         className,
       )}
@@ -35,7 +35,10 @@ export function CardHeader({
   className?: string
 }) {
   return (
-    <header className={cx('flex items-start justify-between gap-3', className)}>
+    // Centred, not top-aligned: an action beside the title is a 40px button,
+    // and top-aligning left the title's cap-height sitting a few pixels above
+    // the button's label on every card that has one.
+    <header className={cx('flex flex-wrap items-center justify-between gap-3', className)}>
       <div className="min-w-0">
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
         {subtitle ? <p className="mt-0.5 text-[13px] text-ink-3">{subtitle}</p> : null}

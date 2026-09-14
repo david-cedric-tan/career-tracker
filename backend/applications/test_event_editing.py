@@ -122,6 +122,22 @@ class EventEditingTests(APITestCase):
         self.assertFalse(self.app.awaiting_response)
         self.assertIsNone(self.app.awaiting_since)
 
+    def test_waiting_row_can_retarget_its_stage(self):
+        self.client.post(
+            f"/api/applications/{self.app.id}/waiting/",
+            {"waiting": True, "stage": Stage.VIDEO_INTERVIEW},
+            format="json",
+        )
+        waiting = self.app.event_logs.get(event_type="waiting_started")
+        r = self.client.patch(
+            f"/api/applications/{self.app.id}/events/{waiting.id}/",
+            {"stage": Stage.ONLINE_ASSESSMENT},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 200, r.data)
+        waiting.refresh_from_db()
+        self.assertEqual(waiting.curr_stage, Stage.ONLINE_ASSESSMENT)
+
     def test_rejects_an_unparseable_date(self):
         r = self.client.patch(self.url(self.move), {"changed_at": "nonsense"}, format="json")
         self.assertEqual(r.status_code, 400)

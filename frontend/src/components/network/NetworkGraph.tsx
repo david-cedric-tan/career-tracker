@@ -25,6 +25,7 @@ const STATUS_RING: Record<string, string> = {
 const UNASSIGNED: CompanyRef = {
   id: -1,
   name: 'No company',
+  full_name: 'No company',
   logo: null,
   title: '',
   started_on: null,
@@ -123,6 +124,8 @@ function buildClusters(people: Person[]): Cluster[] {
           hub: {
             id: company.id,
             name: company.name,
+            // The ring shows the short form; the full name sits under it.
+            subtitle: company.full_name !== company.name ? company.full_name : null,
             logo: company.logo,
             href:
               company.id === UNASSIGNED.id
@@ -166,7 +169,7 @@ export function NetworkGraph({
 
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+      <div className="grid grid-flow-row-dense gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
         {clusters.map((cluster) => (
           <ClusterCard
             key={cluster.hub.id}
@@ -199,7 +202,7 @@ function ClusterCard({
   return (
     <section
       className={cx(
-        'rounded-card border border-line bg-surface p-3 intern:backdrop-blur-xl',
+        'glass-panel rounded-card border border-line bg-surface p-3',
         people.length > WIDE_CLUSTER && 'sm:col-span-2',
       )}
     >
@@ -258,19 +261,37 @@ function ClusterCard({
           })}
         </svg>
 
-        {/* Hub */}
-        <div
-          className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm"
-          style={{
-            width: HUB,
-            height: HUB,
-            left: layout.hub.x - HUB / 2,
-            top: layout.hub.y - HUB / 2,
-          }}
-          title={hub.name}
-        >
-          <HubMark hub={hub} size={40} />
-        </div>
+        {/* Hub — a link when it's a company, so the logo goes where the title does. */}
+        {hub.href ? (
+          <Link
+            to={hub.href}
+            state={{ from: `${location.pathname}${location.search}` }}
+            className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm transition-all hover:border-brand-ring hover:shadow-md"
+            style={{
+              width: HUB,
+              height: HUB,
+              left: layout.hub.x - HUB / 2,
+              top: layout.hub.y - HUB / 2,
+            }}
+            title={hub.subtitle || hub.name}
+            aria-label={`Open ${hub.name}`}
+          >
+            <HubMark hub={hub} size={40} />
+          </Link>
+        ) : (
+          <div
+            className="absolute grid place-items-center rounded-2xl border border-line bg-surface-2 shadow-sm"
+            style={{
+              width: HUB,
+              height: HUB,
+              left: layout.hub.x - HUB / 2,
+              top: layout.hub.y - HUB / 2,
+            }}
+            title={hub.name}
+          >
+            <HubMark hub={hub} size={40} />
+          </div>
+        )}
 
         {/* Spokes */}
         {people.map((person, index) => {
@@ -426,9 +447,11 @@ function RoleLegend({ people }: { people: Person[] }) {
   if (!present.length && !anyPast) return null
 
   return (
-    <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
+    // On its own surface, not bare on the wallpaper: tertiary text over a
+    // photo disappeared in whichever theme the photo happened to match.
+    <ul className="glass-panel mt-3 inline-flex flex-wrap items-center gap-x-4 gap-y-2 rounded-full border border-line bg-surface px-3 py-1.5">
       {anyPast ? (
-        <li className="flex items-center gap-1.5 text-[12px] text-ink-3">
+        <li className="flex items-center gap-1.5 text-[12px] font-medium text-ink-2">
           <span className="grid size-[18px] place-items-center rounded-full border-2 border-surface bg-critical text-white shadow-sm">
             <Icon name="logout" size={9} strokeWidth={2.4} />
           </span>
@@ -436,7 +459,7 @@ function RoleLegend({ people }: { people: Person[] }) {
         </li>
       ) : null}
       {present.map((mark) => (
-        <li key={mark.label} className="flex items-center gap-1.5 text-[12px] text-ink-3">
+        <li key={mark.label} className="flex items-center gap-1.5 text-[12px] font-medium text-ink-2">
           <span
             className={cx(
               'grid size-[18px] place-items-center rounded-full border-2 border-surface shadow-sm',
