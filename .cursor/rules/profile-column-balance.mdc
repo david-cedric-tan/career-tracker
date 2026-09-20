@@ -1,0 +1,37 @@
+---
+description: Keep Profile page left/right columns in a sensible fixed story order
+globs: frontend/src/pages/ProfilePage.tsx,frontend/src/components/profile/**/*.tsx,frontend/src/components/ExperiencePanel.tsx
+alwaysApply: false
+---
+
+# Profile two-column layout
+
+`ProfilePage` uses a `lg:grid-cols-2` story order with **fixed anchors** and a
+small **balancing tail**. Do not auto-pack every panel by height — that made
+the page unreadable. Only the tail panels (`TAIL` in `ProfilePage.tsx`:
+Extra-curriculars, then Links) may cross to the shorter column, measured
+after render; the anchors below never move.
+
+## Required order
+
+| Left (anchors) | Right (anchors) | Tail (either column, shorter one wins) |
+|------|--------|--------|
+| Identity | Experience | Extra-curriculars |
+| Addresses | Certifications | Links |
+| Education | | |
+
+## When you add a panel
+
+1. Personal / location / school → **left**, under Identity (Addresses stays
+   directly under Identity). Education rows use a leading school logo mark
+   (like Experience’s company logo) so the two stacks feel balanced.
+2. Career / credentials / extras → **right**, under Experience in a sensible
+   sequence (certs before extracurriculars before links).
+3. A new low-priority panel can join `TAIL` (append = lowest priority). Anything
+   people read first stays an anchor.
+
+## Avoid
+
+- Measure-and-pack / masonry that moves *anchor* panels between columns
+- Dumping every new section under Identity on the left
+- Balancing Settings with this rule unless it shares the same panel pattern

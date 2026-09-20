@@ -19,6 +19,7 @@ const PATHS: Record<string, string> = {
   chevronRight: 'm9 5 7 7-7 7',
   chevronLeft: 'm15 5-7 7 7 7',
   chevronDown: 'm6 9 6 6 6-6',
+  chevronUp: 'm6 15 6-6 6 6',
   calendar: 'M7 3v3m10-3v3M4 9h16M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-14v5l3 2',
   alert: 'M12 8v5m0 3.5v.5M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z',
@@ -32,6 +33,7 @@ const PATHS: Record<string, string> = {
   moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z',
   menu: 'M4 7h16M4 12h16M4 17h16',
   link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 6.8M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 1 0 5.7 5.7l1.4-1.4',
+  comment: 'M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12Z',
   mail: 'M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Zm0 1 8 6 8-6',
   phone: 'M7 3h3l2 5-2.5 1.5a12 12 0 0 0 5 5L16 12l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 5 5a2 2 0 0 1 2-2Z',
   sparkles: 'M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6L12 4ZM19 15l.7 1.8L21.5 18l-1.8.7L19 20.5l-.7-1.8L16.5 18l1.8-.7L19 15Z',
@@ -42,6 +44,17 @@ const PATHS: Record<string, string> = {
   coffee:
     'M4 9h13v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9Zm13 1h2a2.5 2.5 0 0 1 0 5h-2M3 21h15M8 2v3m4-3v3',
   arrowRight: 'M5 12h14m-6-6 6 6-6 6',
+  arrowUp: 'M12 19V5m-6 6 6-6 6 6',
+  image: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm6 4.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM21 15l-5-5L5 21',
+  paperclip:
+    'M20 11.5 12.2 19.3a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.5-7.5',
+  // A spanner: the developer side of the notification bar.
+  // A hammer (Lucide's) — the refinement log's mark: something's getting built.
+  tools: 'm15 12-8.373 8.373a1 1 0 1 1-3-3L12 9m6 6 4-4m-.5-.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5',
+  // A person at a screen — "talk to a dev".
+  devChat: 'M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5Zm5 15h8m-4-4v4m0-12.5a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5ZM8.5 14a3.5 3.5 0 0 1 7 0',
+  wrench:
+    'M14.5 3.5a5 5 0 0 0-6.2 6.4l-5 5a2 2 0 0 0 2.8 2.8l5-5a5 5 0 0 0 6.4-6.2l-2.9 2.9-2.5-.5-.5-2.5 2.9-2.9Z',
   trendingUp: 'm3 17 6-6 4 4 8-8m0 0h-5m5 0v5',
   table: 'M4 6h16v12H4V6Zm0 5h16M9 6v12',
   barChart: 'M4 20V12M11 20V6M18 20V15',
@@ -60,7 +73,17 @@ const PATHS: Record<string, string> = {
   strikethrough: 'M5 12h14M8 8a3.5 3.5 0 0 1 3.5-3h1A3.5 3.5 0 0 1 16 8m0 8a3.5 3.5 0 0 1-3.5 3h-1A3.5 3.5 0 0 1 8 16',
   list: 'M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01',
   listOrdered: 'M10 6h10M10 12h10M10 18h10M4 5h1v4M3.5 9h2M3.5 14.5h2l-2 2.5h2',
+  // Horizontal rules for ticket / notes toolbars.
+  lineDashed: 'M4 12h3m3 0h3m3 0h3',
+  lineDotted: 'M5 12h.01M9.5 12h.01M14 12h.01M18.5 12h.01',
   gripVertical: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
+  panelRight:
+    'M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm11 0v14',
+  // Portrait page outline — paper-size toggle in the document viewer.
+  page:
+    'M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm7 0v5h5',
+  download: 'M12 4v12m0 0 4-4m-4 4-4-4M5 20h14',
+  bear: 'M7 8.5a2.5 2.5 0 1 1 2.2-3.7M17 8.5a2.5 2.5 0 1 0-2.2-3.7M12 20a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm-2.5-7h.01M14.5 13h.01M12 15.5a2 2 0 0 0 1.5-.7M12 15.5a2 2 0 0 1-1.5-.7',
 }
 
 export function Icon({

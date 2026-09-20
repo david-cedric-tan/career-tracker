@@ -65,6 +65,46 @@ class TodoApiTests(APITestCase):
         self.assertEqual([row["title"] for row in response.data], ["Late"])
         self.assertTrue(response.data[0]["is_overdue"])
 
+    def test_due_time_round_trips_and_clears_with_date(self):
+        response = self.client.post(
+            "/api/todos/",
+            {
+                "title": "OA at 2",
+                "due_date": "2026-09-10",
+                "due_time": "14:00:00",
+                "due_end_time": "15:30:00",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["due_time"], "14:00:00")
+        self.assertEqual(response.data["due_end_time"], "15:30:00")
+
+        todo_id = response.data["id"]
+        cleared = self.client.patch(
+            f"/api/todos/{todo_id}/",
+            {"due_date": None},
+            format="json",
+        )
+        self.assertEqual(cleared.status_code, 200)
+        self.assertIsNone(cleared.data["due_date"])
+        self.assertIsNone(cleared.data["due_time"])
+        self.assertIsNone(cleared.data["due_end_time"])
+
+    def test_due_end_time_must_be_after_start(self):
+        response = self.client.post(
+            "/api/todos/",
+            {
+                "title": "Bad window",
+                "due_date": "2026-09-10",
+                "due_time": "14:00:00",
+                "due_end_time": "13:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("due_end_time", response.data)
+
     def test_suggestions_come_from_due_dates_elsewhere(self):
         yesterday = timezone.localdate() - timedelta(days=1)
         self.application.follow_up_date = yesterday

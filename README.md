@@ -35,7 +35,7 @@ Personal career + productivity assistant for tracking job applications, network 
 - **Company notes** — private to you, not shared with anyone else tracking that company
 - **Dashboard** — weekly/monthly progress, pipeline snapshot, outcome mix, and a combined activity feed
 - **Auth** — token auth, profile pictures, all data scoped to the signed-in user
-- **Themes** — light, dark, and **Intern mode**: the PwC palette over a blurred, swappable wallpaper. Theme, preset, font, celebrations and board layout all belong to the account: signing in adopts that user's own settings and resets anything they've never picked, so two people sharing a browser never inherit each other's look
+- **Themes** — light, dark, and **Intern mode**: an orange palette over a blurred, swappable wallpaper. Theme, preset, font, celebrations and board layout all belong to the account: signing in adopts that user's own settings and resets anything they've never picked, so two people sharing a browser never inherit each other's look
 
 ## Themes
 
@@ -45,9 +45,9 @@ Three themes, picked in Settings → Appearance or cycled with the header button
 |-------|------------|
 | Light | Flat surfaces, maximum contrast |
 | Dark | Same layout on dark surfaces |
-| Intern | PwC orange brand over a blurred wallpaper, with frosted-glass cards |
+| Intern | Orange over a blurred wallpaper, with frosted-glass cards |
 
-Intern mode ships four backgrounds (PwC lock screen, City towers, Orbit, Sage
+Intern mode ships four backgrounds (Ember Dawn, City towers, Orbit, Sage
 arches) plus a flat no-image option, with two sliders:
 
 - **Blur** — 0–48px backdrop blur
@@ -61,8 +61,8 @@ stays readable even at full image opacity. Picking a background from any theme
 switches you into Intern mode, since that is the only theme it shows in.
 
 The chart palettes are per-theme and each was validated rather than eyeballed:
-Intern mode leads the categorical slots with PwC orange (`#d04a02`), and the
-pipeline uses a single-hue PwC-orange ordinal ramp with monotone lightness whose
+Intern mode leads the categorical slots with its orange (`#d04a02`), and the
+pipeline uses a single-hue orange ordinal ramp with monotone lightness whose
 light end still clears 2:1 against the glass surface.
 
 Source images live in `frontend/src/assets/`; the downscaled copies actually
@@ -84,7 +84,7 @@ no flash-of-default on reload.
 | Auth | DRF Token auth (session auth kept for the browsable API) |
 | DB | PostgreSQL 17 via Docker Compose (SQLite fallback) |
 | Frontend | React 19, Vite, TypeScript, React Router 7 |
-| Styling | Tailwind CSS v4 — light, dark and Intern (PwC) themes |
+| Styling | Tailwind CSS v4 — light, dark and Intern (orange) themes |
 | Charts | Hand-rolled SVG (no chart dependency) |
 | Maps | `d3-geo` + `topojson-client` (region map) — plain computation libraries, not a React map wrapper |
 

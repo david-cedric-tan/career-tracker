@@ -47,7 +47,32 @@ export const SPAN_CLASS: Record<WidgetSpan, string> = {
   4: 'sm:col-span-2 xl:col-span-4',
 }
 
-/** Everything except the map, which stays opt-in from the Hidden tray. */
+/**
+ * How tall a widget stands, in steps rather than pixels.
+ *
+ * Width alone isn't enough for the tiles you actually want more room in — a
+ * pinned photo, the week's calendar, the map. Steps rather than a free drag
+ * for the same reason spans are: the grid rows have to keep lining up, and a
+ * tile dragged to 213px would just look like a mistake.
+ *
+ * Step 1 is "as tall as its content", which is how the board has always
+ * behaved, so an existing layout is unchanged until someone asks for more.
+ */
+export type WidgetHeight = 1 | 2 | 3 | 4
+export const HEIGHTS: WidgetHeight[] = [1, 2, 3, 4]
+
+export const HEIGHT_CLASS: Record<WidgetHeight, string> = {
+  1: '',
+  2: 'min-h-64',
+  3: 'min-h-96',
+  4: 'min-h-[32rem]',
+}
+
+/** Everything except the map, which stays opt-in from the Hidden tray.
+ *
+ *  The four headline numbers (active apps, offers, todos overdue, chats
+ *  overdue) are a fixed row above this board — not widgets, and not
+ *  rearrangeable. */
 export const DEFAULT_WIDGETS: WidgetId[] = [
   'quote',
   'calendar',

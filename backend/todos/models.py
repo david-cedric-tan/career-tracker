@@ -33,6 +33,12 @@ class Todo(models.Model):
     description = models.TextField(blank=True)
 
     due_date = models.DateField(null=True, blank=True)
+    # Optional clock time on the due date. Null means all-day (the previous
+    # behaviour); set when the task belongs on a specific hour of the calendar.
+    due_time = models.TimeField(null=True, blank=True)
+    # Optional end of a timed block. Null with a due_time means the calendar
+    # treats it as one hour; set to model longer blocks (OA, interview, etc.).
+    due_end_time = models.TimeField(null=True, blank=True)
     priority = models.CharField(
         max_length=10, choices=Priority.choices, default=Priority.MEDIUM
     )
@@ -91,11 +97,14 @@ class Todo(models.Model):
 
     @property
     def is_overdue(self):
-        return (
-            self.status == TodoStatus.OPEN
-            and self.due_date is not None
-            and self.due_date < timezone.localdate()
-        )
+        if self.status != TodoStatus.OPEN or self.due_date is None:
+            return False
+        today = timezone.localdate()
+        if self.due_date < today:
+            return True
+        if self.due_date > today or self.due_time is None:
+            return False
+        return self.due_time < timezone.localtime().time()
 
     def sync_completion(self):
         """Keep `completed_at` in step with `status` (FR-TODO-03)."""

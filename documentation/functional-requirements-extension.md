@@ -180,7 +180,7 @@ See §2.4 and §2.5 — delivered.
 
 | ID | Requirement | Status |
 | -- | ----------- | ------ |
-| FR-EXPORT-05 | A **`.zip`** backup bundles `data.json` (the same shape as the plain JSON export) with every file it references — resumes, profile avatar and custom wallpaper, experience photos, company logos, person photos — plus a `manifest.json` cross-referencing each file to the row that owns it. | [Done] |
+| FR-EXPORT-05 | A **`.zip`** backup bundles `data.json` (the same shape as the plain JSON export) with every file it references — resumes, library documents, profile avatar/wallpaper/pinned photo, experience photos, company logos, person photos, the icon and attachments of every education/certification/extra-curricular entry, profile-link icons and refinement message images — plus a `manifest.json` cross-referencing each file to the row that owns it. | [Done] |
 | FR-EXPORT-10 | Importing a `.zip` reattaches every manifest file to the row the JSON restore just recreated, matched by **natural key** (resume label, person's full name, company name, experience's company+title+start-date) rather than a primary key, since restore always assigns fresh ids. | [Done] |
 | FR-EXPORT-11 | The Backup panel offers **all three formats** side by side — "Full Data + Resources (.zip)" alongside the existing data-only Excel/JSON — so the choice of what a backup includes is explicit, not buried in a file extension. | [Done] |
 
@@ -559,15 +559,22 @@ data half unchanged.
 
 | ID | Requirement |
 | -- | ----------- |
-| FR-EXPORT-05 | `.zip` export bundles `data.json`, every referenced file (resumes, profile avatar/wallpaper, experience photos, company logos, person photos), and `manifest.json` describing which file belongs to which row. |
+| FR-EXPORT-05 | `.zip` export bundles `data.json`, every referenced file (resumes, library documents, profile avatar/wallpaper/pinned photo, experience photos, company logos, person photos, profile-section icons and attachments, profile-link icons, refinement images), and `manifest.json` describing which file belongs to which row. |
 | FR-EXPORT-10 | Import reattaches manifest files by **natural key** (label, full name, company name, or company+title+start-date for an experience) against the lookups the JSON restore just built — never by primary key, since restore always creates fresh rows. |
 | FR-EXPORT-11 | The Backup panel exposes all three export formats as distinct, clearly-labelled buttons; the summary also reports how many files a "Data + Resources" backup would carry, so the choice isn't blind. |
 | FR-EXPORT-12 | A `.zip` upload gets a larger size ceiling (200MB) than a data-only upload (20MB), since it legitimately carries binaries. |
 
-**Known gap:** Education, Certifications, Extracurriculars and their
-attachments aren't in the JSON archive shape at all yet (see FR-PROF-10..13),
-so their rows *and* files are outside every backup format, `.zip` included.
-Extending the archive to cover them is unstarted — see §5.4.
+**Coverage guarantee:** `backup/tests.py::test_every_user_owned_field_is_in_the_archive`
+walks every concrete field on every user-owned model and fails when one is
+missing from `SHEETS`, so a new column can't silently fall out of the backup.
+The archive carries every user-owned table (including company short names and
+regions, private company notes, per-listing outcomes, listing descriptions and
+skills, waiting/historical flags, contact cadence and message history,
+connections and per-company titles, education, certifications,
+extra-curriculars, profile links and addresses, contact details and name) and
+original `created_at` stamps. Left out on purpose: sample-data bookkeeping,
+`Venue` (nothing user-owned references it), the `is_developer` trust flag, and
+the login email (exported for the record, never restored).
 
 ### 2.13 Login experience [Done]
 
@@ -693,12 +700,6 @@ no LMS module. Additionally deferred:
   image from an experience gallery.
 - **Bring-your-own-AI import** (FR-IMPORT-02) is guide-only — there's no
   endpoint yet that consumes the JSON shape the prompt produces.
-- **Education/Certifications/Extracurriculars aren't in any backup format**
-  (FR-EXPORT-05/2.12's known gap) — they're not in the JSON archive shape at
-  all yet, so the `.zip`'s file bundling can't reach their attachments either.
-  Needs `archive.py`'s `SHEETS`/`build_archive`/`restore()` extended for three
-  more sheets plus their generic-relation attachments, not just a manifest
-  entry.
 - **Import is replace-only.** A merge mode that skips existing rows by natural
   key would make it useful for moving data between accounts, not just recovery.
 - **Catch-up → todo in one action** (FR-CATCH-09).

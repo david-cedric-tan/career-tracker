@@ -49,7 +49,7 @@ export function StatTile({
   )
 
   const className =
-    'rounded-card border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] intern:backdrop-blur-xl'
+    'glass-panel h-full rounded-card border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]'
 
   return to ? (
     <Link

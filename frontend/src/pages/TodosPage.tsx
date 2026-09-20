@@ -1,32 +1,33 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
-import { fieldErrors, formatApiError } from '../api/client'
-import { applications, companies, people, todos } from '../api/resources'
+import { formatApiError } from '../api/client'
+import { todos } from '../api/resources'
 import type {
-  ApplicationSummary,
-  Company,
-  Person,
   Todo,
-  TodoChoices,
   TodoSuggestion,
 } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
 import { ProgressRing } from '../components/charts/ProgressRing'
 import { PageHeader } from '../components/layout/PageHeader'
+import { TodoForm } from '../components/TodoForm'
 import { Badge } from '../components/ui/Badge'
 import { PRIORITY_TONE } from '../lib/tones'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
-import { Combobox } from '../components/ui/Combobox'
-import { Input, Select } from '../components/ui/Field'
-import { MentionInput, MentionTextarea } from '../components/ui/Mention'
+import { Select } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
-import { Modal } from '../components/ui/Modal'
 import { EmptyState, ErrorState, Loading, Refreshing } from '../components/ui/States'
 import { useToast } from '../components/ui/toast-context'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
-import { cx, relativeDay } from '../lib/format'
+import { cx, formatTime, relativeDay } from '../lib/format'
+import {
+  useTodoSuggestionsExpanded,
+  useTodoSuggestionsHidden,
+  useTodoSuggestionsSetting,
+} from '../lib/todoSuggestions'
+import { plainText } from '../lib/richTextMarkers'
+import { rememberList } from '../lib/listState'
 
 /** `position` is the manual order behind the drag handles; everything else is
     a computed sort that ignores it. */
@@ -74,6 +75,11 @@ export function TodosPage() {
   const status = params.get('status') ?? 'open'
   const statusFilter = status === 'all' ? '' : status
 
+  // Sidebar / back-links restore this query via listPath('todos').
+  useEffect(() => {
+    rememberList('todos', params.toString() ? `?${params}` : '')
+  }, [params])
+
   const choices = useResource(() => todos.choices(), [])
   const list = useResource(
     () => todos.list({ scope, status: statusFilter, ordering: sort }),
@@ -83,6 +89,15 @@ export function TodosPage() {
   // instead of waiting on the round trip.
   const [dragOrder, setDragOrder] = useState<Todo[] | null>(null)
   const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [suggestionsEnabled] = useTodoSuggestionsSetting()
+  const [suggestionsExpanded, setSuggestionsExpanded] = useTodoSuggestionsExpanded()
+  const [suggestionsHidden, setSuggestionsHidden] = useTodoSuggestionsHidden()
+
+  // A leftover drag overlay would keep showing the old arrangement after a
+  // create/edit reload, so the new entry looked like it never saved.
+  useEffect(() => {
+    setDragOrder(null)
+  }, [scope, statusFilter, sort])
 
   async function persistOrder(ordered: Todo[]) {
     setDragOrder(ordered)
@@ -92,6 +107,7 @@ export function TodosPage() {
       // rather than making the arrangement invisible behind another sort.
       if (sort !== 'position') setParam('sort', 'position')
       else list.reload()
+      setDragOrder(null)
     } catch (err) {
       notify(formatApiError(err), 'error')
       setDragOrder(null)
@@ -110,7 +126,10 @@ export function TodosPage() {
     next.splice(to, 0, moved)
     void persistOrder(next)
   }
-  const suggestions = useResource(() => todos.suggestions(), [])
+  const suggestions = useResource(
+    () => (suggestionsEnabled ? todos.suggestions() : Promise.resolve([])),
+    [suggestionsEnabled],
+  )
   // Counted over every todo, not the current filter — otherwise the ring would
   // read 100% the moment you filtered to "Done".
   const allTodos = useResource(() => todos.list(), [])
@@ -184,7 +203,27 @@ export function TodosPage() {
         }
       />
 
-      {suggestions.data && suggestions.data.length > 0 ? (
+      {suggestionsEnabled && suggestionsHidden && (suggestions.data?.length ?? 0) > 0 ? (
+        <button
+          type="button"
+          onClick={() => {
+            setSuggestionsHidden(false)
+            suggestions.reload()
+          }}
+          className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-brand-ring bg-brand-soft px-3 py-1.5 text-[12.5px] font-medium text-brand-strong transition-colors hover:bg-brand-soft/80"
+        >
+          <Icon name="sparkles" size={14} />
+          Suggestions
+          <span className="rounded-full bg-brand/15 px-1.5 py-0.5 text-[11px]">
+            {suggestions.data?.length}
+          </span>
+        </button>
+      ) : null}
+
+      {suggestionsEnabled &&
+      !suggestionsHidden &&
+      suggestions.data &&
+      suggestions.data.length > 0 ? (
         <Card className="mb-4 border-brand-ring bg-brand-soft">
           <CardHeader
             title={
@@ -194,9 +233,22 @@ export function TodosPage() {
               </span>
             }
             subtitle="Dates elsewhere in the app that nothing is tracking yet"
+            action={
+              <button
+                type="button"
+                onClick={() => setSuggestionsHidden(true)}
+                aria-label="Hide suggestions"
+                className="rounded-lg p-1.5 text-ink-3 transition-colors hover:bg-surface/70 hover:text-ink"
+              >
+                <Icon name="close" size={14} />
+              </button>
+            }
           />
           <ul className="mt-3 flex flex-col gap-2">
-            {suggestions.data.map((suggestion, index) => (
+            {(suggestionsExpanded
+              ? suggestions.data
+              : suggestions.data.slice(0, 3)
+            ).map((suggestion, index) => (
               <li
                 key={`${suggestion.kind}-${suggestion.application ?? suggestion.person}-${index}`}
                 className="flex items-center gap-3 rounded-lg border border-brand-ring/70 bg-surface px-3 py-2"
@@ -227,6 +279,17 @@ export function TodosPage() {
               </li>
             ))}
           </ul>
+          {suggestions.data.length > 3 ? (
+            <button
+              type="button"
+              onClick={() => setSuggestionsExpanded(!suggestionsExpanded)}
+              className="mt-2 text-[12.5px] font-medium text-brand hover:underline"
+            >
+              {suggestionsExpanded
+                ? 'Show less'
+                : `View more (${suggestions.data.length - 3})`}
+            </button>
+          ) : null}
         </Card>
       ) : null}
 
@@ -368,7 +431,7 @@ export function TodosPage() {
                     </p>
                     {todo.description ? (
                       <p className="mt-0.5 line-clamp-2 text-[12.5px] text-ink-3">
-                        {todo.description}
+                        {plainText(todo.description)}
                       </p>
                     ) : null}
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]">
@@ -381,6 +444,11 @@ export function TodosPage() {
                         >
                           <Icon name={todo.is_overdue ? 'alert' : 'calendar'} size={12} />
                           {relativeDay(todo.due_date)}
+                          {todo.due_time
+                            ? ` · ${formatTime(todo.due_time)}${
+                                todo.due_end_time ? `–${formatTime(todo.due_end_time)}` : ''
+                              }`
+                            : ''}
                         </span>
                       ) : null}
                       {todo.application ? (
@@ -435,227 +503,18 @@ export function TodosPage() {
         choices={choices.data}
         onClose={() => setFormOpen(false)}
         onSaved={() => {
+          setDragOrder(null)
           list.reload()
           suggestions.reload()
           allTodos.reload()
         }}
         onDeleted={() => {
+          setDragOrder(null)
           list.reload()
           suggestions.reload()
           allTodos.reload()
         }}
       />
     </>
-  )
-}
-
-type TodoFormProps = {
-  open: boolean
-  onClose: () => void
-  onSaved: () => void
-  onDeleted: () => void
-  choices: TodoChoices | null
-  existing?: Todo | null
-  seed?: TodoSuggestion | null
-}
-
-function initialForm(existing?: Todo | null, seed?: TodoSuggestion | null) {
-  return {
-    title: existing?.title ?? seed?.title ?? '',
-    description: existing?.description ?? '',
-    due_date: existing?.due_date ?? seed?.due_date ?? '',
-    priority: existing?.priority ?? 'medium',
-    status: existing?.status ?? 'open',
-    application: (existing?.application ?? seed?.application ?? null) as number | null,
-    person: (existing?.person ?? seed?.person ?? null) as number | null,
-    company: (existing?.company ?? null) as number | null,
-  }
-}
-
-/** Body mounts only while open, so its state is seeded once and never synced. */
-function TodoForm(props: TodoFormProps) {
-  if (!props.open) return null
-  return <TodoFormBody {...props} />
-}
-
-function TodoFormBody({
-  open,
-  onClose,
-  onSaved,
-  onDeleted,
-  choices,
-  existing,
-  seed,
-}: TodoFormProps) {
-  const { notify } = useToast()
-  const [form, setForm] = useState(() => initialForm(existing, seed))
-  const [error, setError] = useState('')
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState(false)
-
-  const [applicationOptions, setApplicationOptions] = useState<ApplicationSummary[]>([])
-  const [personOptions, setPersonOptions] = useState<Person[]>([])
-  const [companyOptions, setCompanyOptions] = useState<Company[]>([])
-
-  useEffect(() => {
-    void Promise.all([applications.list(), people.list(), companies.list()]).then(
-      ([applicationRows, personRows, companyRows]) => {
-        setApplicationOptions(applicationRows)
-        setPersonOptions(personRows)
-        setCompanyOptions(companyRows)
-      },
-    )
-  }, [])
-
-  function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }))
-  }
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault()
-    setSaving(true)
-    setError('')
-    setErrors({})
-    const payload = { ...form, due_date: form.due_date || null }
-    try {
-      if (existing) await todos.update(existing.id, payload)
-      else await todos.create(payload)
-      notify(existing ? 'Todo updated.' : 'Todo added.')
-      onSaved()
-      onClose()
-    } catch (err) {
-      setError(formatApiError(err))
-      setErrors(fieldErrors(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function remove() {
-    if (!existing) return
-    try {
-      await todos.remove(existing.id)
-      notify('Todo deleted.')
-      onDeleted()
-      onClose()
-    } catch (err) {
-      notify(formatApiError(err), 'error')
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={existing ? 'Edit todo' : 'New todo'}
-      description="Link it to an application, a person or a company — or leave it standalone."
-      footer={
-        <>
-          {existing ? (
-            <Button variant="danger" onClick={() => void remove()} className="mr-auto">
-              Delete
-            </Button>
-          ) : null}
-          <Button type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" form="todo-form" variant="primary" loading={saving}>
-            {existing ? 'Save changes' : 'Add todo'}
-          </Button>
-        </>
-      }
-    >
-      <form id="todo-form" onSubmit={onSubmit} className="flex flex-col gap-4">
-        {error ? (
-          <p role="alert" className="rounded-lg border border-critical/25 bg-critical/10 px-3 py-2 text-[13px] text-ink">
-            {error}
-          </p>
-        ) : null}
-
-        <MentionInput
-          label="Title"
-          required
-          autoFocus
-          value={form.title}
-          error={errors.title}
-          onChange={(value) => set('title', value)}
-          placeholder="Message Sarah after the OA"
-        />
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Input
-            label="Due date"
-            type="date"
-            value={form.due_date}
-            error={errors.due_date}
-            onChange={(event) => set('due_date', event.target.value)}
-          />
-          <Select
-            label="Priority"
-            value={form.priority}
-            onChange={(event) => set('priority', event.target.value)}
-          >
-            {choices?.priority.map((choice) => (
-              <option key={choice.value} value={choice.value}>
-                {choice.label}
-              </option>
-            ))}
-          </Select>
-          <Select
-            label="Status"
-            value={form.status}
-            onChange={(event) => set('status', event.target.value)}
-          >
-            {choices?.status.map((choice) => (
-              <option key={choice.value} value={choice.value}>
-                {choice.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Combobox
-            label="Application"
-            value={form.application}
-            onChange={(id) => set('application', id)}
-            options={applicationOptions.map((application) => ({
-              id: application.id,
-              label: application.company_name,
-              hint: application.stage_display,
-            }))}
-            placeholder="None"
-          />
-          <Combobox
-            label="Person"
-            value={form.person}
-            onChange={(id) => set('person', id)}
-            options={personOptions.map((person) => ({
-              id: person.id,
-              label: person.full_name,
-            }))}
-            placeholder="None"
-          />
-          <Combobox
-            label="Company"
-            value={form.company}
-            onChange={(id) => set('company', id)}
-            options={companyOptions.map((company) => ({
-              id: company.id,
-              label: company.name,
-            }))}
-            placeholder="None"
-          />
-        </div>
-
-        <MentionTextarea
-          label="Description"
-          value={form.description}
-          error={errors.description}
-          onChange={(value) => set('description', value)}
-          placeholder="@ to tag a contact, company or place"
-        />
-      </form>
-    </Modal>
   )
 }

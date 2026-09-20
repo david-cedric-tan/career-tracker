@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { formatApiError } from '../api/client'
-import { applications } from '../api/resources'
+import { applicationStages, applications } from '../api/resources'
 import type { Application, EventLog } from '../api/types'
+import { useResource } from '../hooks/useResource'
 import { cx, formatDate, formatDateTime } from '../lib/format'
 import { Button } from './ui/Button'
 import { ConfirmDelete } from './ui/ConfirmDelete'
+import { Combobox } from './ui/Combobox'
 import { Input, Textarea } from './ui/Field'
 import { Icon } from './ui/Icon'
 import { Modal } from './ui/Modal'
@@ -18,6 +20,8 @@ const EVENT_STYLE: Record<
   stage: { icon: 'arrowRight', dot: 'bg-brand', ring: 'ring-brand-soft' },
   outcome: { icon: 'check', dot: 'bg-good', ring: 'ring-good/15' },
   edited: { icon: 'edit', dot: 'bg-ink-3', ring: 'ring-surface-2' },
+  // Finished on your side — solid green tick before the temporary wait.
+  stage_done: { icon: 'check', dot: 'bg-good', ring: 'ring-good/15' },
   // Softer than a stage move on purpose: waiting is a state the application
   // sits in, not a step it took. Hollow rather than filled, so a run of them
   // never competes with the transitions either side.
@@ -50,11 +54,25 @@ function headline(log: EventLog) {
           Marked <strong className="font-semibold">{log.curr_outcome_display}</strong>
         </>
       )
+    case 'stage_done':
+      return (
+        <>
+          <span className="text-good">Finished</span>{' '}
+          <strong className="font-semibold">{log.curr_stage_display}</strong>
+        </>
+      )
     case 'waiting_started':
       return (
         <>
-          <span className="text-warning">Waiting for response</span>
-          <span className="text-ink-3"> after {log.curr_stage_display}</span>
+          <span
+            className={cx(
+              'inline-flex items-center rounded-full border border-warning/30 bg-warning/15',
+              'px-2 py-0.5 text-[12px] font-medium text-[#8a5d00] dark:text-warning',
+            )}
+          >
+            Waiting For Response
+          </span>
+          <span className="text-ink-3"> for {log.curr_stage_display}</span>
         </>
       )
     case 'waiting_ended':
@@ -248,9 +266,8 @@ function toLocalInput(iso: string): string {
   )
 }
 
-/** Only the two things a person can actually get wrong: when it happened, and
-    what they wrote about it. The stage and outcome a row records are history,
-    not a form field.
+/** Only the things a person can actually get wrong: when it happened, what
+    they wrote, and — for waiting / stage-done rows — which stage it refers to.
 
     Time as well as date, because the timeline sorts on the full timestamp: two
     events on the same day are ordered by their clock time, so "finished the
@@ -270,7 +287,15 @@ function EditEventModal({
   const { notify } = useToast()
   const [when, setWhen] = useState(() => toLocalInput(event.changed_at))
   const [note, setNote] = useState(event.note)
+  const [stage, setStage] = useState(event.curr_stage)
   const [saving, setSaving] = useState(false)
+  const canRetargetStage =
+    event.event_type === 'waiting_started' || event.event_type === 'stage_done'
+
+  const stageList = useResource(() => applicationStages.list(), [])
+  const stageRows = stageList.data ?? []
+  const stageOptions = stageRows.map((row) => ({ id: row.id, label: row.name }))
+  const stageOptionId = stageRows.find((row) => row.key === stage)?.id ?? null
 
   async function onSubmit(submitEvent: FormEvent) {
     submitEvent.preventDefault()
@@ -282,6 +307,7 @@ function EditEventModal({
           // than reinterpreting a naive local time in its own timezone.
           changed_at: new Date(when).toISOString(),
           note,
+          ...(canRetargetStage ? { stage } : {}),
         }),
       )
       notify('History entry updated.')
@@ -315,11 +341,25 @@ function EditEventModal({
           label="When it happened"
           type="datetime-local"
           required
-          autoFocus
+          autoFocus={!canRetargetStage}
           value={when}
           onChange={(changeEvent) => setWhen(changeEvent.target.value)}
-          help="The timeline orders entries by this, date and time."
         />
+        {canRetargetStage ? (
+          <Combobox
+            label={
+              event.event_type === 'waiting_started'
+                ? 'Waiting for which stage'
+                : 'Stage that was finished'
+            }
+            value={stageOptionId}
+            options={stageOptions}
+            onChange={(id) => {
+              const next = stageRows.find((row) => row.id === id)?.key
+              if (next) setStage(next)
+            }}
+          />
+        ) : null}
         <Textarea
           label="Note"
           value={note}

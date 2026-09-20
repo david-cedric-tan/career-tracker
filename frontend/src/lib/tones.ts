@@ -1,4 +1,4 @@
-export type Tone = 'neutral' | 'brand' | 'good' | 'warning' | 'critical' | 'serious'
+export type Tone = 'neutral' | 'brand' | 'good' | 'warning' | 'critical' | 'serious' | 'info'
 
 /** Stage and outcome share a vocabulary across every page — keep it in one place. */
 export const STAGE_TONE: Record<string, Tone> = {
@@ -9,6 +9,7 @@ export const STAGE_TONE: Record<string, Tone> = {
   assessment_centre: 'brand',
   final_interview: 'brand',
   offer: 'good',
+  missed_deadline: 'warning',
 }
 
 /**
@@ -30,6 +31,7 @@ export const OUTCOME_TONE: Record<string, Tone> = {
   declined: 'neutral',
   withdrawn: 'neutral',
   ghosted: 'serious',
+  missed_deadline: 'warning',
 }
 
 export const PRIORITY_TONE: Record<string, Tone> = {
@@ -54,6 +56,14 @@ export const CHANNEL_ICON: Record<string, string> = {
   other: 'link',
 }
 
+/** Which app a message went through. */
+export const MESSAGE_CHANNEL_ICON: Record<string, string> = {
+  linkedin: 'link',
+  email: 'mail',
+  sms: 'phone',
+  other: 'sparkles',
+}
+
 export const CATCHUP_FORMAT_ICON: Record<string, string> = {
   coffee: 'coffee',
   call: 'phone',
@@ -69,12 +79,58 @@ export const CALENDAR_DOMAIN_META: Record<
   string,
   { label: string; tone: Tone; icon: string }
 > = {
+  // One hue per family so a week reads at a glance: green tasks, brand-red
+  // application dates (amber when it's a reapply), violet catch-ups, orange
+  // people follow-ups, and plain events in neutral.
   todo: { label: 'Task', tone: 'good', icon: 'checklist' },
   application_followup: { label: 'Follow-up', tone: 'brand', icon: 'briefcase' },
   application_reapply: { label: 'Reapply', tone: 'warning', icon: 'briefcase' },
+  // Deadlines take their colour from urgency (see DEADLINE_URGENCY_TONE);
+  // this is the legend/default.
+  application_deadline: { label: 'Deadline', tone: 'critical', icon: 'alert' },
+  application_stage: { label: 'Stage move', tone: 'neutral', icon: 'trendingUp' },
   person_chat: { label: 'Catch-up due', tone: 'serious', icon: 'users' },
-  catchup_followup: { label: 'Meeting follow-up', tone: 'neutral', icon: 'coffee' },
-  custom: { label: 'Event', tone: 'brand', icon: 'calendar' },
+  catchup: { label: 'Catch-up', tone: 'info', icon: 'coffee' },
+  catchup_followup: { label: 'Meeting follow-up', tone: 'serious', icon: 'coffee' },
+  custom: { label: 'Event', tone: 'neutral', icon: 'calendar' },
+}
+
+/** A closing date's colour by how close it is — used outside the calendar
+ *  chips (e.g. application lists). Calendar deadline chips stay critical. */
+export const DEADLINE_URGENCY_TONE: Record<string, Tone> = {
+  past: 'neutral',
+  critical: 'critical',
+  soon: 'warning',
+  later: 'good',
+}
+
+/** The chip colour for a calendar entry.
+ *  Application deadlines always use critical red — matches the filter legend. */
+export function calendarEventTone(event: { domain: string; urgency?: string }): Tone {
+  if (event.domain === 'application_deadline') return 'critical'
+  return CALENDAR_DOMAIN_META[event.domain]?.tone ?? 'neutral'
+}
+
+/** Chip/badge surface for a tone — background, text and border together. */
+export const TONE_CHIP: Record<Tone, string> = {
+  neutral: 'bg-surface-2 text-ink-2 border-line',
+  brand: 'bg-brand-soft text-brand-strong border-brand-ring',
+  good: 'bg-good/10 text-good border-good/25',
+  warning: 'bg-warning/15 text-[#8a5d00] dark:text-warning border-warning/30',
+  serious: 'bg-serious/15 text-[#a04a1f] dark:text-serious border-serious/30',
+  critical: 'bg-critical/10 text-critical border-critical/40',
+  info: 'bg-info/10 text-info border-info/25',
+}
+
+/** Solid dot for cramped month cells on phones. */
+export const TONE_DOT: Record<Tone, string> = {
+  neutral: 'bg-ink-3',
+  brand: 'bg-brand',
+  good: 'bg-good',
+  warning: 'bg-warning',
+  serious: 'bg-serious',
+  critical: 'bg-critical',
+  info: 'bg-info',
 }
 
 
@@ -92,4 +148,5 @@ export const TONE_COLOR: Record<Tone, string> = {
   warning: 'var(--color-warning)',
   serious: 'var(--color-serious)',
   critical: 'var(--color-critical)',
+  info: 'var(--color-info)',
 }

@@ -25,6 +25,21 @@ export const FONTS: Record<string, FontOption> = {
     family: `Georgia, "Times New Roman", serif`,
     googleFont: null,
   },
+  timesNewRoman: {
+    label: 'Times New Roman',
+    // Liberation Serif is the metric-compatible substitute shipped on most
+    // Linux boxes, so the layout doesn't shift on a machine without the real
+    // thing. No Google Font: it's installed on Windows and macOS already.
+    family: `"Times New Roman", Times, "Liberation Serif", serif`,
+    googleFont: null,
+  },
+  calibri: {
+    // Carlito is the metric-compatible clone that ships on most Linux
+    // distributions, so the layout holds on a machine without Calibri itself.
+    label: 'Calibri',
+    family: `Calibri, Carlito, "Segoe UI", sans-serif`,
+    googleFont: null,
+  },
   helvetica: {
     label: 'Helvetica',
     family: `Helvetica, Arial, sans-serif`,

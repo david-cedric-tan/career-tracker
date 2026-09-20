@@ -30,17 +30,39 @@ const ORDERINGS = [
 ]
 
 const VIEWS = [
+  { value: 'bubbles', label: 'Bubbles', icon: 'sparkles' },
   { value: 'table', label: 'Table', icon: 'table' },
   { value: 'cards', label: 'Cards', icon: 'briefcase' },
-  { value: 'bubbles', label: 'Bubbles', icon: 'sparkles' },
 ] as const
 type View = (typeof VIEWS)[number]['value']
 
 const GROUPINGS = [
-  { value: 'stage', label: 'By stage' },
-  { value: 'region', label: 'By region' },
+  { value: 'portfolio', label: 'Current' },
+  { value: 'furthest', label: 'Last Stage Reached' },
+  { value: 'region', label: 'By Region' },
 ] as const
 type GroupBy = (typeof GROUPINGS)[number]['value']
+
+// Careers and side jobs are different pipelines: a casual retail shift
+// shouldn't sit next to graduate programmes. Careers is the default lens;
+// the toggle swaps to side jobs, or shows both.
+const KINDS = [
+  { value: 'careers', label: 'Careers', icon: 'briefcase' },
+  { value: 'side', label: 'Side jobs', icon: 'clock' },
+  { value: 'all', label: 'All', icon: 'list' },
+] as const
+type Kind = (typeof KINDS)[number]['value']
+
+function parseKind(raw: string | null): Kind {
+  if (raw === 'side' || raw === 'all') return raw
+  return 'careers'
+}
+
+function parseGroupBy(raw: string | null): GroupBy {
+  if (raw === 'region' || raw === 'furthest') return raw
+  // Legacy `stage` and bare default both mean current portfolio.
+  return 'portfolio'
+}
 
 export function ApplicationsPage() {
   const [params, setParams] = useSearchParams()
@@ -64,8 +86,9 @@ export function ApplicationsPage() {
   const ordering = params.get('ordering') ?? '-applied_at'
   const view: View = VIEWS.some((v) => v.value === params.get('view'))
     ? (params.get('view') as View)
-    : 'table'
-  const groupBy: GroupBy = params.get('groupBy') === 'region' ? 'region' : 'stage'
+    : 'bubbles'
+  const groupBy: GroupBy = parseGroupBy(params.get('groupBy'))
+  const kind: Kind = parseKind(params.get('kind'))
 
   // So an application opened from here can send you back to this exact slice.
   rememberList('applications', params.toString() ? `?${params}` : '')
@@ -77,14 +100,17 @@ export function ApplicationsPage() {
     () =>
       applications.list({
         stage,
-        outcome,
+        // "offers" is the dashboard's grouping: an offer on the table or
+        // one already taken. The API takes the outcomes it stands for.
+        outcome: outcome === 'offers' ? ['offer_received', 'accepted'] : outcome,
         company,
         region,
         awaiting,
+        kind: kind === 'all' ? '' : kind,
         ordering,
         search: debouncedSearch,
       }),
-    [stage, outcome, company, region, awaiting, ordering, debouncedSearch],
+    [stage, outcome, company, region, awaiting, kind, ordering, debouncedSearch],
   )
 
   function setParam(key: string, value: string) {
@@ -116,12 +142,42 @@ export function ApplicationsPage() {
         }
         action={
           <>
+            <div
+              className="inline-flex rounded-lg border border-line bg-surface p-0.5"
+              role="group"
+              aria-label="Careers or side jobs"
+            >
+              {KINDS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setParam('kind', option.value === 'careers' ? '' : option.value)}
+                  aria-pressed={kind === option.value}
+                  title={
+                    option.value === 'side'
+                      ? 'Applications whose listing is tagged "Side Job"'
+                      : option.value === 'careers'
+                        ? 'Everything that isn’t a side job'
+                        : 'Both together'
+                  }
+                  className={cx(
+                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                    kind === option.value
+                      ? 'bg-brand-soft text-brand-strong'
+                      : 'text-ink-2 hover:text-ink',
+                  )}
+                >
+                  <Icon name={option.icon} size={15} />
+                  <span className="hidden sm:inline">{option.label}</span>
+                </button>
+              ))}
+            </div>
             <div className="inline-flex rounded-lg border border-line bg-surface p-0.5">
               {VIEWS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  onClick={() => setParam('view', option.value === 'table' ? '' : option.value)}
+                  onClick={() => setParam('view', option.value === 'bubbles' ? '' : option.value)}
                   aria-pressed={view === option.value}
                   title={`${option.label} view`}
                   className={cx(
@@ -165,7 +221,7 @@ export function ApplicationsPage() {
         </div>
 
         <Select value={stage} onChange={(event) => setParam('stage', event.target.value)} aria-label="Filter by stage">
-          <option value="">All stages</option>
+          <option value="">All Stages</option>
           {choices.data?.stage.map((choice) => (
             <option key={choice.value} value={choice.value}>
               {choice.label}
@@ -174,7 +230,8 @@ export function ApplicationsPage() {
         </Select>
 
         <Select value={outcome} onChange={(event) => setParam('outcome', event.target.value)} aria-label="Filter by outcome">
-          <option value="">All outcomes</option>
+          <option value="">All Outcomes</option>
+          <option value="offers">Offers (received or accepted)</option>
           {choices.data?.outcome.map((choice) => (
             <option key={choice.value} value={choice.value}>
               {choice.label}
@@ -183,7 +240,7 @@ export function ApplicationsPage() {
         </Select>
 
         <Select value={region} onChange={(event) => setParam('region', event.target.value)} aria-label="Filter by region">
-          <option value="">All regions</option>
+          <option value="">All Regions</option>
           {countryList.data?.map((entry) => (
             <option key={entry.id} value={entry.id}>
               {entry.name}
@@ -228,12 +285,14 @@ export function ApplicationsPage() {
       ) : null}
 
       {view === 'bubbles' ? (
-        <div className="mb-3 inline-flex rounded-lg border border-line bg-surface p-0.5">
+        <div className="mb-3 inline-flex flex-wrap rounded-lg border border-line bg-surface p-0.5">
           {GROUPINGS.map((option) => (
             <button
               key={option.value}
               type="button"
-              onClick={() => setParam('groupBy', option.value === 'stage' ? '' : option.value)}
+              onClick={() =>
+                setParam('groupBy', option.value === 'portfolio' ? '' : option.value)
+              }
               aria-pressed={groupBy === option.value}
               className={cx(
                 'rounded-md px-2.5 py-1.5 text-[12.5px] font-medium transition-colors',
@@ -256,11 +315,19 @@ export function ApplicationsPage() {
         <Card padded={false}>
           <EmptyState
             icon="briefcase"
-            title={activeFilters || search ? 'No matches' : 'No applications yet'}
+            title={
+              activeFilters || search
+                ? 'No matches'
+                : kind === 'side'
+                  ? 'No side jobs yet'
+                  : 'No applications yet'
+            }
             description={
               activeFilters || search
                 ? 'Try loosening the filters above.'
-                : 'Log your first application and the pipeline starts filling in.'
+                : kind === 'side'
+                  ? 'Side jobs are applications whose listing is tagged "Side Job" — link one and it lands here.'
+                  : 'Log your first application and the pipeline starts filling in.'
             }
             action={
               !activeFilters && !search ? (
@@ -406,7 +473,7 @@ function MobileRow({ row }: { row: ApplicationSummary | Application }) {
   return (
     <Link
       to={`/applications/${row.id}`}
-      className="block rounded-card border border-line bg-surface p-3.5 transition-colors hover:bg-surface-2"
+      className="glass-panel block rounded-card border border-line bg-surface p-3.5 transition-colors hover:bg-surface-2"
     >
       <div className="flex items-start justify-between gap-3">
         <CompanyMark name={row.company_name} logo={row.company_logo} size={32} />

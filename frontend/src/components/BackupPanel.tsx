@@ -1,6 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { formatApiError } from '../api/client'
 import { backup, type BackupCounts, type BackupFormat } from '../api/resources'
+import { useAuth } from '../auth/context'
 import { cx } from '../lib/format'
 import { downloadFile } from '../lib/download'
 import { Button, Spinner } from './ui/Button'
@@ -12,7 +13,9 @@ import { useResource } from '../hooks/useResource'
 import { useToast } from './ui/toast-context'
 
 const SHEET_LABELS: Record<string, string> = {
+  stages: 'Pipeline stages',
   companies: 'Companies',
+  company_notes: 'Company notes',
   roles: 'Roles',
   locations: 'Locations',
   resumes: 'Resumes',
@@ -20,10 +23,21 @@ const SHEET_LABELS: Record<string, string> = {
   applications: 'Applications',
   application_events: 'History entries',
   people: 'Contacts',
+  person_companies: 'Contact roles',
   contact_methods: 'Contact channels',
   catchups: 'Catch-ups',
   todos: 'Todos',
+  calendar_events: 'Calendar events',
+  library_documents: 'Application documents',
   experiences: 'Experience',
+  education: 'Education',
+  certifications: 'Certifications',
+  extracurriculars: 'Extra-curriculars',
+  profile_links: 'Profile links',
+  profile_addresses: 'Addresses',
+  refinement_notes: 'Refinement tickets',
+  refinement_messages: 'Refinement messages',
+  refinement_events: 'Refinement history',
 }
 
 function CountGrid({ counts }: { counts: BackupCounts }) {
@@ -50,12 +64,14 @@ function CountGrid({ counts }: { counts: BackupCounts }) {
  * what the file contains before anything is written.
  */
 export function BackupPanel() {
+  const { user } = useAuth()
   const { notify } = useToast()
   const inputRef = useRef<HTMLInputElement>(null)
   const summary = useResource(() => backup.summary(), [])
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [adminBusy, setAdminBusy] = useState(false)
   const [pending, setPending] = useState<{
     file: File
     counts: BackupCounts
@@ -73,6 +89,19 @@ export function BackupPanel() {
       setError(err instanceof Error ? err.message : formatApiError(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function downloadFullBackup() {
+    setAdminBusy(true)
+    setError('')
+    try {
+      await downloadFile(backup.fullBackupUrl(), 'career-tracker-full-backup.zip')
+      notify('Full system backup downloaded.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : formatApiError(err))
+    } finally {
+      setAdminBusy(false)
     }
   }
 
@@ -143,8 +172,9 @@ export function BackupPanel() {
             {summary.data.file_count > 0 ? (
               <p className="mt-2 text-[12px] text-ink-3">
                 Plus {summary.data.file_count} uploaded file
-                {summary.data.file_count === 1 ? '' : 's'} (resumes, photos, logos) —
-                only the "Full Data + Resources" backup includes those.
+                {summary.data.file_count === 1 ? '' : 's'} (resumes, documents, photos,
+                logos, icons, attachments) — only the "Full Data + Resources" backup
+                includes those.
               </p>
             ) : null}
           </>
@@ -206,6 +236,33 @@ export function BackupPanel() {
         </p>
       ) : null}
 
+      {user?.is_superuser ? (
+        <div className="mt-4 rounded-lg border border-ink/10 bg-ink/[0.03] p-3">
+          <p className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink-2">
+            <Icon name="settings" size={14} />
+            Admin — move this app to another machine
+            <InfoHint label="Every account's data and every table, not just yours — for copying this install to a new PC. Restoring it replaces the whole database, so it's a terminal command (restore_full_backup) on the destination machine, not a button here." />
+          </p>
+          <Button
+            size="sm"
+            className="mt-2"
+            onClick={() => void downloadFullBackup()}
+            disabled={adminBusy}
+            loading={adminBusy}
+            icon={adminBusy ? undefined : <Icon name="library" size={14} />}
+          >
+            Download everything (.zip)
+          </Button>
+          <p className="mt-1.5 text-[11.5px] text-ink-3">
+            On the new machine: run migrations, then{' '}
+            <code className="rounded bg-ink/10 px-1 py-0.5">
+              python manage.py restore_full_backup &lt;file&gt;
+            </code>
+            .
+          </p>
+        </div>
+      ) : null}
+
       <Modal
         open={pending !== null}
         onClose={() => setPending(null)}
@@ -247,7 +304,7 @@ export function BackupPanel() {
               {pending.fileCount > 0 ? (
                 <p className="mt-2 text-[12px] text-ink-3">
                   Plus {pending.fileCount} file{pending.fileCount === 1 ? '' : 's'} to reattach
-                  (resumes, photos, logos).
+                  (resumes, documents, photos, logos, icons, attachments).
                 </p>
               ) : null}
             </div>

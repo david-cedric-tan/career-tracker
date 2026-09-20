@@ -11,10 +11,10 @@ from network.models import Person
 
 
 class CatchupFormat(models.TextChoices):
-    COFFEE = "coffee", "Coffee / in person"
-    CALL = "call", "Phone call"
-    VIDEO = "video", "Video call"
-    EVENT = "event", "Event / conference"
+    COFFEE = "coffee", "Coffee / In Person"
+    CALL = "call", "Phone Call"
+    VIDEO = "video", "Video Call"
+    EVENT = "event", "Event / Conference"
     MESSAGE = "message", "Messages"
     OTHER = "other", "Other"
 
@@ -34,6 +34,9 @@ class Catchup(models.Model):
     )
     # Only meaningful when format == OTHER — what "other" actually was.
     format_other = models.CharField(max_length=100, blank=True)
+    # Only meaningful when format == MESSAGE — which channel the message went
+    # through. Feeds Person.last_message_channel.
+    message_channel = models.CharField(max_length=20, blank=True)
     location = models.CharField(max_length=255, blank=True)
 
     minutes = models.TextField(blank=True)

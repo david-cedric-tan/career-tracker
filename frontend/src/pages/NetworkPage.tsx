@@ -7,6 +7,7 @@ import { NetworkGraph, type NetworkCluster } from '../components/network/Network
 import { PageHeader } from '../components/layout/PageHeader'
 import { Avatar } from '../components/ui/Avatar'
 import { Badge } from '../components/ui/Badge'
+import { CompanyChip } from '../components/ui/CompanyChip'
 import { CHANNEL_ICON, PERSON_STATUS_TONE } from '../lib/tones'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -19,8 +20,8 @@ import { rememberList } from '../lib/listState'
 import { cx, daysFromToday, formatDate, relativeDay } from '../lib/format'
 
 const VIEWS = [
-  { value: 'cards', label: 'Cards', icon: 'users' },
   { value: 'bubbles', label: 'Bubbles', icon: 'sparkles' },
+  { value: 'cards', label: 'Cards', icon: 'users' },
   { value: 'events', label: 'Events', icon: 'calendar' },
 ] as const
 
@@ -141,7 +142,7 @@ export function NetworkPage() {
           />
         </div>
         <Select value={status} onChange={(event) => setParam('status', event.target.value)} aria-label="Filter by status">
-          <option value="">All statuses</option>
+          <option value="">All Statuses</option>
           {choices.data?.status.map((choice) => (
             <option key={choice.value} value={choice.value}>
               {choice.label}
@@ -210,12 +211,19 @@ export function NetworkPage() {
 
 export function PersonCard({ person }: { person: Person }) {
   const overdue = person.next_chat_at ? daysFromToday(person.next_chat_at) < 0 : false
+  // Current employers only — a card is a "where are they now" glance.
+  const current = person.company_details.filter((company) => !company.is_past)
+  const companies = current.length ? current : person.company_details
 
   return (
-    <Link
-      to={`/network/${person.id}`}
-      className="flex h-full flex-col rounded-card border border-line bg-surface p-4 transition-colors hover:bg-surface-2"
-    >
+    // A stretched link rather than an <a> around everything: the company chips
+    // are links of their own, and nesting anchors is invalid HTML.
+    <div className="group/person relative flex h-full flex-col glass-panel rounded-card border border-line bg-surface p-4 transition-colors hover:bg-surface-2">
+      <Link
+        to={`/network/${person.id}`}
+        className="absolute inset-0 rounded-card"
+        aria-label={person.full_name}
+      />
       <div className="flex items-start gap-3">
         <Avatar name={person.full_name} src={person.photo} size="md" />
         <div className="min-w-0 flex-1">
@@ -229,11 +237,20 @@ export function PersonCard({ person }: { person: Person }) {
         </Badge>
       </div>
 
-      {person.company_names.length ? (
-        <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-ink-2">
-          <Icon name="building" size={14} className="text-ink-3" />
-          <span className="truncate">{person.company_names.join(', ')}</span>
-        </p>
+      {companies.length ? (
+        <div className="relative z-10 mt-3 flex flex-wrap gap-1.5">
+          {companies.map((company) => (
+            <CompanyChip
+              key={company.id}
+              size="sm"
+              label={company.name}
+              fullName={company.full_name}
+              logo={company.logo}
+              companyId={company.id}
+              className={cx(company.is_past && 'opacity-60')}
+            />
+          ))}
+        </div>
       ) : null}
 
       {person.preferred_contact_display ? (
@@ -263,7 +280,7 @@ export function PersonCard({ person }: { person: Person }) {
           <span className="text-ink-3">No chat scheduled</span>
         )}
       </div>
-    </Link>
+    </div>
   )
 }
 
@@ -317,7 +334,7 @@ function EventGraph({ people: rows }: { people: Person[] }) {
         <EmptyState
           icon="calendar"
           title="No events with people yet"
-          description="Add a calendar event — a careers fair, an info session, an assessment centre — and tag who you met there. It'll show up here as a ring."
+          description="Add a calendar event — a careers fair, an info session, an Assessment Center — and tag who you met there. It'll show up here as a ring."
           action={
             <Link to="/calendar?new=1">
               <Button variant="primary" icon={<Icon name="plus" size={15} />}>

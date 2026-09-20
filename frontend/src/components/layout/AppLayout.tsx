@@ -18,13 +18,15 @@ import {
   type MotionLevel,
 } from '../../lib/mediaSettings'
 import { TooltipLayer } from '../ui/TooltipLayer'
-import { cx, displayName } from '../../lib/format'
+import { cx, displayName, shortName } from '../../lib/format'
 import { Avatar } from '../ui/Avatar'
 import { Icon } from '../ui/Icon'
-import { ThemeToggle } from '../ui/ThemeToggle'
+import { LotsoScene } from '../LotsoScene'
+import { SCENES, hoverTrackFor, useBrandScene, writeScene, type Scene } from '../../lib/brandScene'
 import { Wallpaper } from './Wallpaper'
 import { RefinementLog } from '../devmode/RefinementLog'
-import { useDeveloperMode } from '../../hooks/useDeveloperMode'
+import { useUnseenReplies } from '../devmode/useUnseenReplies'
+import { listKeyForPath, listPath } from '../../lib/listState'
 
 /** `fx` is the hover animation for each row — matched to the destination, not
     just "something moves". See NavEffect. */
@@ -35,7 +37,7 @@ const NAV = [
   { to: '/catchups', label: 'Catch-ups', icon: 'coffee', fx: 'steam' as const },
   { to: '/todos', label: 'Todos', icon: 'checklist', fx: 'ticks' as const },
   { to: '/calendar', label: 'Calendar', icon: 'calendar', fx: 'swing' as const },
-  { to: '/resumes', label: 'Resumes', icon: 'file', fx: 'write' as const },
+  { to: '/files', label: 'File Directory', icon: 'file', fx: 'write' as const },
   { to: '/job-directory', label: 'Job Directory', icon: 'library', fx: 'books' as const },
 ]
 
@@ -44,7 +46,7 @@ const NAV = [
  * profile, while the wordmark goes home. Splitting them keeps each link's
  * destination guessable from what you clicked.
  */
-export const APP_VERSION = '1.1'
+export const APP_VERSION = '1.5'
 
 /** The making-of, for the credit screen. */
 const CREDITS = [
@@ -61,54 +63,6 @@ const NATURE_BIRDS = [
   { top: '40%', duration: 6.1, delay: 3.2 },
 ]
 
-/** The two moods the about screen can be in. */
-const SCENES = {
-  windy: { label: 'Windy', track: '/windy.mp3', icon: 'cloudSnow' },
-  nature: { label: 'Nature', track: '/nature.mp3', icon: 'sun' },
-} as const
-
-type Scene = keyof typeof SCENES
-
-const SCENE_KEY = 'career-tracker:brand-scene'
-const SCENE_EVENT = 'brand-scene-change'
-
-function readScene(): Scene {
-  try {
-    return localStorage.getItem(SCENE_KEY) === 'nature' ? 'nature' : 'windy'
-  } catch {
-    return 'windy'
-  }
-}
-
-function writeScene(scene: Scene) {
-  try {
-    localStorage.setItem(SCENE_KEY, scene)
-  } catch {
-    // The choice still holds for this visit.
-  }
-  // The sidebar and the about screen are separate trees, so a plain setState
-  // in one can't reach the other — switching mood has to repaint the logo
-  // straight away, not on the next reload.
-  window.dispatchEvent(new Event(SCENE_EVENT))
-}
-
-/** The saved mood, kept in step across every component that draws it. */
-function useBrandScene(): Scene {
-  const [scene, setScene] = useState<Scene>(readScene)
-
-  useEffect(() => {
-    const sync = () => setScene(readScene())
-    window.addEventListener(SCENE_EVENT, sync)
-    // `storage` only fires in *other* tabs, so it covers a second window.
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(SCENE_EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [])
-
-  return scene
-}
 
 /** How long the about screen's soundtrack takes to reach full volume. */
 const CREDIT_FADE_MS = 1600
@@ -172,14 +126,19 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
       runTimer.current = window.setTimeout(stopWeather, motion.runMs)
     }
     setActive(true)
+    // Re-read every time: the mood may have been switched on the about screen
+    // since the last hover. The Theme scene has no track, so there's nothing
+    // to play; Lotso plays the nature loop here rather than its own song.
+    const track = hoverTrackFor(scene)
+    if (!track) {
+      audio.current?.pause()
+      return
+    }
     if (!audio.current) {
       audio.current = new Audio()
       audio.current.loop = true
       audio.current.volume = 0.35
     }
-    // Re-read every time: the mood may have been switched on the about screen
-    // since the last hover.
-    const track = SCENES[scene].track
     if (!audio.current.src.endsWith(track)) audio.current.src = track
     audio.current.volume = media.musicVolume
     if (media.musicVolume <= 0) return
@@ -305,16 +264,23 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
         // lines, and since the scene fills the link's box, the grass ended up
         // stranded at the bottom of a tall box with a gap above it. One tight
         // line means the weather hugs the letters.
-        className="relative select-none overflow-hidden whitespace-nowrap rounded px-1 py-1 text-[17px] font-extrabold uppercase leading-none tracking-normal text-ink transition-colors hover:text-brand"
+        className={cx(
+          'relative select-none overflow-hidden whitespace-nowrap rounded px-1 py-1 text-[17px] font-extrabold uppercase leading-none tracking-normal text-ink transition-colors hover:text-brand',
+          // A strip of ground under the letters for the sleeping bear to lie
+          // on, so he's in front of nothing rather than behind the wordmark.
+          scene === 'lotso' && 'pb-5',
+        )}
       >
         {/* The weather runs across the wordmark too, driven by the icon's
             hover — the logo is one object, so half of it reacting looked like
             a bug rather than a flourish. */}
         {scene === 'nature' ? (
           <NatureScene active={active} settling={settling} wide />
-        ) : (
+        ) : scene === 'windy' ? (
           <BrandClouds active={active} settling={settling} wide />
-        )}
+        ) : scene === 'lotso' ? (
+          <LotsoScene active={active} settling={settling} wide />
+        ) : null}
         <span className={cx('relative z-10 inline-block', active && scene === 'windy' && 'word-blown')}>
           Career Tracker
         </span>
@@ -353,15 +319,17 @@ function BrandMark({
       className={cx(
         'relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg shadow-sm',
         'transition-colors duration-700',
-        scene === 'nature' ? 'bg-emerald-600' : 'bg-brand',
+        scene === 'nature' ? 'bg-emerald-600' : scene === 'lotso' ? 'bg-pink-300' : 'bg-brand',
       )}
     >
       <img src="/fuji_1.svg" alt="" className="relative z-10 size-9 object-contain" />
       {scene === 'nature' ? (
         <NatureScene active={active} settling={settling} />
-      ) : (
+      ) : scene === 'windy' ? (
         <BrandClouds active={active} settling={settling} />
-      )}
+      ) : scene === 'lotso' ? (
+        <LotsoScene active={active} settling={settling} />
+      ) : null}
     </span>
   )
 }
@@ -464,14 +432,21 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
   // One element reused across scenes: swapping `src` keeps a single audio
   // object rather than leaving the previous track alive and overlapping.
   useEffect(() => {
+    if (fade.current !== null) window.clearInterval(fade.current)
+
+    // Theme has no soundtrack — only Windy and Nature do.
+    const track = SCENES[scene].track
+    if (!track) {
+      audio.current?.pause()
+      return
+    }
+
     const element = audio.current ?? new Audio()
     audio.current = element
     element.loop = true
-    if (element.src !== new URL(SCENES[scene].track, location.href).href) {
-      element.src = SCENES[scene].track
+    if (element.src !== new URL(track, location.href).href) {
+      element.src = track
     }
-
-    if (fade.current !== null) window.clearInterval(fade.current)
 
     if (!playing) {
       element.pause()
@@ -508,6 +483,8 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
   )
 
   const nature = scene === 'nature'
+  const themed = scene === 'theme'
+  const lotso = scene === 'lotso'
 
   // Rendered into <body> rather than where it sits in the tree. On mobile the
   // brand lives inside the sticky header, which has its own `backdrop-blur` —
@@ -521,8 +498,16 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       className={cx(
         'brand-credit fixed inset-0 z-[90] grid cursor-pointer place-items-center overflow-y-auto p-6 backdrop-blur-md',
-        nature ? 'bg-emerald-950/55' : 'bg-slate-950/55',
+        nature ? 'bg-emerald-950/55' : lotso ? 'bg-pink-300/80' : themed ? null : 'bg-slate-950/55',
       )}
+      style={
+        themed
+          ? {
+              backgroundColor:
+                'color-mix(in srgb, var(--color-brand) 30%, rgb(2 6 23 / 0.72))',
+            }
+          : undefined
+      }
     >
       {/* Clicks inside shouldn't dismiss — the vinyl and the scene switch both
           live here, and closing on every tap would make them unusable. */}
@@ -536,14 +521,16 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
         <span
           className={cx(
             'brand-credit-mark relative grid size-32 place-items-center overflow-hidden rounded-3xl shadow-2xl',
-            nature ? 'bg-emerald-600' : 'bg-brand',
+            nature ? 'bg-emerald-600' : lotso ? 'bg-pink-300' : 'bg-brand',
           )}
         >
           {nature ? <NatureScene /> : null}
+          {lotso ? <LotsoScene /> : null}
           <img src="/fuji_1.svg" alt="" className="relative z-10 size-28 object-contain" />
           {/* Always moving here — the mark is the subject of this screen, so
-              there's no hover to wait for. */}
-          {nature ? null : <BrandClouds active thickness={5} />}
+              there's no hover to wait for. The themed scene stays bare: its
+              point is the palette, and weather on top only muddies it. */}
+          {scene === 'windy' ? <BrandClouds active thickness={5} /> : null}
         </span>
 
         <div className="space-y-1.5">
@@ -626,15 +613,22 @@ function Vinyl({
   tuning: boolean
   onTune: () => void
 }) {
+  // Theme is the one scene with no soundtrack — Windy and Nature are the
+  // only two that carry one. The record shouldn't claim to be playing
+  // something that was never there.
+  const hasTrack = Boolean(SCENES[scene].track)
+  const spinning = playing && hasTrack
+
   return (
     <div className="flex flex-col items-center gap-3">
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={onToggle}
-          aria-pressed={playing}
-          aria-label={playing ? 'Pause the soundtrack' : 'Play the soundtrack'}
-          className={cx('vinyl', playing && 'is-spinning', `vinyl-${scene}`)}
+          disabled={!hasTrack}
+          aria-pressed={spinning}
+          aria-label={hasTrack ? (playing ? 'Pause the soundtrack' : 'Play the soundtrack') : 'This scene has no soundtrack'}
+          className={cx('vinyl', spinning && 'is-spinning', `vinyl-${scene}`, !hasTrack && 'opacity-60')}
         >
           <span className="vinyl-groove" />
           <span className="vinyl-groove vinyl-groove-2" />
@@ -652,17 +646,19 @@ function Vinyl({
           </span>
           {/* Counter-spins, so the transport icon stays upright on a turning
               record — and it's what tells you the disc is a button at all. */}
-          <span className={cx('vinyl-transport', playing && 'is-spinning')}>
-            <Icon name={playing ? 'pause' : 'play'} size={15} />
-          </span>
+          {hasTrack ? (
+            <span className={cx('vinyl-transport', spinning && 'is-spinning')}>
+              <Icon name={playing ? 'pause' : 'play'} size={15} />
+            </span>
+          ) : null}
         </button>
 
         <div className="text-left">
           <p className="text-[13px] font-semibold text-white">
-            {playing ? 'Now playing' : 'Paused'}
+            {hasTrack ? (playing ? 'Now playing' : 'Paused') : 'No soundtrack'}
           </p>
           <p className="text-[11px] text-white/50">
-            {SCENES[scene].label} · tap the record to {playing ? 'pause' : 'play'}
+            {hasTrack ? `${SCENES[scene].label} · tap the record to ${playing ? 'pause' : 'play'}` : `${SCENES[scene].label} — visual only`}
           </p>
         </div>
       </div>
@@ -853,46 +849,57 @@ function NatureScene({
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cx(
-              'qa-fx-host flex items-center gap-3 rounded-lg px-3 py-2',
-              'text-sm font-medium transition-colors duration-150',
-              isActive
-                ? 'bg-brand-soft text-brand-strong'
-                : 'text-ink-2 hover:bg-brand-soft hover:text-brand-strong',
-            )
-          }
-        >
-          {/* The effect layers position themselves against this box, so the
-              sonar rings and shimmer stay icon-sized rather than sweeping the
-              whole row. Hover is detected on the row above it. */}
-          <span className="relative grid size-5 shrink-0 place-items-center">
-            <NavEffect fx={item.fx} />
-            <Icon
-              name={item.icon}
-              className={cx(
-                'relative',
-                item.fx === 'swing' && 'qa-swing nav-delayed',
-                hidesIcon(item.fx) && 'nav-icon-swap',
-              )}
-            />
-          </span>
-          {item.label}
-        </NavLink>
-      ))}
+      {NAV.map((item) => {
+        const key = listKeyForPath(item.to)
+        const to = key ? listPath(key) : item.to
+        return (
+          <NavLink
+            key={item.to}
+            to={to}
+            end={item.end}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cx(
+                'qa-fx-host flex items-center gap-3 rounded-lg px-3 py-2',
+                'text-sm font-medium transition-colors duration-150',
+                isActive
+                  ? 'bg-brand-soft text-brand-strong'
+                  : 'text-ink-2 hover:bg-brand-soft hover:text-brand-strong',
+              )
+            }
+          >
+            {/* The effect layers position themselves against this box, so the
+                sonar rings and shimmer stay icon-sized rather than sweeping the
+                whole row. Hover is detected on the row above it. */}
+            <span className="relative grid size-5 shrink-0 place-items-center">
+              <NavEffect fx={item.fx} />
+              <Icon
+                name={item.icon}
+                className={cx(
+                  'relative',
+                  item.fx === 'swing' && 'qa-swing nav-delayed',
+                  hidesIcon(item.fx) && 'nav-icon-swap',
+                )}
+              />
+            </span>
+            {item.label}
+          </NavLink>
+        )
+      })}
     </nav>
   )
 }
 
-function UserCard({ onNavigate }: { onNavigate?: () => void }) {
+function UserCard({
+  onNavigate,
+  onOpenTicket,
+}: {
+  onNavigate?: () => void
+  onOpenTicket?: (ticketId?: number) => void
+}) {
   const { user, logout } = useAuth()
-  const name = displayName(user) || '—'
+  const name = shortName(user) || '—'
+  const fullName = displayName(user) || name
 
   return (
     <div className="border-t border-line pt-3">
@@ -907,13 +914,21 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
             )
           }
         >
-          <Avatar name={name} src={user?.avatar} size="sm" />
+          <Avatar name={fullName} src={user?.avatar} size="sm" />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium text-ink">{name}</span>
-            <span className="block truncate text-[11px] text-ink-3">{user?.email || '—'}</span>
+            <span className="block truncate text-[13px] font-medium text-ink" title={fullName}>
+              {name}
+            </span>
+            {/* The handle, not the email: it's what identifies you to the
+                other person on this app (a refinement ticket is signed with
+                it), and an address in a sidebar is just noise you can't act
+                on. */}
+            <span className="block truncate text-[11px] text-ink-3">
+              {user?.username ? `@${user.username}` : '—'}
+            </span>
           </span>
         </NavLink>
-        <NotificationsPanel onNavigate={onNavigate} />
+        <NotificationsPanel onNavigate={onNavigate} onOpenTicket={onOpenTicket} />
         <NavLink
           to="/settings"
           onClick={onNavigate}
@@ -945,13 +960,31 @@ function UserCard({ onNavigate }: { onNavigate?: () => void }) {
 export function AppLayout() {
   const { user } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [developerMode] = useDeveloperMode()
   const [logOpen, setLogOpen] = useState(false)
+  const [focusTicketId, setFocusTicketId] = useState<number | null>(null)
+  // The quick-access button owns the bottom-right corner; the log window
+  // gets out of the way while the shortcuts are fanned out over that space.
+  const [quickOpen, setQuickOpen] = useState(false)
+  // Replies are announced by the ticket watcher (banner + bell); this only
+  // resets its "unseen" count when the log is opened.
+  const { clear: clearReplies } = useUnseenReplies(true)
+
+  function openRefinementLog(ticketId?: number) {
+    setFocusTicketId(ticketId && ticketId > 0 ? ticketId : null)
+    clearReplies()
+    setLogOpen(true)
+  }
+
+  function closeRefinementLog() {
+    setLogOpen(false)
+    setFocusTicketId(null)
+  }
   const location = useLocation()
   const navigate = useNavigate()
   // Clock/weather is a dashboard-only flourish — every other page just gets
   // the plain theme toggle, so the header stays quiet on pages people work in.
   const isDashboard = location.pathname === '/'
+  const isCalendar = location.pathname.startsWith('/calendar')
 
   // FR-AUTH-07 — runs once per account until dismissed. Computed during
   // render (matching the drawer-close pattern below) rather than in an
@@ -1032,7 +1065,7 @@ export function AppLayout() {
         <div className="flex-1 overflow-y-auto">
           <NavItems />
         </div>
-        <UserCard />
+        <UserCard onOpenTicket={openRefinementLog} />
       </aside>
       {/* Reserves the sidebar's width in the flex flow, since `fixed` takes
           the real aside out of it. */}
@@ -1066,12 +1099,15 @@ export function AppLayout() {
             <div className="flex flex-1 flex-col justify-center overflow-y-auto">
               <NavItems onNavigate={() => setDrawerOpen(false)} />
             </div>
-            <UserCard onNavigate={() => setDrawerOpen(false)} />
+            <UserCard
+              onNavigate={() => setDrawerOpen(false)}
+              onOpenTicket={openRefinementLog}
+            />
           </aside>
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         <header className="glass-panel sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-line bg-surface/85 px-3 py-2.5 backdrop-blur intern:bg-surface lg:hidden">
           <button
@@ -1089,30 +1125,25 @@ export function AppLayout() {
           <div className="flex min-w-0 flex-1 justify-center">
             <Brand />
           </div>
-          <ThemeToggle />
         </header>
 
-        {/* Theme toggle, pinned to the viewport's top-right corner. `fixed`
-            rather than `sticky` — a sticky element here proved to drift
-            during scroll in real browsers (the same quirk the sidebar hit;
-            see its `fixed` fix above). The dashboard is the one exception:
-            it builds its own sticky header (greeting + clock/weather + this
-            same toggle in one row) instead of this floating overlay — see
-            DashboardPage. */}
-        {!isDashboard ? (
-          <div className="pointer-events-none fixed top-4 right-6 z-20 hidden lg:block">
-            <div className="pointer-events-auto">
-              <ThemeToggle />
-            </div>
-          </div>
-        ) : null}
+        {/* No theme toggle in here. It used to float in the top-right corner
+            of every page, which put a control you touch once a month in the
+            same spot on every screen. Theme lives in Settings → Appearance;
+            the sign-in screen keeps its own toggle, since there's no Settings
+            to reach before you're in. */}
 
         <main
           className={cx(
-            'mx-auto w-full max-w-7xl flex-1 px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
+            'mx-auto w-full min-w-0 flex-1 overflow-x-hidden',
+            // Calendar fills the workspace (width + leftover height) with modest
+            // edge padding; other pages stay in the reading column.
+            isCalendar
+              ? 'flex max-w-none min-h-0 flex-col px-3 py-3 sm:px-4 sm:py-4 lg:px-5 lg:pb-4 xl:px-6'
+              : 'max-w-7xl px-3 py-4 sm:px-5 sm:py-6 lg:px-8',
             // Clears the fixed top-right toggle on every page except the
             // dashboard, which handles its own header spacing.
-            !isDashboard && 'lg:pt-16',
+            !isDashboard && 'lg:pt-14',
           )}
         >
           <Outlet />
@@ -1120,25 +1151,31 @@ export function AppLayout() {
       </div>
       </div>
 
-      <QuickAccessMenu hidden={tourOpen} />
+      <QuickAccessMenu
+        hidden={tourOpen}
+        onOpenChange={setQuickOpen}
+        onOpenRefinementLog={() => openRefinementLog()}
+      />
       <OnboardingTour open={tourOpen} onClose={() => setTourOpen(false)} mode={tourMode} />
-      <ReminderScheduler />
+      <ReminderScheduler onOpenTicket={openRefinementLog} />
       <TooltipLayer />
 
-      {developerMode && !tourOpen ? (
-        logOpen ? (
-          <RefinementLog onClose={() => setLogOpen(false)} />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setLogOpen(true)}
-            title="Refinement log"
-            aria-label="Open the refinement log"
-            className="fixed bottom-4 right-4 z-40 grid size-11 place-items-center rounded-full border border-line bg-surface text-ink-2 shadow-lg transition-colors hover:text-brand"
-          >
-            <Icon name="checklist" size={18} />
-          </button>
-        )
+      {/* The log window. Its old standalone launcher — the small round button
+          that floated above the quick-access FAB — is retired: "Talk to a Dev"
+          in the quick-access menu opens the log now. Kept for reference:
+
+          {developerMode && !logOpen ? (
+            <button onClick={() => openRefinementLog()} className="fixed bottom-24 right-6 …">
+              <Icon name="tools" size={18} />
+              {unseenReplies > 0 ? <span …>{unseenReplies}</span> : null}
+            </button>
+          ) : null}
+      */}
+      {logOpen && !tourOpen && !quickOpen ? (
+        <RefinementLog
+          onClose={closeRefinementLog}
+          initialTicketId={focusTicketId}
+        />
       ) : null}
     </>
   )

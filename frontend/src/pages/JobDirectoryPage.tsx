@@ -29,6 +29,7 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox, MultiSelect } from '../components/ui/Combobox'
+import { CompanyMark } from '../components/ui/CompanyMark'
 import { Input, Select, Textarea } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
 import { ImagePicker } from '../components/ui/ImagePicker'
@@ -38,6 +39,8 @@ import { useToast } from '../components/ui/toast-context'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useResource } from '../hooks/useResource'
 import { cx, formatDate } from '../lib/format'
+import { countryFlag } from '../lib/countryFlag'
+import { rememberList, rememberViewState, readViewState } from '../lib/listState'
 
 const TABS = [
   { value: 'companies', label: 'Companies' },
@@ -52,8 +55,25 @@ function isTab(value: string | null): value is Tab {
   return TABS.some((option) => option.value === value)
 }
 
+/**
+ * A section title that explains itself on hover.
+ *
+ * The explanation used to sit behind an "i" bubble beside every heading —
+ * four of them on this page, each a small piece of permanent furniture for a
+ * sentence you read once. The title itself carries it now: the app's tooltip
+ * layer styles plain `title` attributes, so the hint is one hover away and
+ * nothing extra is drawn.
+ */
+function TitleWithHint({ title, hint }: { title: string; hint: string }) {
+  return (
+    <span title={hint} className="cursor-help">
+      {title}
+    </span>
+  )
+}
+
 export function JobDirectoryPage() {
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
   const [tab, setTab] = useState<Tab>(() => {
     const requested = params.get('tab')
     return isTab(requested) ? requested : 'companies'
@@ -62,19 +82,44 @@ export function JobDirectoryPage() {
   // The tour's "try it" action arrives as `?tab=listings` on a page that may
   // already be mounted (its own per-step nav already put you on /catalog) —
   // a lazy useState initializer only runs once, so it'd miss that. Ordinary
-  // in-page tab clicks don't touch the URL, so this never fights them: the
-  // param only ever changes because of an outside navigation like this one.
+  // in-page tab clicks write the URL below, so this only reacts to outside
+  // navigations that change the param.
   const [lastTabParam, setLastTabParam] = useState(params.get('tab'))
   if (params.get('tab') !== lastTabParam) {
     setLastTabParam(params.get('tab'))
     if (isTab(params.get('tab'))) setTab(params.get('tab') as Tab)
   }
 
+  function selectTab(next: Tab) {
+    setTab(next)
+    const url = new URLSearchParams(params)
+    if (next === 'companies') url.delete('tab')
+    else url.set('tab', next)
+    setParams(url, { replace: true })
+  }
+
+  useEffect(() => {
+    rememberList('job-directory', params.toString() ? `?${params}` : '')
+  }, [params])
+
+  const companyCount = useResource(() => companies.list().then((rows) => rows.length), [])
+
   return (
     <>
       <PageHeader
-        title="Job Directory"
-        subtitle="Shared reference data — companies, roles, listings and locations."
+        title={
+          <span
+            title="Shared reference data — companies, roles, listings and locations."
+            className="cursor-help"
+          >
+            Job Directory
+          </span>
+        }
+        subtitle={
+          companyCount.data == null
+            ? undefined
+            : `${companyCount.data} ${companyCount.data === 1 ? 'company' : 'companies'} logged so far`
+        }
       />
 
       <div className="mb-4 inline-flex flex-wrap rounded-lg border border-line bg-surface p-0.5">
@@ -82,7 +127,7 @@ export function JobDirectoryPage() {
           <button
             key={option.value}
             type="button"
-            onClick={() => setTab(option.value)}
+            onClick={() => selectTab(option.value)}
             aria-pressed={tab === option.value}
             className={cx(
               'rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors',
@@ -203,7 +248,7 @@ function EditNameModal({
     a click-to-edit trigger for the same entity, not a static label. */
 function SimpleCatalog<T extends { id: number; name: string }>({
   title,
-  subtitle,
+  hint,
   placeholder,
   load,
   ensure,
@@ -211,7 +256,7 @@ function SimpleCatalog<T extends { id: number; name: string }>({
   remove,
 }: {
   title: string
-  subtitle: string
+  hint: string
   placeholder: string
   load: () => Promise<T[]>
   ensure: (name: string) => Promise<T>
@@ -243,7 +288,7 @@ function SimpleCatalog<T extends { id: number; name: string }>({
 
   return (
     <Card>
-      <CardHeader title={title} subtitle={subtitle} />
+      <CardHeader title={<TitleWithHint title={title} hint={hint} />} />
       <form onSubmit={add} className="mt-3 flex gap-2">
         <Input
           value={name}
@@ -302,7 +347,7 @@ function RolesTab() {
   return (
     <SimpleCatalog<Role>
       title="Roles"
-      subtitle="Role names shared across every company's listings."
+      hint="Role names shared across every company's listings."
       placeholder="Graduate Software Engineer"
       load={() => roles.list()}
       ensure={(name) => roles.ensure({ name })}
@@ -313,8 +358,8 @@ function RolesTab() {
 }
 
 const COMPANY_VIEWS = [
-  { value: 'list', label: 'List', icon: 'table' },
   { value: 'bubbles', label: 'Bubbles', icon: 'sparkles' },
+  { value: 'list', label: 'List', icon: 'table' },
 ] as const
 type CompanyView = (typeof COMPANY_VIEWS)[number]['value']
 
@@ -323,14 +368,26 @@ function CompaniesTab() {
   const list = useResource(() => companies.list(), [])
   const industryList = useResource(() => industries.list(), [])
   const listingsList = useResource(() => jobListings.list(), [])
-  const [search, setSearch] = useState('')
-  const [industryFilter, setIndustryFilter] = useState<number | null>(null)
+  const saved = readViewState<{
+    search?: string
+    industryFilter?: number | null
+    view?: CompanyView
+  }>('job-directory-companies')
+  const [search, setSearch] = useState(saved?.search ?? '')
+  const [industryFilter, setIndustryFilter] = useState<number | null>(
+    saved?.industryFilter ?? null,
+  )
   const [adding, setAdding] = useState(false)
   const [addingIndustry, setAddingIndustry] = useState(false)
+  const [managingIndustries, setManagingIndustries] = useState(false)
   const [editingIndustry, setEditingIndustry] = useState<Industry | null>(null)
   // Bubbles first: the rings show industry, size and logos at a glance, which
   // is what this tab is usually opened to survey. The list is a click away.
-  const [view, setView] = useState<CompanyView>('bubbles')
+  const [view, setView] = useState<CompanyView>(saved?.view ?? 'bubbles')
+
+  useEffect(() => {
+    rememberViewState('job-directory-companies', { search, industryFilter, view })
+  }, [search, industryFilter, view])
 
   const filtered = (list.data ?? []).filter((company) => {
     const needle = search.trim().toLowerCase()
@@ -345,98 +402,96 @@ function CompaniesTab() {
   const filtering = search.trim() !== '' || industryFilter !== null
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_20rem]">
-      <Card padded={false}>
-        <div className="p-4 sm:p-5">
-          <div className="flex items-start justify-between gap-3">
-            <CardHeader title="Companies" subtitle="Every company you've applied to or tracked." />
-            <div className="inline-flex shrink-0 rounded-lg border border-line bg-surface p-0.5">
-              {COMPANY_VIEWS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setView(option.value)}
-                  aria-pressed={view === option.value}
-                  title={`${option.label} view`}
-                  className={cx(
-                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
-                    view === option.value
-                      ? 'bg-brand-soft text-brand-strong'
-                      : 'text-ink-2 hover:text-ink',
-                  )}
-                >
-                  <Icon name={option.icon} size={15} />
-                  <span className="hidden sm:inline">{option.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Find first, add second — this tab is read far more often than
-              it's written to, so search and the industry filter lead and the
-              create form moved behind the button beside them. */}
-          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_14rem_auto]">
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search company name…"
-              aria-label="Search companies"
-            />
-            <Combobox
-              value={industryFilter}
-              onChange={setIndustryFilter}
-              options={(industryList.data ?? []).map((entry) => ({
-                id: entry.id,
-                label: entry.name,
-              }))}
-              placeholder="All industries"
-            />
-            <Button
-              variant="primary"
-              onClick={() => setAdding(true)}
-              icon={<Icon name="plus" size={15} />}
+    <>
+      {/* Same shape as Network and Applications: a toolbar straight on the
+          page, then the rings — no card wrapped around the whole tab. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search company name…"
+          aria-label="Search companies"
+          wrapperClassName="min-w-[14rem] flex-1"
+        />
+        <Combobox
+          value={industryFilter}
+          onChange={setIndustryFilter}
+          options={(industryList.data ?? []).map((entry) => ({
+            id: entry.id,
+            label: entry.name,
+          }))}
+          placeholder="All Industries"
+          className="w-full sm:w-56"
+        />
+        <div className="inline-flex shrink-0 rounded-lg border border-line bg-surface p-0.5">
+          {COMPANY_VIEWS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setView(option.value)}
+              aria-pressed={view === option.value}
+              title={`${option.label} view`}
+              className={cx(
+                'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                view === option.value
+                  ? 'bg-brand-soft text-brand-strong'
+                  : 'text-ink-2 hover:text-ink',
+              )}
             >
-              Add company
-            </Button>
-          </div>
-
-          {filtering ? (
-            <div className="mt-2 flex items-center gap-2 text-[12px] text-ink-3">
-              <span>
-                {filtered.length} of {list.data?.length ?? 0}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch('')
-                  setIndustryFilter(null)
-                }}
-                className="font-medium text-brand hover:underline"
-              >
-                Clear filters
-              </button>
-            </div>
-          ) : null}
+              <Icon name={option.icon} size={15} />
+              <span className="hidden sm:inline">{option.label}</span>
+            </button>
+          ))}
         </div>
+        <Button onClick={() => setManagingIndustries(true)} icon={<Icon name="settings" size={15} />}>
+          Industries
+        </Button>
+        <Button
+          variant="primary"
+          onClick={() => setAdding(true)}
+          icon={<Icon name="plus" size={15} />}
+        >
+          Add company
+        </Button>
+      </div>
 
-        {list.initial ? (
-          <Loading />
-        ) : !list.data?.length ? (
+      {filtering ? (
+        <div className="mb-3 flex items-center gap-2 text-[12px] text-ink-2">
+          <span>
+            {filtered.length} of {list.data?.length ?? 0}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch('')
+              setIndustryFilter(null)
+            }}
+            className="font-medium text-brand hover:underline"
+          >
+            Clear filters
+          </button>
+        </div>
+      ) : null}
+
+      {list.initial ? (
+        <Loading />
+      ) : !list.data?.length ? (
+        <Card padded={false}>
           <EmptyState icon="building" title="No companies yet" />
-        ) : filtered.length === 0 ? (
-          <div className="border-t border-line px-4 py-10 text-center text-[13px] text-ink-3 sm:px-5">
-            No company matches those filters.
-          </div>
-        ) : view === 'bubbles' ? (
-          <div className="border-t border-line p-4 sm:p-5">
-            <IndustryBubbleView
-              companies={filtered}
-              listings={listingsList.data ?? []}
-              industries={industryList.data ?? []}
-            />
-          </div>
-        ) : (
-          <ul className="divide-y divide-line border-t border-line">
+        </Card>
+      ) : filtered.length === 0 ? (
+        <Card padded={false}>
+          <EmptyState icon="search" title="No company matches those filters" />
+        </Card>
+      ) : view === 'bubbles' ? (
+        <IndustryBubbleView
+          companies={filtered}
+          listings={listingsList.data ?? []}
+          industries={industryList.data ?? []}
+        />
+      ) : (
+        <Card padded={false}>
+          <ul className="divide-y divide-line">
             {filtered.map((company: Company) => (
               <li key={company.id}>
                 <div className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2 sm:px-5">
@@ -451,29 +506,31 @@ function CompaniesTab() {
               </li>
             ))}
           </ul>
-        )}
-      </Card>
+        </Card>
+      )}
 
-      <Card>
-        <CardHeader
-          title="Industries"
-          subtitle="Optional grouping — click one to filter."
-          action={
-            <Button
-              size="sm"
-              onClick={() => setAddingIndustry(true)}
-              icon={<Icon name="plus" size={14} />}
-            >
-              Add
+      <Modal
+        open={managingIndustries}
+        onClose={() => setManagingIndustries(false)}
+        title="Industries"
+        description="Optional grouping for companies — click one to filter the list by it."
+        footer={
+          <>
+            <Button onClick={() => setAddingIndustry(true)} icon={<Icon name="plus" size={14} />}>
+              Add industry
             </Button>
-          }
-        />
+            <Button variant="primary" onClick={() => setManagingIndustries(false)}>
+              Done
+            </Button>
+          </>
+        }
+      >
         {industryList.initial ? (
           <Loading />
         ) : !industryList.data?.length ? (
-          <p className="mt-3 text-[13px] text-ink-3">None yet — add your first one above.</p>
+          <p className="text-[13px] text-ink-3">None yet — add your first one below.</p>
         ) : (
-          <ul className="mt-3 flex flex-wrap gap-1.5">
+          <ul className="flex flex-wrap gap-1.5">
             {industryList.data.map((entry) => (
               <li key={entry.id}>
                 {/* Two jobs, two targets: the name filters the list, the
@@ -489,9 +546,10 @@ function CompaniesTab() {
                 >
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
                       setIndustryFilter((current) => (current === entry.id ? null : entry.id))
-                    }
+                      setManagingIndustries(false)
+                    }}
                     title={industryFilter === entry.id ? 'Clear filter' : `Filter by ${entry.name}`}
                     className="rounded-full px-2 py-0.5 hover:text-brand-strong"
                   >
@@ -510,7 +568,7 @@ function CompaniesTab() {
             ))}
           </ul>
         )}
-      </Card>
+      </Modal>
 
       {editingIndustry ? (
         <EditNameModal
@@ -547,7 +605,7 @@ function CompaniesTab() {
         industries={industryList.data ?? []}
         onSaved={list.reload}
       />
-    </div>
+    </>
   )
 }
 
@@ -759,10 +817,22 @@ function ListingsTab() {
   const [importOpen, setImportOpen] = useState(false)
   const list = useResource(() => jobListings.list(), [])
   const listingChoices = useResource(() => applications.choices(), [])
-  const [search, setSearch] = useState('')
-  const [roleType, setRoleType] = useState('')
-  const [arrangement, setArrangement] = useState('')
-  const [openOnly, setOpenOnly] = useState(false)
+  const saved = readViewState<{
+    search?: string
+    roleType?: string
+    arrangement?: string
+    openOnly?: boolean
+  }>('job-directory-listings')
+  const [search, setSearch] = useState(saved?.search ?? '')
+  const [roleType, setRoleType] = useState(saved?.roleType ?? '')
+  const [arrangement, setArrangement] = useState(saved?.arrangement ?? '')
+  // Closed postings are history; the useful default is what you can still
+  // apply to. Remembered per browser once you change it.
+  const [openOnly, setOpenOnly] = useState(saved?.openOnly ?? true)
+
+  useEffect(() => {
+    rememberViewState('job-directory-listings', { search, roleType, arrangement, openOnly })
+  }, [search, roleType, arrangement, openOnly])
 
   // The onboarding tour's "try it" action for this tab — `?new=1` opens the
   // same form the "New job listing" button does.
@@ -789,10 +859,14 @@ function ListingsTab() {
   return (
     <>
       <Card padded={false}>
-        <div className="flex items-start justify-between gap-3 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
           <CardHeader
-            title="Job Listings"
-            subtitle="Concrete postings — a role at a company, in a location."
+            title={
+              <TitleWithHint
+                title="Job Listings"
+                hint="Concrete postings — a role at a company, in a location."
+              />
+            }
           />
           <div className="flex shrink-0 items-center gap-2">
             <Button onClick={() => setImportOpen(true)} icon={<Icon name="sparkles" size={15} />}>
@@ -820,7 +894,7 @@ function ListingsTab() {
             onChange={(event) => setRoleType(event.target.value)}
             aria-label="Filter by role type"
           >
-            <option value="">All role types</option>
+            <option value="">All Role Types</option>
             {(listingChoices.data?.role_type ?? []).map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
@@ -832,22 +906,28 @@ function ListingsTab() {
             onChange={(event) => setArrangement(event.target.value)}
             aria-label="Filter by work arrangement"
           >
-            <option value="">All arrangements</option>
+            <option value="">All Arrangements</option>
             {(listingChoices.data?.work_arrangement ?? []).map((choice) => (
               <option key={choice.value} value={choice.value}>
                 {choice.label}
               </option>
             ))}
           </Select>
-          <label className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap text-[13px] text-ink-2">
-            <input
-              type="checkbox"
-              checked={openOnly}
-              onChange={(event) => setOpenOnly(event.target.checked)}
-              className="size-4 accent-[var(--color-brand)]"
-            />
+          <button
+            type="button"
+            onClick={() => setOpenOnly((value) => !value)}
+            aria-pressed={openOnly}
+            title={openOnly ? 'Showing only listings still open' : 'Showing every listing'}
+            className={cx(
+              'inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-4 text-sm font-medium transition-colors',
+              openOnly
+                ? 'border-brand bg-brand-soft text-brand-strong'
+                : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+            )}
+          >
+            <Icon name={openOnly ? 'check' : 'clock'} size={15} />
             Still open
-          </label>
+          </button>
         </div>
 
         {list.initial ? (
@@ -935,7 +1015,25 @@ function ListingsTab() {
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-2.5 text-ink-2">{listing.company_name}</td>
+                    <td className="px-4 py-2.5 text-ink-2">
+                      {/* Its own link, so the row still opens the listing but
+                          the company takes you to the company. */}
+                      <Link
+                        to={`/job-directory/companies/${listing.company}`}
+                        state={{ from: '/job-directory?tab=listings' }}
+                        onClick={(event) => event.stopPropagation()}
+                        title={`Open ${listing.company_name}`}
+                        className="flex items-center gap-2 rounded-md transition-colors hover:text-brand"
+                      >
+                        <CompanyMark
+                          name={listing.company_name}
+                          logo={listing.company_logo}
+                          size={22}
+                          className="rounded-md shadow-none"
+                        />
+                        <span className="truncate hover:underline">{listing.company_name}</span>
+                      </Link>
+                    </td>
                     <td className="px-4 py-2.5 text-ink-2">{listing.location_name ?? '—'}</td>
                     <td className="px-4 py-2.5 text-ink-2">
                       {listing.role_type_display || '—'}
@@ -1214,8 +1312,8 @@ function ListingFormBody({ open, listing, defaultCompany, onClose, onSaved }: Li
 }
 
 const PLACE_VIEWS = [
+  { value: 'all', label: 'All Places', icon: 'table' },
   { value: 'browse', label: 'Browse', icon: 'search' },
-  { value: 'all', label: 'All places', icon: 'table' },
 ] as const
 type PlaceView = (typeof PLACE_VIEWS)[number]['value']
 
@@ -1224,16 +1322,40 @@ type PlaceView = (typeof PLACE_VIEWS)[number]['value']
  * place under this state", but not "what have I actually got?", which needs
  * seeing cities and venues together with their whole chain.
  */
+/**
+ * A country's flag, falling back to a map pin for anything the platform
+ * doesn't recognise as a country — so the row always has a mark, and the
+ * mark is never a wrong flag.
+ */
+function CountryMark({ name }: { name: string }) {
+  const flag = countryFlag(name)
+  if (!flag) return <Icon name="mapPin" size={12} className="text-ink-3" />
+  return (
+    <span aria-hidden="true" className="text-[13px] leading-none">
+      {flag}
+    </span>
+  )
+}
+
 function AllPlacesView() {
   const cityList = useResource(() => locations.list(), [])
   const venueList = useResource(() => venues.list(), [])
   const [search, setSearch] = useState('')
+  // The country/state/city tables arrive seeded, so most rows are geography
+  // nobody asked for. What belongs here is the handful of places that mean
+  // something to you — a venue you actually went to, a city you actually
+  // applied in — with the rest kept behind a toggle for when you need to
+  // find one to add a venue under.
+  const [showAll, setShowAll] = useState(false)
 
   if (cityList.initial || venueList.initial) return <Loading />
 
   const cities = cityList.data ?? []
   const allVenues = venueList.data ?? []
   const needle = search.trim().toLowerCase()
+
+  const inUse = (city: Location) => city.venue_count > 0 || city.listing_count > 0
+  const unusedCount = cities.filter((city) => !inUse(city)).length
 
   // Grouped by country → state so the hierarchy stays legible, with each
   // city carrying whatever venues sit under it.
@@ -1242,6 +1364,9 @@ function AllPlacesView() {
       city,
       venues: allVenues.filter((venue) => venue.location === city.id),
     }))
+    // A search looks everywhere — if you're hunting for a city by name you
+    // want it found whether you've used it yet or not.
+    .filter(({ city }) => showAll || needle || inUse(city))
     .filter(({ city, venues: cityVenues }) => {
       if (!needle) return true
       return (
@@ -1258,22 +1383,44 @@ function AllPlacesView() {
 
   return (
     <>
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search any country, state, city or venue…"
-        wrapperClassName="mt-4"
-      />
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search any country, state, city or venue…"
+          wrapperClassName="min-w-[14rem] flex-1"
+        />
+        {unusedCount > 0 && !needle ? (
+          <button
+            type="button"
+            onClick={() => setShowAll((value) => !value)}
+            aria-pressed={showAll}
+            className={cx(
+              'h-10 shrink-0 rounded-lg border px-3 text-[12.5px] font-medium transition-colors',
+              showAll
+                ? 'border-brand bg-brand-soft text-brand-strong'
+                : 'border-line bg-surface text-ink-2 hover:border-line-strong hover:text-ink',
+            )}
+          >
+            {showAll ? 'Hide unused' : `Show all (${unusedCount} unused)`}
+          </button>
+        ) : null}
+      </div>
 
       {!rows.length ? (
         <p className="mt-5 text-[13px] text-ink-3">
-          {cities.length ? 'Nothing matches that search.' : 'No places registered yet.'}
+          {needle
+            ? 'Nothing matches that search.'
+            : cities.length
+              ? 'No venues or applied-in cities yet — add one from Browse.'
+              : 'No places registered yet.'}
         </p>
       ) : (
         <div className="mt-4 flex flex-col gap-4">
           {[...byRegion.entries()].map(([region, regionRows]) => (
             <div key={region}>
-              <p className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wide text-ink-3">
+                <CountryMark name={regionRows[0]?.city.country_name ?? ''} />
                 {region}
               </p>
               <ul className="divide-y divide-line rounded-lg border border-line">
@@ -1311,7 +1458,14 @@ function AllPlacesView() {
 
 function PlacesTab() {
   const { notify } = useToast()
-  const [view, setView] = useState<PlaceView>('browse')
+  // The flat list first: "what have I got?" is the usual question. Browse is
+  // for adding, and the choice sticks the way the other tabs' views do.
+  const [view, setView] = useState<PlaceView>(
+    () => readViewState<{ view?: PlaceView }>('job-directory-places')?.view ?? 'all',
+  )
+  useEffect(() => {
+    rememberViewState('job-directory-places', { view })
+  }, [view])
   const countryList = useResource(() => countries.list(), [])
   const [country, setCountry] = useState<number | null>(null)
   const stateList = useResource(
@@ -1382,13 +1536,17 @@ function PlacesTab() {
 
   return (
     <Card>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <CardHeader
-          title="Places"
-          subtitle={
-            view === 'browse'
-              ? 'Country → state → city → venue. Pick a level to add the one below it.'
-              : 'Everything you have registered, city by city.'
+          title={
+            <TitleWithHint
+              title="Places"
+              hint={
+                view === 'browse'
+                  ? 'Country → state → city → venue. Pick a level to add the one below it.'
+                  : 'Everything you have registered, city by city.'
+              }
+            />
           }
         />
         <div className="inline-flex shrink-0 rounded-lg border border-line bg-surface p-0.5">

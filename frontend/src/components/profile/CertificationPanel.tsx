@@ -3,15 +3,18 @@ import { fieldErrors, formatApiError } from '../../api/client'
 import { certifications } from '../../api/resources'
 import type { Certification } from '../../api/types'
 import { formatDate } from '../../lib/format'
-import { AttachmentList } from './AttachmentList'
+import { AttachmentGalleryDialog, AttachmentStrip } from './AttachmentGallery'
+import { SectionIconPicker } from './SectionIconPicker'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Input, Textarea } from '../ui/Field'
+import { Input } from '../ui/Field'
 import { Icon } from '../ui/Icon'
+import { MentionTextarea } from '../ui/Mention'
 import { Modal } from '../ui/Modal'
 import { EmptyState, Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
+import { RichText } from '../../lib/richText'
 
 /** FR-PROF-12 — credentials, each with attachments (the certificate itself). */
 export function CertificationPanel() {
@@ -19,9 +22,15 @@ export function CertificationPanel() {
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Certification | null>(null)
+  const [galleryId, setGalleryId] = useState<number | null>(null)
+  const gallery = rows?.find((row) => row.id === galleryId) ?? null
 
   function reload() {
     return certifications.list().then(setRows)
+  }
+
+  function apply(saved: Certification) {
+    setRows((current) => (current ?? []).map((entry) => (entry.id === saved.id ? saved : entry)))
   }
 
   useEffect(() => {
@@ -32,7 +41,6 @@ export function CertificationPanel() {
     <Card>
       <CardHeader
         title="Certifications"
-        subtitle="Credentials and licences."
         action={
           <Button
             size="sm"
@@ -57,7 +65,14 @@ export function CertificationPanel() {
         <ul className="mt-3 flex flex-col gap-3">
           {rows.map((row) => (
             <li key={row.id} className="rounded-lg border border-line bg-surface-2 p-3">
-              <div className="flex items-start gap-2">
+              <div className="flex items-start gap-2.5">
+                <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-surface">
+                  {row.icon ? (
+                    <img src={row.icon} alt="" loading="lazy" className="size-full object-contain p-1" />
+                  ) : (
+                    <Icon name="file" size={16} className="text-ink-3" />
+                  )}
+                </span>
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-[13.5px] font-medium text-ink">
                     {row.name}
@@ -96,26 +111,10 @@ export function CertificationPanel() {
               ) : null}
 
               {row.description ? (
-                <p className="mt-2 text-[12.5px] text-ink-2">{row.description}</p>
+                <RichText text={row.description} className="mt-2 text-[12.5px] text-ink-2" />
               ) : null}
 
-              <div className="mt-2.5">
-                <AttachmentList
-                  attachments={row.attachments}
-                  onAdd={async (file, caption) => {
-                    const saved = await certifications.addAttachment(row.id, file, caption)
-                    setRows((current) =>
-                      (current ?? []).map((entry) => (entry.id === row.id ? saved : entry)),
-                    )
-                  }}
-                  onRemove={async (attachmentId) => {
-                    const saved = await certifications.removeAttachment(row.id, attachmentId)
-                    setRows((current) =>
-                      (current ?? []).map((entry) => (entry.id === row.id ? saved : entry)),
-                    )
-                  }}
-                />
-              </div>
+              <AttachmentStrip attachments={row.attachments} onOpen={() => setGalleryId(row.id)} />
             </li>
           ))}
         </ul>
@@ -127,7 +126,20 @@ export function CertificationPanel() {
         onClose={() => setFormOpen(false)}
         onSaved={() => void reload()}
         onDeleted={() => void reload()}
+        onRowChange={apply}
       />
+
+      {gallery ? (
+        <AttachmentGalleryDialog
+          title={gallery.name}
+          attachments={gallery.attachments}
+          onClose={() => setGalleryId(null)}
+          onAdd={async (file, caption) => apply(await certifications.addAttachment(gallery.id, file, caption))}
+          onRemove={async (attachmentId) =>
+            apply(await certifications.removeAttachment(gallery.id, attachmentId))
+          }
+        />
+      ) : null}
     </Card>
   )
 }
@@ -137,6 +149,7 @@ function CertificationForm(props: {
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
+  onRowChange: (saved: Certification) => void
   existing?: Certification | null
 }) {
   if (!props.open) return null
@@ -147,14 +160,18 @@ function CertificationFormBody({
   onClose,
   onSaved,
   onDeleted,
+  onRowChange,
   existing,
 }: {
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
+  onRowChange: (saved: Certification) => void
   existing?: Certification | null
 }) {
   const { notify } = useToast()
+  const [row, setRow] = useState<Certification | null>(existing ?? null)
+  const [pendingIcon, setPendingIcon] = useState<File | null>(null)
   const [form, setForm] = useState(() => ({
     name: existing?.name ?? '',
     issuer: existing?.issuer ?? '',
@@ -182,8 +199,12 @@ function CertificationFormBody({
       expires_on: form.expires_on || null,
     }
     try {
-      if (existing) await certifications.update(existing.id, payload)
-      else await certifications.create(payload)
+      if (existing) {
+        await certifications.update(existing.id, payload)
+      } else {
+        const created = await certifications.create(payload)
+        if (pendingIcon) await certifications.uploadIcon(created.id, pendingIcon)
+      }
       notify(existing ? 'Certification updated.' : 'Certification added.')
       onSaved()
       onClose()
@@ -235,6 +256,18 @@ function CertificationFormBody({
           </p>
         ) : null}
 
+        <SectionIconPicker
+          name={form.name || 'Certification'}
+          label="issuer logo"
+          row={row}
+          api={certifications}
+          onRowChange={(saved) => {
+            setRow(saved)
+            onRowChange(saved)
+          }}
+          onPending={setPendingIcon}
+        />
+
         <Input
           label="Name"
           required
@@ -276,11 +309,11 @@ function CertificationFormBody({
           error={errors.credential_url}
           onChange={(event) => set('credential_url', event.target.value)}
         />
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
         />
       </form>
     </Modal>

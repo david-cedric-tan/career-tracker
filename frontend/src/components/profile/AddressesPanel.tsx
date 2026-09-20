@@ -6,7 +6,7 @@ import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Input, Textarea } from '../ui/Field'
 import { Icon } from '../ui/Icon'
-import { EmptyState, Loading } from '../ui/States'
+import { Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
 
 /** FR-PROF-08 — free-text + label rather than structured street/city fields:
@@ -19,6 +19,7 @@ export function AddressesPanel() {
   const [address, setAddress] = useState('')
   const [fieldError, setFieldError] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+  const [adding, setAdding] = useState(false)
 
   function reload() {
     return profileAddresses.list().then(setRows)
@@ -36,6 +37,7 @@ export function AddressesPanel() {
       await profileAddresses.create({ label, address })
       setLabel('')
       setAddress('')
+      setAdding(false)
       await reload()
       notify('Address added.')
     } catch (err) {
@@ -57,15 +59,24 @@ export function AddressesPanel() {
 
   return (
     <Card>
-      <CardHeader title="Addresses" subtitle="Home, campus, mailing — whatever's useful." />
+      <CardHeader
+        title="Addresses"
+        action={
+          adding ? undefined : (
+            <Button size="sm" onClick={() => setAdding(true)} icon={<Icon name="plus" size={14} />}>
+              Add
+            </Button>
+          )
+        }
+      />
 
+      {/* With nothing saved the card is just its header and the Add button —
+          an empty-state illustration here only pushed Education down. */}
       {error ? (
         <p className="mt-3 text-[13px] text-critical">{error}</p>
       ) : rows === null ? (
         <Loading />
-      ) : rows.length === 0 ? (
-        <EmptyState icon="building" title="No addresses yet" className="py-6" />
-      ) : (
+      ) : rows.length === 0 ? null : (
         <ul className="mt-3 flex flex-col gap-1.5">
           {rows.map((row) => (
             <li
@@ -90,27 +101,32 @@ export function AddressesPanel() {
         </ul>
       )}
 
-      <form onSubmit={onSubmit} className="mt-3 flex flex-col gap-2">
-        <div className="flex gap-2">
+      {adding ? (
+        <form onSubmit={onSubmit} className="mt-3 flex flex-col gap-2">
           <Input
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             placeholder="Label (e.g. Home)"
             error={fieldError.label}
-            wrapperClassName="flex-1"
+            autoFocus
           />
-          <Button type="submit" loading={saving} icon={<Icon name="plus" size={14} />}>
-            Add
-          </Button>
-        </div>
-        <Textarea
-          value={address}
-          onChange={(event) => setAddress(event.target.value)}
-          placeholder="Address"
-          error={fieldError.address}
-          rows={2}
-        />
-      </form>
+          <Textarea
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            placeholder="Address"
+            error={fieldError.address}
+            rows={2}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={saving} icon={<Icon name="plus" size={14} />}>
+              Add
+            </Button>
+          </div>
+        </form>
+      ) : null}
     </Card>
   )
 }

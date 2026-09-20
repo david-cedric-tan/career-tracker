@@ -6,9 +6,17 @@ export type ApiError = Record<string, string | string[] | undefined> & {
 
 const TOKEN_KEY = 'authToken'
 
+// sessionStorage, not localStorage: a DRF token never expires on its own, so
+// localStorage meant closing the browser without signing out still left you
+// signed in indefinitely on next launch — the token was still sitting there
+// and bootstrap() in AuthContext would happily re-use it. sessionStorage is
+// cleared when the browser (not just the tab) actually closes, so a real
+// "close and reopen" always lands back on the login screen; a page reload or
+// a duplicated tab still carries the session, since sessionStorage survives
+// both. Same reasoning already used for list-view state (see lib/listState.ts).
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY)
+    return sessionStorage.getItem(TOKEN_KEY)
   } catch {
     return null
   }
@@ -16,7 +24,7 @@ export function getToken(): string | null {
 
 export function setToken(token: string): void {
   try {
-    localStorage.setItem(TOKEN_KEY, token)
+    sessionStorage.setItem(TOKEN_KEY, token)
   } catch {
     /* private mode — the token simply won't survive a reload */
   }
@@ -24,7 +32,7 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   try {
-    localStorage.removeItem(TOKEN_KEY)
+    sessionStorage.removeItem(TOKEN_KEY)
   } catch {
     /* nothing to clear */
   }
@@ -153,6 +161,8 @@ const FIELD_LABELS: Record<string, string> = {
   applied_at: 'Applied on',
   follow_up_date: 'Follow-up',
   due_date: 'Due date',
+  due_time: 'Due time',
+  due_end_time: 'End time',
   closing_at: 'Closing date',
   opened_at: 'Opening date',
   job_url: 'Job URL',

@@ -8,11 +8,14 @@ import { Button, Spinner } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { useDeveloperMode } from '../hooks/useDeveloperMode'
 import { useGlass, writeGlass } from '../lib/glass'
+import { useLocationEnabled } from '../lib/location'
+import { useTodoSuggestionsSetting } from '../lib/todoSuggestions'
 import { InfoHint } from '../components/ui/InfoHint'
 import type { CSSProperties } from 'react'
 import { Input } from '../components/ui/Field'
 import { Icon } from '../components/ui/Icon'
 import { Modal } from '../components/ui/Modal'
+import { Switch } from '../components/ui/Switch'
 import { useToast } from '../components/ui/toast-context'
 import { BackupPanel } from '../components/BackupPanel'
 import { ImportGuideModal } from '../components/ImportGuideModal'
@@ -37,22 +40,22 @@ export function SettingsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const navigate = useNavigate()
   const [importGuideOpen, setImportGuideOpen] = useState(false)
+  useAutoOpenFromQuery('import', () => setImportGuideOpen(true))
 
   return (
     <>
       <PageHeader title="My Settings" />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Appearance is by far the tallest card, so the two short display
-            settings that belong with it move over here — otherwise the right
-            column ran a screen longer than the left. */}
         <div className="flex flex-col gap-4">
           <AppearanceCard />
           <GlassCard />
+          <CelebrationsCard />
+          <TodoSuggestionsCard />
         </div>
 
         <div className="flex flex-col gap-4">
-          <CelebrationsCard />
+          <LocationCard />
           <DeveloperModeCard />
           <BackupPanel />
 
@@ -61,17 +64,17 @@ export function SettingsPage() {
               title={
                 <span className="flex items-center gap-1.5">
                   Bring Your Own AI
-                  <InfoHint label="Copy a prompt, hand it to any AI along with your spreadsheet or notes, and save what comes back — a JSON file shaped to match applications, todos, catch-ups, contacts and calendar events here." />
+                  <InfoHint label="Copy a prompt into any AI with your old spreadsheet or notes. Paste or drop the JSON it returns — we add applications, contacts, catch-ups, todos and calendar events to this account without wiping what’s already here. Full backups still use Backup & Restore." />
                 </span>
               }
-              subtitle="Have an existing tracker? Get its data into a shape this app can use."
+              subtitle="Have an existing tracker? Convert it with any AI, then import the JSON here."
             />
             <Button
               className="mt-4 w-full"
               onClick={() => setImportGuideOpen(true)}
               icon={<Icon name="sparkles" size={15} />}
             >
-              Import guide
+              Import from another tracker
             </Button>
           </Card>
 
@@ -148,23 +151,7 @@ function CelebrationsCard() {
       />
       <label className="mt-3 flex items-center justify-between gap-3">
         <span className="text-[13px] text-ink-2">Show celebrations</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          onClick={() => choose(!enabled)}
-          className={cx(
-            'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-            enabled ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
-          )}
-        >
-          <span
-            className={cx(
-              'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
-              enabled ? 'translate-x-5' : 'translate-x-0',
-            )}
-          />
-        </button>
+        <Switch checked={enabled} onChange={choose} label="Show celebrations" />
       </label>
     </Card>
   )
@@ -186,7 +173,7 @@ function GlassCard() {
     <Card>
       <CardHeader
         title="Liquid glass"
-        subtitle="How much the app's panels behave like frosted glass."
+        subtitle="How much the app's panels, toggles and sliders behave like frosted glass."
       />
 
       <div className="mt-4">
@@ -222,10 +209,29 @@ function GlassCard() {
         </div>
       </div>
 
-      <p className="mt-3 text-[12px] text-ink-3">
-        Applies to cards, the sidebar and the mobile header. Kept per browser —
-        a heavy blur costs more on some machines than others.
-      </p>
+    </Card>
+  )
+}
+
+function TodoSuggestionsCard() {
+  const [enabled, setEnabled] = useTodoSuggestionsSetting()
+
+  return (
+    <Card>
+      <CardHeader
+        title="Todo suggestions"
+        subtitle="Follow-up ideas from application dates and catch-ups that nothing is tracking yet."
+      />
+      <label className="mt-3 flex items-center justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block text-[13px] text-ink-2">Show suggested follow-ups</span>
+        </span>
+        <Switch
+          checked={enabled}
+          onChange={setEnabled}
+          label="Show suggested follow-ups"
+        />
+      </label>
     </Card>
   )
 }
@@ -238,32 +244,36 @@ function DeveloperModeCard() {
       <CardHeader
         title={
           <span className="flex items-center gap-1.5">
-            Developer mode
-            <InfoHint label="A per-browser setting, so it stays on the machine you turn it on." />
+            Developer Mode
+            <InfoHint label="Adds a refinement log to every page — jot down bugs, complaints and improvements as you hit them." />
           </span>
-        }
-        subtitle="Adds a refinement log to every page — jot down bugs, complaints and improvements as you hit them."
+        } subtitle="Log your Bugs, Complaints, Improvements"
       />
       <label className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-[13px] text-ink-2">Show the refinement log</span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          onClick={() => setEnabled(!enabled)}
-          className={cx(
-            'relative h-6 w-11 shrink-0 rounded-full transition-colors',
-            enabled ? 'bg-brand' : 'bg-surface-2 ring-1 ring-inset ring-line',
-          )}
-        >
-          <span
-            className={cx(
-              'absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform',
-              enabled ? 'translate-x-5' : 'translate-x-0',
-            )}
-          />
-        </button>
+        <span className="text-[13px] text-ink-2">Show the refinement log </span>
+        <Switch
+          checked={enabled}
+          onChange={setEnabled}
+          label="Show the refinement log"
+        />
       </label>
+    </Card>
+  )
+}
+
+function LocationCard() {
+  const { user } = useAuth()
+  const [enabled, setEnabled] = useLocationEnabled(user?.id)
+
+  return (
+    <Card>
+      <CardHeader
+        title="Location"
+        subtitle="Access your local weather and time"
+        action={
+          <Switch checked={enabled} onChange={setEnabled} label="Location" />
+        }
+      />
     </Card>
   )
 }
@@ -492,7 +502,7 @@ function AppearanceCard() {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
           onChange={(event) => {
             const file = event.target.files?.[0]
             event.target.value = ''
@@ -732,9 +742,12 @@ function Slider({
           onPointerDown={() => setDragging(true)}
           onPointerUp={() => setDragging(false)}
           onPointerCancel={() => setDragging(false)}
-          style={{
-            background: `linear-gradient(to right, var(--color-brand) 0%, color-mix(in srgb, var(--color-brand) 55%, #a78bfa) ${pct}%, var(--color-surface-2) ${pct}%, var(--color-surface-2) 100%)`,
-          }}
+          style={
+            {
+              '--fill': `${pct}%`,
+              background: `linear-gradient(to right, var(--color-brand) 0%, color-mix(in srgb, var(--color-brand) 55%, #a78bfa) ${pct}%, var(--color-surface-2) ${pct}%, var(--color-surface-2) 100%)`,
+            } as CSSProperties
+          }
           className={cx('fancy-slider w-full', dragging && 'is-dragging')}
         />
       </div>

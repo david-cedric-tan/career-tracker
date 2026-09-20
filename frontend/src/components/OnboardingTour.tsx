@@ -22,6 +22,20 @@ function Term({ children }: { children: ReactNode }) {
 
 type StepAction = { label: string; query: string }
 
+type StepActionSource =
+  | StepAction
+  | StepAction[]
+  | ((search: string) => StepAction | StepAction[])
+
+function resolveActions(
+  action: StepActionSource | undefined,
+  search: string,
+): StepAction[] {
+  if (!action) return []
+  const resolved = typeof action === 'function' ? action(search) : action
+  return Array.isArray(resolved) ? resolved : [resolved]
+}
+
 const STEPS: {
   icon: string
   title: string
@@ -34,8 +48,9 @@ const STEPS: {
       `query` to `route`, without advancing to the next step, so the page
       underneath actually shows what the description just described. Static
       for a one-shot action (open a form); a function for one that toggles
-      based on the current URL (bubble view vs. card view). */
-  action?: StepAction | ((search: string) => StepAction)
+      based on the current URL (bubble view vs. card view). Multiple actions
+      are fine when a page has more than one thing worth demonstrating. */
+  action?: StepActionSource
 }[] = [
   {
     icon: 'sparkles',
@@ -120,15 +135,16 @@ const STEPS: {
   },
   {
     icon: 'file',
-    title: 'Resumes',
+    title: 'File Directory',
     description: (
       <>
-        Keep every tailored variant organised, each with the actual file attached — never
-        wonder which version you sent where.
+        Keep application files and resume versions together — link cover letters to an
+        application, or keep them general with tags. Applications still pick a resume from
+        your library.
       </>
     ),
-    route: '/resumes',
-    action: { label: 'Try it — add a resume', query: '?new=1' },
+    route: '/files',
+    action: { label: 'Try it — add a resume', query: '?tab=resumes&new=1' },
   },
   {
     icon: 'library',
@@ -148,12 +164,15 @@ const STEPS: {
     description: (
       <>
         Theme, wallpaper and fonts, your celebration effects, and full backups. It's also where{' '}
-        <Term>Bring Your Own AI</Term> lives — a prompt you can hand to any AI to convert an
-        existing tracker into a shape this app can use.
+        <Term>Bring Your Own AI</Term> lives — convert an existing tracker with any AI, then
+        paste or drop the JSON to import it into this account.
       </>
     ),
     route: '/settings',
-    action: { label: 'Try it — upload a background photo', query: '?new=1' },
+    action: [
+      { label: 'Try it — open import from another tracker', query: '?import=1' },
+      { label: 'Try it — upload a background photo', query: '?new=1' },
+    ],
   },
   {
     icon: 'check',
@@ -252,8 +271,7 @@ export function OnboardingTour({
   const step = STEPS[index]
   const isFirst = index === 0
   const isLast = index === STEPS.length - 1
-  const resolvedAction =
-    typeof step.action === 'function' ? step.action(location.search) : step.action
+  const resolvedActions = resolveActions(step.action, location.search)
 
   async function finish() {
     if (mode === 'auto') {
@@ -340,15 +358,20 @@ export function OnboardingTour({
 
           <p className="text-[13.5px] leading-relaxed text-ink-2">{step.description}</p>
 
-          {resolvedAction ? (
-            <button
-              type="button"
-              onClick={() => navigate(`${step.route}${resolvedAction.query}`)}
-              className="flex items-center justify-center gap-1.5 rounded-lg border border-brand-ring bg-brand-soft px-3 py-2 text-[12.5px] font-semibold text-brand-strong transition-colors hover:bg-brand-ring/40"
-            >
-              <Icon name="sparkles" size={13} />
-              {resolvedAction.label}
-            </button>
+          {resolvedActions.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {resolvedActions.map((action) => (
+                <button
+                  key={action.query}
+                  type="button"
+                  onClick={() => navigate(`${step.route}${action.query}`)}
+                  className="flex items-center justify-center gap-1.5 rounded-lg border border-brand-ring bg-brand-soft px-3 py-2 text-[12.5px] font-semibold text-brand-strong transition-colors hover:bg-brand-ring/40"
+                >
+                  <Icon name="sparkles" size={13} />
+                  {action.label}
+                </button>
+              ))}
+            </div>
           ) : null}
 
           <div className="flex items-center gap-1.5" role="tablist" aria-label="Tour progress">

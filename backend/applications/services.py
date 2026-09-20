@@ -71,15 +71,31 @@ def diff(before, after):
     return changes
 
 
+# The smallest gap between two log rows that a clock-time timeline can show.
+LOG_GAP = timedelta(seconds=1)
+
+
 def _free_timestamp(application):
-    """uniq_event_per_app_time is (application, changed_at). Two writes in the
-    same request can land on an identical timestamp, so nudge forward until the
-    slot is free instead of raising IntegrityError at the user."""
+    """When to stamp the next row for this application.
+
+    `uniq_event_per_app_time` is (application, changed_at), so two writes in
+    one request must not collide — but spacing them by microseconds isn't
+    enough. One action often writes two rows (advance a stage *and* start
+    waiting; move to an outcome *and* finish), and the timeline shows clock
+    times: rows a few microseconds apart all read as the same moment, leaving
+    the reader to guess which came first. A full second apart is the smallest
+    gap that actually shows, so each row lands at least a second after the
+    last one this application has.
+    """
     changed_at = timezone.now()
-    while AppsEventLog.objects.filter(
-        application=application, changed_at=changed_at
-    ).exists():
-        changed_at += timedelta(microseconds=1)
+    latest = (
+        AppsEventLog.objects.filter(application=application)
+        .order_by("-changed_at")
+        .values_list("changed_at", flat=True)
+        .first()
+    )
+    if latest is not None and changed_at < latest + LOG_GAP:
+        changed_at = latest + LOG_GAP
     return changed_at
 
 
@@ -116,7 +132,7 @@ def log_change(application, prev_stage, prev_outcome, changes=None, note="", cha
         while AppsEventLog.objects.filter(
             application=application, changed_at=changed_at
         ).exists():
-            changed_at += timedelta(microseconds=1)
+            changed_at += LOG_GAP
 
     if stage_changed:
         application.stage_updated_at = changed_at
@@ -155,12 +171,16 @@ def log_creation(application, note="Application created."):
     )
 
 
-def log_waiting(application, started, note="", changed_at=None):
+def log_waiting(application, started, note="", changed_at=None, stage=None):
     """Record the ball moving into (or out of) the employer's court.
 
     Its own event type rather than a stage or outcome row: waiting is a state
     layered on top of both, and the dashboard time series counts stage rows as
     pipeline movement — a "waiting" row is not that.
+
+    `stage` is the pipeline step the wait belongs to (usually the one just
+    finished). Callers can override when the application's current stage is
+    stale relative to a backdated history.
     """
     if changed_at is None:
         changed_at = _free_timestamp(application)
@@ -169,7 +189,7 @@ def log_waiting(application, started, note="", changed_at=None):
         while AppsEventLog.objects.filter(
             application=application, changed_at=changed_at
         ).exists():
-            changed_at += timedelta(microseconds=1)
+            changed_at += LOG_GAP
 
     return AppsEventLog.objects.create(
         application=application,
@@ -177,7 +197,30 @@ def log_waiting(application, started, note="", changed_at=None):
             EventType.WAITING_STARTED if started else EventType.WAITING_ENDED
         ),
         prev_stage="",
-        curr_stage=application.stage,
+        curr_stage=stage or application.stage,
+        prev_outcome="",
+        curr_outcome=application.outcome,
+        changes=[],
+        changed_at=changed_at,
+        note=note or "",
+    )
+
+
+def log_stage_done(application, note="", changed_at=None, stage=None):
+    """Record that you finished a stage — before waiting on their reply."""
+    if changed_at is None:
+        changed_at = _free_timestamp(application)
+    else:
+        while AppsEventLog.objects.filter(
+            application=application, changed_at=changed_at
+        ).exists():
+            changed_at += LOG_GAP
+
+    return AppsEventLog.objects.create(
+        application=application,
+        event_type=EventType.STAGE_DONE,
+        prev_stage="",
+        curr_stage=stage or application.stage,
         prev_outcome="",
         curr_outcome=application.outcome,
         changes=[],

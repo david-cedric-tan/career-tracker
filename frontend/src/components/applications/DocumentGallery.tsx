@@ -6,14 +6,17 @@ import { formatDate } from '../../lib/format'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Input, Textarea } from '../ui/Field'
+import { downloadName, saveFileAs } from '../../lib/download'
 import { Icon } from '../ui/Icon'
 import { Modal } from '../ui/Modal'
 import { EmptyState } from '../ui/States'
 import { useToast } from '../ui/toast-context'
+import { DocumentThumbnail } from './DocumentThumbnail'
+import { DocumentViewer } from './DocumentViewer'
 
 const MAX_BYTES = 10 * 1024 * 1024
 const ACCEPT =
-  '.pdf,.docx,.doc,.pages,.odt,.rtf,.txt,image/*,application/pdf,application/msword'
+  '.pdf,.docx,.doc,.pages,.odt,.rtf,.txt,.md,.markdown,.pptx,.ppt,image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation'
 /** Cards per page — one row of three on desktop, so the arrows only appear
     once there's genuinely more than a screenful. */
 const PAGE_SIZE = 6
@@ -38,7 +41,7 @@ export function DocumentGallery({
   const [uploading, setUploading] = useState(false)
   const [page, setPage] = useState(0)
   const [editing, setEditing] = useState<ApplicationDocument | null>(null)
-  const [lightbox, setLightbox] = useState<ApplicationDocument | null>(null)
+  const [viewing, setViewing] = useState<ApplicationDocument | null>(null)
 
   const documents = application.documents
   const pageCount = Math.max(1, Math.ceil(documents.length / PAGE_SIZE))
@@ -83,7 +86,7 @@ export function DocumentGallery({
       <div className="flex items-start justify-between gap-3 p-4 sm:p-5">
         <CardHeader
           title="Documents"
-          subtitle="Cover letters, take-home tasks, offer letters."
+          subtitle="Cover letters, take-homes, offer letters — also listed in File Directory."
         />
         <Button
           size="sm"
@@ -114,7 +117,7 @@ export function DocumentGallery({
                     document={document}
                     onEdit={() => setEditing(document)}
                     onRemove={() => void remove(document)}
-                    onPreview={() => setLightbox(document)}
+                    onPreview={() => setViewing(document)}
                   />
                 </li>
               ))}
@@ -158,20 +161,7 @@ export function DocumentGallery({
         />
       ) : null}
 
-      {lightbox ? (
-        <button
-          type="button"
-          onClick={() => setLightbox(null)}
-          aria-label="Close image"
-          className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/80 p-6"
-        >
-          <img
-            src={lightbox.file}
-            alt={lightbox.title}
-            className="max-h-full max-w-full rounded-xl object-contain"
-          />
-        </button>
-      ) : null}
+      {viewing ? <DocumentViewer item={viewing} onClose={() => setViewing(null)} /> : null}
     </Card>
   )
 }
@@ -187,35 +177,16 @@ function DocumentCard({
   onRemove: () => void
   onPreview: () => void
 }) {
-  const isImage = document.kind === 'image'
-
   return (
     <div className="group/doc flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-2">
-      {isImage ? (
-        <button
-          type="button"
-          onClick={onPreview}
-          className="block h-28 w-full overflow-hidden bg-surface"
-          aria-label={`Preview ${document.title}`}
-        >
-          <img
-            src={document.file}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover transition-transform group-hover/doc:scale-105"
-          />
-        </button>
-      ) : (
-        <a
-          href={document.file}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="grid h-28 w-full place-items-center bg-surface text-brand transition-colors hover:bg-brand-soft"
-          aria-label={`Open ${document.title}`}
-        >
-          <Icon name="file" size={28} />
-        </a>
-      )}
+      <button
+        type="button"
+        onClick={onPreview}
+        className="block h-28 w-full overflow-hidden bg-surface"
+        aria-label={`Preview ${document.title}`}
+      >
+        <DocumentThumbnail document={document} className="size-full" />
+      </button>
 
       <div className="flex flex-1 flex-col p-2.5">
         <p className="truncate text-[13px] font-medium text-ink" title={document.title}>
@@ -230,15 +201,20 @@ function DocumentCard({
         </p>
 
         <div className="mt-2 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/doc:opacity-100">
-          <a
-            href={document.file}
-            target="_blank"
-            rel="noreferrer noopener"
-            aria-label={`Open ${document.title}`}
+          <button
+            type="button"
+            onClick={() =>
+              void saveFileAs(
+                document.file,
+                downloadName(document.title, document.original_name || document.file),
+              ).catch(() => window.open(document.file, '_blank', 'noopener'))
+            }
+            aria-label={`Download ${document.title}`}
+            title="Download"
             className="rounded-lg p-1.5 text-ink-3 transition-colors hover:bg-surface hover:text-brand"
           >
-            <Icon name="link" size={13} />
-          </a>
+            <Icon name="download" size={13} />
+          </button>
           <button
             type="button"
             onClick={onEdit}

@@ -1,19 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { fieldErrors, formatApiError } from '../api/client'
 import { companies, experiences } from '../api/resources'
 import type { Company, Experience } from '../api/types'
 import { useCelebrate } from '../celebrate/context'
 import { cx, formatDate } from '../lib/format'
+import { DocumentViewer } from './applications/DocumentViewer'
+import type { PreviewSource } from '../lib/documentPreview'
 import { Button, Spinner } from './ui/Button'
+import { UploadDialog } from './ui/UploadDialog'
 import { Card, CardHeader } from './ui/Card'
 import { Combobox } from './ui/Combobox'
-import { Input, Textarea } from './ui/Field'
+import { Input } from './ui/Field'
 import { Icon } from './ui/Icon'
+import { MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { EmptyState, Loading } from './ui/States'
 import { useToast } from './ui/toast-context'
+import { companyOption } from '../lib/company'
+import { RichText } from '../lib/richText'
 
-const MAX_BYTES = 5 * 1024 * 1024
 
 /**
  * The user's work history, each entry with its own photo gallery (FR-EXP-*).
@@ -69,7 +74,6 @@ export function ExperiencePanel() {
     <Card>
       <CardHeader
         title="Experience"
-        subtitle="Where you've worked, with a gallery per role."
         action={
           <Button
             size="sm"
@@ -165,10 +169,10 @@ function ExperienceRow({
         </span>
 
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13.5px] font-medium text-ink">
+          <p className="text-[13.5px] font-medium text-ink break-words">
             {experience.title}
           </p>
-          <p className="truncate text-[12px] text-ink-3">
+          <p className="text-[12px] text-ink-3 break-words">
             {experience.company_name} · {period}
           </p>
         </div>
@@ -184,15 +188,13 @@ function ExperienceRow({
       </div>
 
       {experience.description ? (
-        <p className="mt-2 line-clamp-2 text-[12.5px] text-ink-2">
-          {experience.description}
-        </p>
+        <RichText text={experience.description} className="mt-2 break-words text-[12.5px] text-ink-2" />
       ) : null}
 
       <button
         type="button"
         onClick={onOpenGallery}
-        className="mt-2.5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-left transition-colors hover:border-line-strong"
+        className="group/attach mt-2.5 flex w-48 max-w-full items-center gap-2 rounded-lg border border-line bg-surface py-1.5 pl-2 pr-1.5 text-left transition-colors hover:border-line-strong"
       >
         {experience.photos.length ? (
           <span className="flex -space-x-2">
@@ -207,16 +209,20 @@ function ExperienceRow({
             ))}
           </span>
         ) : (
-          <span className="grid size-7 place-items-center rounded-md border border-dashed border-line-strong text-ink-3">
-            <Icon name="plus" size={13} />
+          <span className="grid size-7 shrink-0 place-items-center rounded-md border border-dashed border-line-strong text-ink-3 transition-colors group-hover/attach:border-brand group-hover/attach:text-brand">
+            <Icon
+              name="plus"
+              size={13}
+              className="group-hover/attach:animate-[upload-plus_2s_cubic-bezier(0.34,1.56,0.64,1)_infinite]"
+            />
           </span>
         )}
-        <span className="flex-1 text-[12px] text-ink-2">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-ink-2">
           {experience.photos.length
             ? `${experience.photos.length} photo${experience.photos.length === 1 ? '' : 's'}`
             : 'Add photos'}
         </span>
-        <Icon name="chevronRight" size={14} className="text-ink-3" />
+        <Icon name="chevronRight" size={14} className="shrink-0 text-ink-3" />
       </button>
     </div>
   )
@@ -233,37 +239,10 @@ function GalleryDialog({
   onChanged: (experience: Experience) => void
   notify: (message: string, tone?: 'success' | 'error' | 'info') => void
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [caption, setCaption] = useState('')
+  const [adding, setAdding] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [lightbox, setLightbox] = useState<string | null>(null)
-
-  async function onPick(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-
-    setError('')
-    if (!file.type.startsWith('image/')) {
-      setError('Pick an image file.')
-      return
-    }
-    if (file.size > MAX_BYTES) {
-      setError(`That image is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is 5MB.`)
-      return
-    }
-
-    setBusy(true)
-    try {
-      onChanged(await experiences.addPhoto(experience.id, file, caption.trim()))
-      setCaption('')
-    } catch (err) {
-      setError(formatApiError(err))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [viewing, setViewing] = useState<PreviewSource | null>(null)
 
   async function remove(photoId: number) {
     setBusy(true)
@@ -293,31 +272,19 @@ function GalleryDialog({
           </p>
         ) : null}
 
-        <div className="flex items-end gap-2">
-          <Input
-            label="Caption for the next photo"
-            value={caption}
-            onChange={(event) => setCaption(event.target.value)}
-            placeholder="Optional"
-            wrapperClassName="flex-1"
-          />
-          <Button
-            variant="primary"
-            onClick={() => inputRef.current?.click()}
-            loading={busy}
-            icon={<Icon name="plus" size={15} />}
-          >
-            Add photo
-          </Button>
-        </div>
-
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          onChange={onPick}
-          className="hidden"
-        />
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="upload-zone flex w-full items-center gap-2.5 rounded-lg border border-dashed border-line-strong bg-surface-2 px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-brand-soft"
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface text-ink-3">
+            <Icon name="plus" size={17} className="upload-plus" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-medium text-ink">Add a photo</span>
+            <span className="block text-[11.5px] text-ink-3">Team offsites, your desk on day one, the grad cohort…</span>
+          </span>
+        </button>
 
         {experience.photos.length === 0 ? (
           <EmptyState
@@ -332,7 +299,14 @@ function GalleryDialog({
               <li key={photo.id} className="group relative">
                 <button
                   type="button"
-                  onClick={() => setLightbox(photo.image)}
+                  onClick={() =>
+                    setViewing({
+                      file: photo.image,
+                      title: photo.caption || `${experience.title} photo`,
+                      kind: 'image',
+                      created_at: photo.created_at,
+                    })
+                  }
                   className="block w-full overflow-hidden rounded-lg border border-line"
                   aria-label={photo.caption || 'View photo'}
                 >
@@ -365,19 +339,19 @@ function GalleryDialog({
         )}
       </div>
 
-      {lightbox ? (
-        <button
-          type="button"
-          onClick={() => setLightbox(null)}
-          aria-label="Close photo"
-          className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/80 p-6"
-        >
-          <img
-            src={lightbox}
-            alt=""
-            className="max-h-full max-w-full rounded-xl object-contain"
-          />
-        </button>
+      {viewing ? <DocumentViewer item={viewing} onClose={() => setViewing(null)} /> : null}
+
+      {adding ? (
+        <UploadDialog
+          title="Add a photo"
+          accept="image"
+          caption
+          saveLabel="Add photo"
+          onClose={() => setAdding(false)}
+          onSave={async (file, caption) => {
+            onChanged(await experiences.addPhoto(experience.id, file, caption))
+          }}
+        />
       ) : null}
     </Modal>
   )
@@ -515,19 +489,14 @@ function ExperienceFormBody({
           required
           value={form.company}
           error={errors.company}
-          options={companyOptions.map((company) => ({
-            id: company.id,
-            label: company.name,
-            avatar: company.logo,
-            avatarShape: 'square' as const,
-          }))}
+          options={companyOptions.map(companyOption)}
           onChange={(id) => set('company', id)}
           onCreate={async (name) => {
             const created = await companies.ensure({ name })
             setCompanyOptions((prev) =>
               prev.some((entry) => entry.id === created.id) ? prev : [...prev, created],
             )
-            return { id: created.id, label: created.name }
+            return companyOption(created)
           }}
           placeholder="Search or add a company…"
         />
@@ -560,11 +529,11 @@ function ExperienceFormBody({
           />
         </div>
 
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
           placeholder="What you did there."
         />
       </form>

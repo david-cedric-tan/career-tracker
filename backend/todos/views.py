@@ -159,7 +159,7 @@ class TodoViewSet(viewsets.ModelViewSet):
             suggestions.append(
                 {
                     "kind": "application",
-                    "title": f"Follow up on {app.company.name}",
+                    "title": f"Follow up on {app.company.display_name}",
                     "due_date": app.follow_up_date,
                     "application": app.id,
                     "person": None,

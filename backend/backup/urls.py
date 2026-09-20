@@ -1,6 +1,14 @@
 from django.urls import path
 
-from .views import export_json, export_summary, export_xlsx, export_zip, import_archive
+from .views import (
+    export_full_backup,
+    export_json,
+    export_summary,
+    export_xlsx,
+    export_zip,
+    import_archive,
+    import_from_ai,
+)
 
 urlpatterns = [
     path("summary/", export_summary, name="backup-summary"),
@@ -8,4 +16,6 @@ urlpatterns = [
     path("export.xlsx", export_xlsx, name="backup-export-xlsx"),
     path("export.zip", export_zip, name="backup-export-zip"),
     path("import/", import_archive, name="backup-import"),
+    path("import-ai/", import_from_ai, name="backup-import-ai"),
+    path("admin/export-full.zip", export_full_backup, name="backup-export-full"),
 ]

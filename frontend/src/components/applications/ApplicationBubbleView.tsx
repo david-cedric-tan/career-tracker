@@ -7,9 +7,35 @@ import { Icon } from '../ui/Icon'
 import { RingFrame } from '../ui/RingFrame'
 import { connector, growthFor, ringLayout, type RingDims } from '../../lib/ringLayout'
 
-const NO_REGION = 'No region tagged'
+const NO_REGION = 'No Region Tagged'
 
-type Cluster = { key: string; label: string; rows: ApplicationSummary[] }
+/** Outcome buckets that sit after Offer in Current mode — not pipeline stages,
+    but the natural "where it ended" homes for closed applications.
+    Missed Deadline is a real stage (and an outcome); it shows as a stage ring,
+    not an outcome peel card. */
+const TERMINAL_OUTCOME_CARDS = [
+  { key: 'outcome:accepted', outcome: 'accepted', label: 'Accepted', icon: 'check', tone: 'good' },
+  { key: 'outcome:rejected', outcome: 'rejected', label: 'Rejected', icon: 'close', tone: 'critical' },
+] as const
+
+const OUTCOME_HEADER: Record<string, string> = {
+  good: 'bg-good/15 text-good',
+  critical: 'bg-critical/15 text-critical',
+  warning: 'bg-warning/15 text-warning',
+}
+
+const OUTCOME_ICON: Record<string, string> = {
+  good: 'text-good',
+  critical: 'text-critical',
+  warning: 'text-warning',
+}
+
+type Cluster = {
+  key: string
+  label: string
+  rows: ApplicationSummary[]
+  kind?: 'stage' | 'outcome' | 'region'
+}
 
 const DIMS: RingDims = { hub: 56, node: 44, label: 14, labelW: 84, pad: 8 }
 const GROWTH = growthFor(DIMS)
@@ -21,20 +47,57 @@ const LABEL_W = DIMS.labelW
     extra radius needs instead of being shrunk back into a narrow card. */
 const WIDE_CLUSTER = 4
 
-
-function buildStageClusters(rows: ApplicationSummary[]): Cluster[] {
+function buildStageClusters(
+  rows: ApplicationSummary[],
+  mode: 'portfolio' | 'furthest',
+): Cluster[] {
   const byStage = new Map<string, Cluster>()
+  const byOutcome = new Map<string, Cluster>()
+
   for (const row of rows) {
-    const existing = byStage.get(row.stage)
+    // Current view: Accepted / Rejected leave the pipeline and sit in their
+    // own cards after Offer. Missed Deadline is a stage of its own (after
+    // Offer in STAGE_TONE order). Last-stage view stays pure pipeline history.
+    if (mode === 'portfolio') {
+      const terminal = TERMINAL_OUTCOME_CARDS.find((card) => card.outcome === row.outcome)
+      if (terminal) {
+        const existing = byOutcome.get(terminal.key)
+        if (existing) existing.rows.push(row)
+        else
+          byOutcome.set(terminal.key, {
+            key: terminal.key,
+            label: terminal.label,
+            rows: [row],
+            kind: 'outcome',
+          })
+        continue
+      }
+    }
+
+    const key = mode === 'furthest' ? row.furthest_stage || row.stage : row.stage
+    const label =
+      mode === 'furthest'
+        ? row.furthest_stage_display || row.stage_display
+        : row.stage_display
+    const existing = byStage.get(key)
     if (existing) existing.rows.push(row)
-    else byStage.set(row.stage, { key: row.stage, label: row.stage_display, rows: [row] })
+    else byStage.set(key, { key, label, rows: [row], kind: 'stage' })
   }
+
   // Stage has a natural pipeline order — same one the dashboard's Pipeline
   // chart uses (STAGE_TONE's key order) — rather than sorting by count.
   const order = Object.keys(STAGE_TONE)
-  return [...byStage.values()].sort(
+  const stages = [...byStage.values()].sort(
     (a, b) => order.indexOf(a.key) - order.indexOf(b.key),
   )
+
+  // Accepted then Rejected, always after the stage rings (incl. Missed Deadline).
+  const terminals = TERMINAL_OUTCOME_CARDS.flatMap((card) => {
+    const cluster = byOutcome.get(card.key)
+    return cluster ? [cluster] : []
+  })
+
+  return [...stages, ...terminals]
 }
 
 function buildRegionClusters(rows: ApplicationSummary[], companies: Company[]): Cluster[] {
@@ -63,11 +126,13 @@ function buildRegionClusters(rows: ApplicationSummary[], companies: Company[]): 
 }
 
 /**
- * Hub-and-spoke bubble view for Applications — one ring per stage or region,
- * each application tethered to it like Network's own company rings. Grouping
- * by "most recent vs oldest" was considered and dropped: recency is a
- * continuum, not a set of discrete buckets, so it has no natural place to
- * split a ring — the existing "Newest/Oldest first" sort already covers it.
+ * Hub-and-spoke bubble view for Applications — one ring per stage, outcome
+ * bucket, or region.
+ *
+ * Current mode groups by where each application sits now, but peels Accepted /
+ * Rejected into their own cards after Offer. Missed Deadline is a pipeline
+ * stage (after Offer), so it gets a normal stage ring. Last Stage Reached
+ * stays on furthest pipeline step (history), ignoring outcome buckets.
  */
 export function ApplicationBubbleView({
   rows,
@@ -76,12 +141,12 @@ export function ApplicationBubbleView({
 }: {
   rows: ApplicationSummary[]
   companies: Company[]
-  groupBy: 'stage' | 'region'
+  groupBy: 'portfolio' | 'furthest' | 'region'
 }) {
-  const clusters = useMemo(
-    () => (groupBy === 'stage' ? buildStageClusters(rows) : buildRegionClusters(rows, companies)),
-    [rows, companies, groupBy],
-  )
+  const clusters = useMemo(() => {
+    if (groupBy === 'region') return buildRegionClusters(rows, companies)
+    return buildStageClusters(rows, groupBy)
+  }, [rows, companies, groupBy])
 
   if (clusters.length === 0) {
     return <p className="py-8 text-center text-[13px] text-ink-3">Nothing to show yet.</p>
@@ -90,32 +155,48 @@ export function ApplicationBubbleView({
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       {clusters.map((cluster) => (
-        <ClusterCard key={cluster.key} cluster={cluster} />
+        <ClusterCard key={cluster.key} cluster={cluster} groupBy={groupBy} />
       ))}
     </div>
   )
 }
 
-function ClusterCard({ cluster }: { cluster: Cluster }) {
+function ClusterCard({
+  cluster,
+  groupBy,
+}: {
+  cluster: Cluster
+  groupBy: 'portfolio' | 'furthest' | 'region'
+}) {
   const location = useLocation()
-  const { label, rows } = cluster
+  const { label, rows, kind } = cluster
   const layout = useMemo(() => ringLayout(rows.length, DIMS, GROWTH), [rows.length])
+  const outcomeMeta = TERMINAL_OUTCOME_CARDS.find((card) => card.key === cluster.key)
+  const isMissedDeadlineStage = kind === 'stage' && cluster.key === 'missed_deadline'
+  const hubIcon = outcomeMeta?.icon ?? (isMissedDeadlineStage ? 'clock' : 'briefcase')
+  const headerTone = outcomeMeta
+    ? OUTCOME_HEADER[outcomeMeta.tone]
+    : isMissedDeadlineStage
+      ? 'bg-warning/15 text-warning'
+      : 'bg-brand-soft text-brand-strong'
+  const hubIconClass = outcomeMeta
+    ? OUTCOME_ICON[outcomeMeta.tone]
+    : isMissedDeadlineStage
+      ? 'text-warning'
+      : 'text-ink-3'
 
   return (
     <section
       className={cx(
-        'rounded-card border border-line bg-surface p-3 intern:backdrop-blur-xl',
+        'glass-panel rounded-card border border-line bg-surface p-3',
         rows.length > WIDE_CLUSTER && 'sm:col-span-2',
       )}
     >
       <header className="mb-1 flex items-center gap-2 px-1">
-        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-brand-soft text-brand-strong">
-          <Icon name="briefcase" size={13} />
+        <span className={cx('grid size-6 shrink-0 place-items-center rounded-md', headerTone)}>
+          <Icon name={hubIcon} size={13} />
         </span>
         <h3 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-ink">{label}</h3>
-        <span className="shrink-0 text-[11.5px] text-ink-3">
-          {rows.length} {rows.length === 1 ? 'application' : 'applications'}
-        </span>
       </header>
 
       <RingFrame width={layout.width} height={layout.height}>
@@ -144,17 +225,23 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
           }}
           title={label}
         >
-          <Icon name="briefcase" size={22} className="text-ink-3" />
+          <Icon name={hubIcon} size={22} className={hubIconClass} />
         </div>
 
         {rows.map((row, index) => {
           const { x, y, labelAbove } = layout.points[index]
+          const stageHint =
+            kind === 'outcome'
+              ? `${row.outcome_display} · ${row.stage_display}`
+              : groupBy === 'furthest' && row.furthest_stage !== row.stage
+                ? `${row.furthest_stage_display} (now ${row.stage_display})`
+                : row.stage_display
           return (
             <Link
               key={row.id}
               to={`/applications/${row.id}`}
               state={{ from: location.pathname + location.search }}
-              title={`${row.company_name} — ${row.stage_display}`}
+              title={`${row.company_name} — ${stageHint}`}
               className={cx('absolute flex items-center', labelAbove ? 'flex-col-reverse' : 'flex-col')}
               style={{
                 left: x - LABEL_W / 2,

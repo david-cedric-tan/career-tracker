@@ -77,7 +77,7 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
             <Link
               to={`/applications?company=${company.id}`}
               state={{ from: '/' }}
-              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}${company.rejected ? `, ${company.rejected} rejected` : ''}`}
+              title={`${company.name}${company.short_name ? ` (${company.short_name})` : ''} — ${company.count} application${company.count === 1 ? '' : 's'}${company.offers ? `, ${company.offers} offer${company.offers === 1 ? '' : 's'}` : ''}${company.waiting ? `, ${company.waiting} waiting for a reply` : ''}${company.missed ? `, ${company.missed} missed deadline${company.missed === 1 ? '' : 's'}` : ''}${company.rejected ? `, ${company.rejected} rejected` : ''}`}
               className={cx(
                 'group relative flex w-20 flex-col items-center justify-center gap-1',
                 'rounded-lg border border-line bg-surface-2 py-1.5 transition-all duration-200',
@@ -119,12 +119,29 @@ export function CompanyPanel({ companies }: { companies: CompanyStat[] }) {
                 >
                   <Icon name="check" size={10} />
                 </span>
+              ) : company.waiting > 0 ? (
+                <span
+                  className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-warning text-white shadow-sm"
+                  title={`Waiting on ${company.waiting === 1 ? 'a reply' : `${company.waiting} replies`}`}
+                >
+                  <Icon name="clock" size={10} />
+                </span>
               ) : company.rejected > 0 && company.active === 0 ? (
                 <span
                   className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-critical text-white shadow-sm"
                   title={`${company.rejected} rejection${company.rejected === 1 ? '' : 's'}`}
                 >
                   <Icon name="close" size={10} />
+                </span>
+              ) : company.missed > 0 ? (
+                /* Last in the chain: a closing date that went by is worth
+                   flagging, but not over an offer, a live reply or a
+                   rejection you already know about. */
+                <span
+                  className="absolute left-1 top-1 grid size-4 place-items-center rounded-full bg-serious text-white shadow-sm"
+                  title={`${company.missed} missed deadline${company.missed === 1 ? '' : 's'}`}
+                >
+                  <Icon name="alert" size={10} />
                 </span>
               ) : null}
             </Link>

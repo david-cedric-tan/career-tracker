@@ -15,6 +15,16 @@ export type RegisterPayload = {
   school_email?: string
 }
 
+/** "Forgot my password" — queues a request for the operator. Always
+    resolves, whether or not the username exists. */
+export function requestPasswordReset(payload: { username: string; message?: string }) {
+  return api<{ detail: string }>('/auth/password-reset-requests/', {
+    method: 'POST',
+    body: payload,
+    anonymous: true,
+  })
+}
+
 export async function login(payload: LoginPayload): Promise<AuthResponse> {
   const data = await api<AuthResponse>('/auth/login/', {
     method: 'POST',
@@ -69,6 +79,17 @@ export function uploadWallpaper(file: File): Promise<User> {
 
 export function removeWallpaper(): Promise<User> {
   return api<User>('/auth/me/wallpaper/', { method: 'DELETE' })
+}
+
+export function uploadPinnedPhoto(file: Blob, caption = ''): Promise<User> {
+  const body = new FormData()
+  body.append('photo', file, file instanceof File ? file.name : 'pinned.jpg')
+  if (caption) body.append('caption', caption)
+  return api<User>('/auth/me/pinned-photo/', { method: 'POST', body })
+}
+
+export function removePinnedPhoto(): Promise<User> {
+  return api<User>('/auth/me/pinned-photo/', { method: 'DELETE' })
 }
 
 /** Clears everything the account tracks; the account itself survives.

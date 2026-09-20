@@ -3,10 +3,11 @@ import { formatApiError } from '../../api/client'
 import { cx } from '../../lib/format'
 import { Spinner } from './Button'
 import { Icon } from './Icon'
+import { UploadDialog } from './UploadDialog'
 
 const MAX_BYTES = 10 * 1024 * 1024
 export const DOCUMENT_ACCEPT =
-  '.pdf,.docx,.doc,.pages,.odt,.rtf,.txt,application/pdf,application/msword'
+  '.pdf,.docx,.doc,.pages,.odt,.rtf,.txt,.md,.markdown,.pptx,.ppt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 function humanSize(bytes: number | null) {
   if (bytes === null) return ''
@@ -42,6 +43,7 @@ export function FilePicker({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   async function accept(file: File | undefined) {
     if (!file) return
@@ -138,7 +140,7 @@ export function FilePicker({
 
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
+            onClick={() => setDialogOpen(true)}
             disabled={busy}
             aria-label="Replace file"
             title="Replace"
@@ -160,23 +162,23 @@ export function FilePicker({
       ) : (
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setDialogOpen(true)}
           disabled={busy}
           className={cx(
-            'flex w-full items-center gap-2.5 rounded-lg border border-dashed p-3 text-left transition-colors',
+            'upload-zone flex w-full items-center gap-2.5 rounded-lg border border-dashed p-3 text-left transition-colors',
             'hover:border-brand hover:bg-brand-soft',
             dragging ? 'border-brand bg-brand-soft' : 'border-line-strong bg-surface-2',
           )}
         >
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-surface text-ink-3">
-            {busy ? <Spinner /> : <Icon name="plus" size={17} />}
+            {busy ? <Spinner /> : <Icon name="plus" size={17} className="upload-plus" />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-medium text-ink">
               {dragging ? 'Drop it here' : 'Attach a file, or drop one here'}
             </span>
             <span className="block text-[11.5px] text-ink-3">
-              {help ?? 'PDF, Word, Pages, ODT, RTF or text — up to 10MB.'}
+              {help ?? 'PDF, Word, Pages, PowerPoint, Markdown, ODT, RTF or text — up to 10MB.'}
             </span>
           </span>
         </button>
@@ -194,6 +196,25 @@ export function FilePicker({
         <p role="alert" className="mt-1.5 text-[12px] text-critical">
           {error}
         </p>
+      ) : null}
+
+      {dialogOpen ? (
+        <UploadDialog
+          title={hasFile ? 'Replace file' : 'Attach a file'}
+          accept="document"
+          current={
+            hasFile ? (
+              <span className="grid size-20 place-items-center rounded-xl border border-line bg-surface-2 text-brand-strong">
+                <Icon name="file" size={26} />
+              </span>
+            ) : null
+          }
+          saveLabel={hasFile ? 'Replace' : 'Attach'}
+          onClose={() => setDialogOpen(false)}
+          onSave={async (file) => {
+            await onUpload(file)
+          }}
+        />
       ) : null}
     </div>
   )

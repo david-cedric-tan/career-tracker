@@ -7,6 +7,49 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
+
+
+def is_owner_username(username):
+    """Whether this username is the app's maintainer.
+
+    Matched case-insensitively, because the account is typed by hand at
+    registration and "davieetan" and "DavieeTan" are the same person.
+    """
+    owner = getattr(settings, "DEVELOPER_USERNAME", "")
+    return bool(owner) and (username or "").strip().lower() == owner.strip().lower()
+
+
+class PasswordResetRequest(models.Model):
+    """"I forgot my password" — raised from the login screen, answered by a
+    superuser in the console.
+
+    There is no email round-trip in this app (no mail server, and most
+    accounts are people the operator knows), so a reset is a person asking
+    the operator to set a new one. The request is the queue: it shows the
+    operator who asked and when, and clears once they set a password on
+    that account.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="password_reset_requests"
+    )
+    message = models.CharField(max_length=280, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Reset request from {self.user_id}"
 
 
 class Profile(models.Model):
@@ -25,6 +68,9 @@ class Profile(models.Model):
     # or work email is kept separate from the login email since the two serve
     # different purposes (auth vs "how a recruiter reaches me").
     mobile_number = models.CharField(max_length=32, blank=True)
+    # What the app calls you — "Dave" rather than "David Cedric" — short
+    # enough to fit the sidebar and the dashboard greeting.
+    preferred_name = models.CharField(max_length=40, blank=True)
     school_email = models.EmailField(blank=True)
     # A third address, kept apart from both the login email and the school/work
     # one: the address you'd actually want a recruiter to use after you
@@ -34,6 +80,12 @@ class Profile(models.Model):
 
     # A user's own photo for Intern mode, alongside the built-in presets.
     custom_wallpaper = models.ImageField(upload_to="wallpapers/", null=True, blank=True)
+
+    # Dashboard desk photo — follows the account across devices, unlike the
+    # old browser-only IndexedDB copy which made two people on one machine
+    # share (or steal) each other's pin.
+    pinned_photo = models.ImageField(upload_to="pinned/", null=True, blank=True)
+    pinned_photo_caption = models.CharField(max_length=200, blank=True)
 
     # Appearance (FR-APPEAR-*) — each user's own theme/wallpaper/font picks,
     # not shared across accounts in the same browser. Blank means "unset,
@@ -60,6 +112,12 @@ class Profile(models.Model):
     # Shown once, right after first login; the user can dismiss it for good.
     onboarding_completed = models.BooleanField(default=False)
 
+    # Whoever maintains the app. Grants one thing only: reading and replying to
+    # every account's refinement notes, so complaints reach someone who can act
+    # on them. Deliberately not `is_staff` — that opens the Django admin, which
+    # is a much bigger grant than "can read the suggestion box".
+    is_developer = models.BooleanField(default=False)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -67,7 +125,15 @@ class Profile(models.Model):
 
     @classmethod
     def for_user(cls, user):
-        profile, _ = cls.objects.get_or_create(user=user)
+        # The single place profiles come into existence, so it is also where the
+        # owner's flag is applied — otherwise a fresh database created after the
+        # granting migration would leave the maintainer without it.
+        profile, created = cls.objects.get_or_create(
+            user=user, defaults={"is_developer": is_owner_username(user.username)}
+        )
+        if not created and not profile.is_developer and is_owner_username(user.username):
+            profile.is_developer = True
+            profile.save(update_fields=["is_developer"])
         return profile
 
 
@@ -312,7 +378,7 @@ class ExtraCurricular(models.Model):
 class LinkCategory(models.TextChoices):
     PORTFOLIO = "portfolio", "Portfolio"
     GITHUB = "github", "GitHub"
-    WEBSITE = "website", "Personal site"
+    WEBSITE = "website", "Personal Site"
     SOCIAL = "social", "Social"
     OTHER = "other", "Other"
 
@@ -386,15 +452,50 @@ class RefinementKind(models.TextChoices):
 
 class RefinementStatus(models.TextChoices):
     OPEN = "open", "Open"
+    TESTING = "testing", "Testing"
+    AWAITING_VALIDATION = "awaiting_validation", "Awaiting validation"
     DONE = "done", "Done"
 
 
-class RefinementNote(models.Model):
-    """One logged refinement, complaint or bug the user wants to come back to.
+# Statuses a developer can park a ticket in without writing a fix reply.
+# `done` stays reserved for resolve / self-close.
+REFINEMENT_DEV_STATUSES = {
+    RefinementStatus.OPEN,
+    RefinementStatus.TESTING,
+    RefinementStatus.AWAITING_VALIDATION,
+}
 
-    Kept per user rather than as a global backlog: this is a private notebook
-    for "the thing that annoyed me just now", written in the moment and
-    reviewed later, not a shared issue tracker.
+
+# The app's screens, as ticket tags. Kept here rather than accepting free text
+# so the developer's inbox can be filtered by area — a tag set that anyone can
+# extend by typing becomes twelve spellings of "dashboard" within a month.
+TICKET_SCREENS = [
+    ("dashboard", "Dashboard"),
+    ("applications", "Applications"),
+    ("network", "Network"),
+    ("catchups", "Catch-ups"),
+    ("todos", "Todos"),
+    ("calendar", "Calendar"),
+    ("resumes", "Resumes"),
+    ("job_directory", "Job Directory"),
+    ("refinement_log", "Refinement Log"),
+    ("profile", "Profile"),
+    ("settings", "Settings"),
+    ("other", "Somewhere else"),
+]
+TICKET_SCREEN_VALUES = {value for value, _ in TICKET_SCREENS}
+
+
+class RefinementNote(models.Model):
+    """One logged refinement, complaint or bug.
+
+    Written as a private notebook — "the thing that annoyed me just now" — and
+    read two ways. The person who wrote it sees only their own notes. Whoever
+    maintains the app (`Profile.is_developer`) sees everyone's, because a
+    complaint nobody can read is not worth the typing, and replies to it with
+    `resolution`. The reply travels back to the reporter, which is why the
+    fields below track not just that something was fixed but whether the person
+    who raised it has actually seen the answer.
     """
 
     user = models.ForeignKey(
@@ -405,11 +506,38 @@ class RefinementNote(models.Model):
         max_length=20, choices=RefinementKind.choices, default=RefinementKind.IMPROVEMENT
     )
     status = models.CharField(
-        max_length=10, choices=RefinementStatus.choices, default=RefinementStatus.OPEN
+        max_length=20, choices=RefinementStatus.choices, default=RefinementStatus.OPEN
     )
     # Where the user was when they logged it, so a note like "this is confusing"
     # is still actionable a fortnight later.
     page = models.CharField(max_length=255, blank=True)
+    # Which screens the reporter says are affected, as a list of slugs from
+    # `TICKET_SCREENS`. A free-text page path says where they happened to be
+    # standing; this says what the complaint is actually about, which is often
+    # somewhere else entirely.
+    screens = models.JSONField(default=list, blank=True)
+    # What the developer wrote back when they fixed it. Blank on a note the
+    # reporter simply ticked off themselves — resolving your own note is not
+    # the same event as someone answering you.
+    resolution = models.TextField(blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refinements_resolved",
+    )
+    # Null while the reporter still owes a look at the reply. This is what makes
+    # the answer a notification rather than something you'd only find by
+    # scrolling back through old notes.
+    resolution_seen_at = models.DateTimeField(null=True, blank=True)
+    # When each side last opened the conversation below. Two markers rather than
+    # a per-message read flag: there are only ever two people in a ticket, and
+    # "everything before this moment has been seen" is all either of them needs
+    # to know.
+    owner_read_at = models.DateTimeField(null=True, blank=True)
+    developer_read_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -418,3 +546,112 @@ class RefinementNote(models.Model):
 
     def __str__(self):
         return self.body[:60]
+
+    @property
+    def has_unseen_resolution(self):
+        return bool(self.resolution) and self.resolution_seen_at is None
+
+    @property
+    def is_locked(self):
+        """Answered tickets stop being editable.
+
+        Otherwise the reply stops making sense: the developer writes "fixed the
+        calendar scroll", the reporter edits the note to say something else, and
+        the thread now reads as an answer to a question nobody asked. Ticking
+        your own note off doesn't lock it — only a reply does.
+        """
+        return bool(self.resolution)
+
+    def read_marker_for(self, user):
+        """Which side of the conversation this user is on."""
+        return "owner_read_at" if user.id == self.user_id else "developer_read_at"
+
+    def unread_count_for(self, user):
+        """Messages from the other person this user hasn't opened yet."""
+        since = getattr(self, self.read_marker_for(user))
+        messages = self.messages.exclude(user=user)
+        if since is not None:
+            messages = messages.filter(created_at__gt=since)
+        return messages.count()
+
+
+class RefinementMessage(models.Model):
+    """One turn in the back-and-forth on a ticket.
+
+    A complaint is rarely complete on its own — "the calendar is broken" needs
+    a "broken how?" before anything can be done about it, and that exchange
+    belongs on the ticket rather than in a separate conversation nobody can
+    find later. Either party can attach a picture, which is usually the fastest
+    way to answer "show me".
+
+    Only the two people involved can read a thread: whoever raised the ticket,
+    and whoever maintains the app.
+    """
+
+    note = models.ForeignKey(
+        RefinementNote, on_delete=models.CASCADE, related_name="messages"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="refinement_messages",
+    )
+    # Blank when the picture *is* the message — a screenshot on its own is a
+    # perfectly good answer to "what does it look like".
+    body = models.TextField(blank=True)
+    image = models.ImageField(upload_to="refinements/", null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return self.body[:60] or "(attachment)"
+
+
+class RefinementEventType(models.TextChoices):
+    RAISED = "raised", "Raised"
+    EDITED = "edited", "Edited"
+    FIXED = "fixed", "Fixed"
+    REOPENED = "reopened", "Reopened"
+    CLOSED = "closed", "Closed"
+    TESTING = "testing", "Testing"
+    AWAITING_VALIDATION = "awaiting_validation", "Awaiting validation"
+
+
+class RefinementEventLog(models.Model):
+    """Append-only history for one ticket — same idea as application event logs.
+
+    Status moves (raised → fixed → reopened → fixed again) are the story people
+    come back to read. Field edits are recorded too, but the UI can tuck those
+    away the way application history hides tidy-up edits.
+    """
+
+    note = models.ForeignKey(
+        RefinementNote, on_delete=models.CASCADE, related_name="event_logs"
+    )
+    event_type = models.CharField(max_length=20, choices=RefinementEventType.choices)
+    # Free-text payload: the fix reply for `fixed`, otherwise blank.
+    detail = models.TextField(blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refinement_events",
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.note_id} {self.event_type} @ {self.created_at}"
+
+
+def log_refinement_event(note, event_type, *, actor=None, detail="", at=None):
+    """Write one history row. Kept as a helper so views don't invent formats."""
+    kwargs = {"note": note, "event_type": event_type, "actor": actor, "detail": detail or ""}
+    if at is not None:
+        kwargs["created_at"] = at
+    return RefinementEventLog.objects.create(**kwargs)

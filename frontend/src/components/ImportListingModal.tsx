@@ -10,11 +10,14 @@ import { useToast } from './ui/toast-context'
 
 
 /**
- * "Bring your own AI" for a single job ad — paste the ad's text into any AI
- * with the copy prompt below, and it comes back with the ad separated into
- * this app's fields (description vs. skills vs. deadline) rather than one
- * pasted blob. Paste that JSON back here (or upload the saved file) and it
- * creates a real, browsable listing.
+ * "Bring your own AI" for job listings — paste one ad's text into any AI
+ * with the copy prompt below and it comes back split into this app's fields
+ * (description vs. skills vs. deadline) instead of one pasted blob. Or, with
+ * an AI that can actually search/browse live (Grok, say), hand it criteria
+ * instead of an ad and it can return several real postings at once — the
+ * prompt asks for the same "listings" array either way, and the backend
+ * (`applications.imports.import_listings`) already accepts any number of
+ * rows, importing each independently so one bad row doesn't sink the batch.
  *
  * Two steps in one modal rather than two dialogs: the prompt is a means to
  * an end, so reopening this after the round trip to the AI should land on
@@ -174,8 +177,8 @@ export function ImportListingModal({ open, onClose, onImported }: {
     <Modal
       open={open}
       onClose={onClose}
-      title="Import a job listing"
-      description="Paste a real job ad into any AI with this prompt — it comes back split into a description, a skills list and a deadline instead of one pasted wall of text."
+      title="Import job listings"
+      description="Paste a real job ad into any AI with this prompt — or, with an AI that can search the live web (like Grok), ask it to find several matching postings instead. Either way it comes back as the same JSON, split into a description, a skills list and a deadline rather than one pasted wall of text."
       size="lg"
       footer={
         results ? (

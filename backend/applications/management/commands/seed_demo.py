@@ -97,7 +97,7 @@ PEOPLE = [
      "Classmate", "Class", None,
      [("instagram", "@tomalv", True)]),
     ("Jess Nguyen", "Audit Manager", "KPMG", PersonStatus.LEAD,
-     "Industry contact", "Referral", 200,
+     "Industry Contact", "Referral", 200,
      [("linkedin", "https://linkedin.com/in/jessnguyen", True)]),
     ("Daniel Okoro", "Grad Recruiter", "Telstra", PersonStatus.GHOSTED,
      "Recruiter", "LinkedIn", 160, []),
@@ -110,10 +110,10 @@ PEOPLE = [
      "Alumni", "University event", 20,
      [("linkedin", "https://linkedin.com/in/liamfitz", True)]),
     ("Hana Kimura", "Graduate Analyst", "EY", PersonStatus.LEAD,
-     "Industry contact", "Professional event", None,
+     "Industry Contact", "Professional event", None,
      [("linkedin", "https://linkedin.com/in/hanakimura", True)]),
     ("Ben Carter", "Design Lead", "Canva", PersonStatus.CONNECTION,
-     "Industry contact", "Professional event", 75,
+     "Industry Contact", "Professional event", 75,
      [("email", "ben.carter@example.com", True)]),
     ("Noor Haddad", "Engineering Manager", "Canva", PersonStatus.LEAD,
      "Interviewer", "Referral", 15,
@@ -254,7 +254,7 @@ class Command(BaseCommand):
                 application.save(update_fields=["outcome", "updated_at"])
                 log_transition(
                     application, prev_stage, prev_outcome,
-                    note=f"Marked {application.get_outcome_display().lower()}.",
+                    note=f"Marked {application.get_outcome_display()}.",
                 )
 
             if outcome == Outcome.IN_PROGRESS:
@@ -300,7 +300,7 @@ class Command(BaseCommand):
 
         people = {p.full_name: p for p in Person.objects.filter(user=user)}
         todo_specs = [
-            ("Prep for EY assessment centre", Priority.HIGH, -1, TodoStatus.OPEN,
+            ("Prep for EY Assessment Center", Priority.HIGH, -1, TodoStatus.OPEN,
              applications.get("EY"), None),
             ("Message Sarah after the OA", Priority.MEDIUM, 2, TodoStatus.OPEN,
              applications.get("EY"), people.get("Sarah Chen")),
