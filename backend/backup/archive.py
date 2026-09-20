@@ -7,11 +7,17 @@ honest — an export that can't be imported isn't a backup, it's a report.
 Uploaded binaries are referenced by name only in this dict — `.json`/`.xlsx`
 exports are data-only. The full "Data + Resources" backup (FR-EXPORT-05) is
 a .zip built by `collect_media_manifest` below, layered on top of this same
-archive rather than changing its shape. It covers every file field that's
-already part of this archive (resumes, experience photos, profile
-avatar/wallpaper, company logos, person photos, certification attachments,
-refinement message images). Education/ExtraCurricular attachments are still
-absent.
+archive rather than changing its shape. It covers every file field on every
+row this archive carries: resumes, library documents, experience photos,
+profile avatar/wallpaper/pinned photo, company logos, person photos, the
+icon + attachments of each profile section (education, certifications,
+extra-curriculars), profile-link icons and refinement message images.
+
+What's deliberately left out: `onboarding.SampleDataRecord` (bookkeeping for
+the demo data, which points at rows by id and is meaningless after a restore),
+`Venue` (a catalog nothing user-owned references yet), and the login
+credentials themselves — `account.email` is exported for the record but never
+restored, since it's how you sign in here, not data about you.
 """
 
 import os
@@ -21,9 +27,13 @@ from django.utils.text import get_valid_filename
 
 from accounts.models import (
     Certification,
+    Education,
     Experience,
     ExperiencePhoto,
+    ExtraCurricular,
     Profile,
+    ProfileAddress,
+    ProfileLink,
     RefinementEventLog,
     RefinementMessage,
     RefinementNote,
@@ -31,8 +41,10 @@ from accounts.models import (
 from applications.models import (
     Application,
     ApplicationJobListing,
+    ApplicationStage,
     AppsEventLog,
     Company,
+    CompanyNote,
     Country,
     Industry,
     JobListing,
@@ -44,7 +56,7 @@ from applications.models import (
 )
 from catchups.models import Catchup
 from events.models import CalendarEvent
-from network.models import ContactMethod, Person
+from network.models import ContactMethod, Person, PersonCompany
 from todos.models import Todo
 
 # Bumped when the shape changes incompatibly, so an old file fails loudly
@@ -54,20 +66,26 @@ ARCHIVE_VERSION = 1
 # Sheet/key name → the columns it carries, in order. The importer walks this
 # same table, so a column added here flows through both directions.
 SHEETS = {
-    "companies": ["id", "name", "industries"],
+    # The pipeline itself — custom stages an application's `stage` key may
+    # point at, which a fresh install won't have until restore ensures them.
+    "stages": ["key", "name", "position", "is_preset"],
+    "companies": ["id", "name", "short_name", "industries", "regions"],
+    "company_notes": ["id", "company", "notes", "updated_at"],
     "roles": ["id", "name"],
     "locations": ["id", "name", "state", "country"],
     "resumes": [
         "id", "label", "variant_type", "notes", "is_active", "file_name",
-        "target_companies", "target_roles",
+        "target_companies", "target_roles", "created_at",
     ],
     "job_listings": [
         "id", "company", "role", "location", "role_type", "work_arrangement",
-        "opened_at", "closing_at", "job_url",
+        "opened_at", "closing_at", "job_url", "description", "skills",
     ],
     "applications": [
         "id", "company", "stage", "outcome", "applied_at", "source", "resume",
         "resume_version", "follow_up_date", "reapply_at", "notes", "listings",
+        "listing_outcomes", "awaiting_response", "awaiting_since",
+        "is_historical", "stage_updated_at", "created_at",
     ],
     "application_events": [
         "id", "application", "event_type", "prev_stage", "curr_stage",
@@ -75,34 +93,53 @@ SHEETS = {
     ],
     "people": [
         "id", "full_name", "title", "status", "relationship", "source",
-        "companies", "applications", "last_meeting_at", "next_chat_at", "notes",
+        "companies", "applications", "connections", "last_meeting_at",
+        "last_messaged_at", "last_message_channel", "next_chat_at",
+        "cadence_months", "notes", "created_at",
+    ],
+    # The detail on each person↔company link (title, dates) — `people.companies`
+    # above carries only the names.
+    "person_companies": [
+        "id", "person", "company", "title", "started_on", "ended_on", "is_current",
+        "created_at",
     ],
     "contact_methods": ["id", "person", "channel", "value", "is_preferred"],
     "catchups": [
         "id", "person", "met_on", "title", "format", "format_other",
         "message_channel", "location", "minutes", "takeaways", "follow_up_on",
+        "created_at",
     ],
     "todos": [
         "id", "title", "description", "due_date", "due_time", "due_end_time",
         "priority", "status", "application", "person", "company",
-        "completed_at", "position",
+        "completed_at", "position", "created_at",
     ],
     "calendar_events": [
         "id", "title", "date", "all_day", "start_time", "end_time", "notes",
-        "is_done", "company", "application", "people", "reminders",
+        "is_done", "company", "application", "people", "reminders", "created_at",
     ],
     "library_documents": [
         "id", "title", "description", "original_name", "kind", "tags",
-        "position", "application", "company",
+        "position", "application", "company", "created_at",
     ],
     "experiences": [
         "id", "company", "title", "started_on", "ended_on", "description",
-        "photo_captions",
+        "photo_captions", "created_at",
+    ],
+    "education": [
+        "id", "school", "degree", "field_of_study", "started_on", "ended_on",
+        "description", "attachment_captions", "created_at",
     ],
     "certifications": [
         "id", "name", "issuer", "issued_on", "expires_on", "credential_url",
-        "description", "attachment_captions",
+        "description", "attachment_captions", "created_at",
     ],
+    "extracurriculars": [
+        "id", "organization", "role", "started_on", "ended_on", "description",
+        "attachment_captions", "created_at",
+    ],
+    "profile_links": ["id", "label", "url", "category", "position"],
+    "profile_addresses": ["id", "label", "address", "country"],
     "refinement_notes": [
         "id", "body", "kind", "status", "page", "screens", "resolution",
         "resolved_at", "resolved_by", "resolution_seen_at", "owner_read_at",
@@ -127,6 +164,18 @@ def _time(value):
     return value.isoformat() if value else None
 
 
+def _datetime(value):
+    return value.isoformat() if value else None
+
+
+def _attachment_captions(section):
+    """Captions (falling back to original_name) keep zip reattach order stable
+    when a profile section has more than one file."""
+    return [
+        (a.caption or a.original_name or "").strip() for a in section.attachments.all()
+    ]
+
+
 def _names(queryset, attribute="name"):
     return [getattr(row, attribute) for row in queryset]
 
@@ -142,7 +191,7 @@ def build_archive(user):
         "target_companies", "target_roles"
     )
     people = Person.objects.filter(user=user).prefetch_related(
-        "companies", "applications__company", "contact_methods"
+        "companies", "applications__company", "contact_methods", "connections"
     )
     experiences = Experience.objects.filter(user=user).select_related(
         "company"
@@ -162,13 +211,28 @@ def build_archive(user):
             "company_id", flat=True
         )
     )
+    company_ids |= set(
+        CompanyNote.objects.filter(user=user).values_list("company_id", flat=True)
+    )
+    company_ids |= set(
+        CalendarEvent.objects.filter(user=user, company__isnull=False).values_list(
+            "company_id", flat=True
+        )
+    )
+    company_ids |= set(
+        LibraryDocument.objects.filter(user=user, company__isnull=False).values_list(
+            "company_id", flat=True
+        )
+    )
 
     listings = JobListing.objects.filter(
         application_links__application__user=user
     ).select_related("company", "role", "location", "location__state").distinct()
     company_ids |= set(listings.values_list("company_id", flat=True))
 
-    companies = Company.objects.filter(id__in=company_ids).prefetch_related("industries")
+    companies = Company.objects.filter(id__in=company_ids).prefetch_related(
+        "industries", "regions"
+    )
 
     role_ids = set(listings.values_list("role_id", flat=True))
     for resume in resumes:
@@ -186,7 +250,21 @@ def build_archive(user):
         # Appearance and dashboard layout aren't a "row" like everything else
         # here — one object, not a sheet — so it rides along as its own key
         # rather than forcing SHEETS/archive_counts to special-case it.
+        # Name and login email — first/last name are restored, the email is
+        # kept for the record only (see the module docstring).
+        "account": {
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+        },
         "profile": {
+            "preferred_name": profile.preferred_name,
+            "mobile_number": profile.mobile_number,
+            "school_email": profile.school_email,
+            "personal_email": profile.personal_email,
+            "linkedin_url": profile.linkedin_url,
+            "pinned_photo_caption": profile.pinned_photo_caption,
+            "onboarding_completed": profile.onboarding_completed,
             "theme_mode": profile.theme_mode,
             "wallpaper": profile.wallpaper,
             "wallpaper_blur": profile.wallpaper_blur,
@@ -196,15 +274,35 @@ def build_archive(user):
             "celebrations_enabled": profile.celebrations_enabled,
             "dashboard_layout": profile.dashboard_layout,
         },
+        "stages": [
+            {
+                "key": s.key,
+                "name": s.name,
+                "position": s.position,
+                "is_preset": s.is_preset,
+            }
+            for s in ApplicationStage.objects.all()
+        ],
         "companies": [
             {
                 "id": c.id,
                 "name": c.name,
+                "short_name": c.short_name,
                 # A list, not a single value — a company can span more than
                 # one industry now.
                 "industries": [i.name for i in c.industries.all()],
+                "regions": [r.name for r in c.regions.all()],
             }
             for c in companies
+        ],
+        "company_notes": [
+            {
+                "id": n.id,
+                "company": n.company.name,
+                "notes": n.notes,
+                "updated_at": _datetime(n.updated_at),
+            }
+            for n in CompanyNote.objects.filter(user=user).select_related("company")
         ],
         "roles": [{"id": r.id, "name": r.name} for r in roles],
         "locations": [
@@ -226,6 +324,7 @@ def build_archive(user):
                 "file_name": r.file_name,
                 "target_companies": _names(r.target_companies.all()),
                 "target_roles": _names(r.target_roles.all()),
+                "created_at": _datetime(r.created_at),
             }
             for r in resumes
         ],
@@ -240,6 +339,8 @@ def build_archive(user):
                 "opened_at": _date(l.opened_at),
                 "closing_at": _date(l.closing_at),
                 "job_url": l.job_url,
+                "description": l.description,
+                "skills": l.skills,
             }
             for l in listings
         ],
@@ -259,6 +360,18 @@ def build_archive(user):
                 "listings": [
                     link.job_listing.role.name for link in a.listing_links.all()
                 ],
+                # Only the roles whose result diverges from the application's
+                # — blank means "follows the parent", so it isn't recorded.
+                "listing_outcomes": {
+                    link.job_listing.role.name: link.outcome
+                    for link in a.listing_links.all()
+                    if link.outcome
+                },
+                "awaiting_response": a.awaiting_response,
+                "awaiting_since": _datetime(a.awaiting_since),
+                "is_historical": a.is_historical,
+                "stage_updated_at": _datetime(a.stage_updated_at),
+                "created_at": _datetime(a.created_at),
             }
             for a in applications
         ],
@@ -292,11 +405,31 @@ def build_archive(user):
                 "source": p.source.name if p.source else None,
                 "companies": _names(p.companies.all()),
                 "applications": [a.id for a in p.applications.all()],
+                "connections": _names(p.connections.all(), attribute="full_name"),
                 "last_meeting_at": _date(p.last_meeting_at),
+                "last_messaged_at": _date(p.last_messaged_at),
+                "last_message_channel": p.last_message_channel,
                 "next_chat_at": _date(p.next_chat_at),
+                "cadence_months": p.cadence_months,
                 "notes": p.notes,
+                "created_at": _datetime(p.created_at),
             }
             for p in people
+        ],
+        "person_companies": [
+            {
+                "id": pc.id,
+                "person": pc.person.full_name,
+                "company": pc.company.name,
+                "title": pc.title,
+                "started_on": _date(pc.started_on),
+                "ended_on": _date(pc.ended_on),
+                "is_current": pc.is_current,
+                "created_at": _datetime(pc.created_at),
+            }
+            for pc in PersonCompany.objects.filter(person__user=user).select_related(
+                "person", "company"
+            )
         ],
         "contact_methods": [
             {
@@ -321,6 +454,7 @@ def build_archive(user):
                 "minutes": c.minutes,
                 "takeaways": c.takeaways,
                 "follow_up_on": _date(c.follow_up_on),
+                "created_at": _datetime(c.created_at),
             }
             for c in Catchup.objects.filter(user=user).select_related("person")
         ],
@@ -339,6 +473,7 @@ def build_archive(user):
                 "company": t.company.name if t.company else None,
                 "completed_at": t.completed_at.isoformat() if t.completed_at else None,
                 "position": t.position,
+                "created_at": _datetime(t.created_at),
             }
             for t in Todo.objects.filter(user=user).select_related("person", "company")
         ],
@@ -356,6 +491,7 @@ def build_archive(user):
                 "application": e.application_id,
                 "people": _names(e.people.all(), attribute="full_name"),
                 "reminders": [r.minutes_before for r in e.reminders.all()],
+                "created_at": _datetime(e.created_at),
             }
             for e in CalendarEvent.objects.filter(user=user)
             .select_related("company", "application")
@@ -372,6 +508,7 @@ def build_archive(user):
                 "position": d.position,
                 "application": d.application_id,
                 "company": d.company.name if d.company else None,
+                "created_at": _datetime(d.created_at),
             }
             for d in LibraryDocument.objects.filter(user=user).select_related(
                 "application", "company"
@@ -386,8 +523,23 @@ def build_archive(user):
                 "ended_on": _date(e.ended_on),
                 "description": e.description,
                 "photo_captions": [p.caption for p in e.photos.all()],
+                "created_at": _datetime(e.created_at),
             }
             for e in experiences
+        ],
+        "education": [
+            {
+                "id": e.id,
+                "school": e.school,
+                "degree": e.degree,
+                "field_of_study": e.field_of_study,
+                "started_on": _date(e.started_on),
+                "ended_on": _date(e.ended_on),
+                "description": e.description,
+                "attachment_captions": _attachment_captions(e),
+                "created_at": _datetime(e.created_at),
+            }
+            for e in Education.objects.filter(user=user).prefetch_related("attachments")
         ],
         "certifications": [
             {
@@ -398,16 +550,46 @@ def build_archive(user):
                 "expires_on": _date(c.expires_on),
                 "credential_url": c.credential_url,
                 "description": c.description,
-                # Captions (falling back to original_name) keep zip reattach
-                # order stable when a credential has more than one file.
-                "attachment_captions": [
-                    (a.caption or a.original_name or "").strip()
-                    for a in c.attachments.all()
-                ],
+                "attachment_captions": _attachment_captions(c),
+                "created_at": _datetime(c.created_at),
             }
             for c in Certification.objects.filter(user=user).prefetch_related(
                 "attachments"
             )
+        ],
+        "extracurriculars": [
+            {
+                "id": x.id,
+                "organization": x.organization,
+                "role": x.role,
+                "started_on": _date(x.started_on),
+                "ended_on": _date(x.ended_on),
+                "description": x.description,
+                "attachment_captions": _attachment_captions(x),
+                "created_at": _datetime(x.created_at),
+            }
+            for x in ExtraCurricular.objects.filter(user=user).prefetch_related(
+                "attachments"
+            )
+        ],
+        "profile_links": [
+            {
+                "id": l.id,
+                "label": l.label,
+                "url": l.url,
+                "category": l.category,
+                "position": l.position,
+            }
+            for l in ProfileLink.objects.filter(user=user)
+        ],
+        "profile_addresses": [
+            {
+                "id": a.id,
+                "label": a.label,
+                "address": a.address,
+                "country": a.country.name if a.country else None,
+            }
+            for a in ProfileAddress.objects.filter(user=user).select_related("country")
         ],
         "refinement_notes": [
             {
@@ -527,6 +709,16 @@ def collect_media_manifest(user):
                 profile.custom_wallpaper,
             )
         )
+    if profile.pinned_photo:
+        entries.append(
+            (
+                {
+                    "kind": "profile_pinned_photo",
+                    "path": f"media/profile/pinned{_ext(profile.pinned_photo.name)}",
+                },
+                profile.pinned_photo,
+            )
+        )
 
     for resume in Resume.objects.filter(user=user).exclude(file=""):
         entries.append(
@@ -583,6 +775,14 @@ def collect_media_manifest(user):
     company_ids |= set(
         Person.objects.filter(user=user).values_list("companies__id", flat=True)
     )
+    company_ids |= set(
+        CompanyNote.objects.filter(user=user).values_list("company_id", flat=True)
+    )
+    company_ids |= set(
+        Todo.objects.filter(user=user, company__isnull=False).values_list(
+            "company_id", flat=True
+        )
+    )
     company_ids.discard(None)
     for company in Company.objects.filter(id__in=company_ids).exclude(logo=""):
         entries.append(
@@ -596,40 +796,76 @@ def collect_media_manifest(user):
             )
         )
 
+    # Education, certifications and extra-curriculars share one shape: an
+    # optional icon plus a gallery of attachments, matched back by the row's
+    # natural key on restore.
+    section_kinds = (
+        (
+            "education",
+            Education,
+            lambda row: {"school": row.school, "started_on": _date(row.started_on)},
+        ),
+        ("certification", Certification, lambda row: {"name": row.name}),
+        (
+            "extracurricular",
+            ExtraCurricular,
+            lambda row: {
+                "organization": row.organization,
+                "started_on": _date(row.started_on),
+            },
+        ),
+    )
     taken_captions = set()
-    for certification in (
-        Certification.objects.filter(user=user).prefetch_related("attachments")
-    ):
-        if certification.icon:
-            entries.append(
-                (
-                    {
-                        "kind": "certification_icon",
-                        "match": {"name": certification.name},
-                        "path": (
-                            f"media/certification-icons/"
-                            f"{certification.id}{_ext(certification.icon.name)}"
-                        ),
-                    },
-                    certification.icon,
+    for kind, model, natural_key in section_kinds:
+        for section in model.objects.filter(user=user).prefetch_related("attachments"):
+            match = natural_key(section)
+            if section.icon:
+                entries.append(
+                    (
+                        {
+                            "kind": f"{kind}_icon",
+                            "match": match,
+                            "path": (
+                                f"media/{kind}-icons/"
+                                f"{section.id}{_ext(section.icon.name)}"
+                            ),
+                        },
+                        section.icon,
+                    )
                 )
-            )
-        for attachment in certification.attachments.all():
-            if not attachment.file:
-                continue
-            entries.append(
-                (
-                    {
-                        "kind": "certification_attachment",
-                        "match": {"name": certification.name},
-                        "caption": attachment.caption,
-                        "original_name": attachment.original_name,
-                        "attachment_kind": attachment.kind,
-                        "path": f"media/certifications/{_caption_filename(attachment, taken_captions)}",
-                    },
-                    attachment.file,
+            for attachment in section.attachments.all():
+                if not attachment.file:
+                    continue
+                entries.append(
+                    (
+                        {
+                            "kind": f"{kind}_attachment",
+                            "match": match,
+                            "caption": attachment.caption,
+                            "original_name": attachment.original_name,
+                            "attachment_kind": attachment.kind,
+                            "path": (
+                                f"media/{kind}s/"
+                                f"{_caption_filename(attachment, taken_captions)}"
+                            ),
+                        },
+                        attachment.file,
+                    )
                 )
+
+    for link in ProfileLink.objects.filter(user=user).exclude(icon=""):
+        if not link.icon:
+            continue
+        entries.append(
+            (
+                {
+                    "kind": "profile_link_icon",
+                    "match": {"label": link.label, "url": link.url},
+                    "path": f"media/profile-links/{link.id}{_ext(link.icon.name)}",
+                },
+                link.icon,
             )
+        )
 
     for person in Person.objects.filter(user=user).exclude(photo=""):
         entries.append(

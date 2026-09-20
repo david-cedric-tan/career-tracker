@@ -17,6 +17,7 @@ from .models import (
     Location,
     Outcome,
     Resume,
+    ResumeFile,
     Role,
     Stage,
     State,
@@ -210,6 +211,33 @@ class VenueSerializer(serializers.ModelSerializer):
 # Resume
 # ---------------------------------------------------------------------------
 
+class ResumeFileEntrySerializer(serializers.ModelSerializer):
+    """One alternate format of a resume — same shape as the primary `file`
+    fields on ResumeSerializer, so the viewer can treat them alike."""
+
+    file = serializers.SerializerMethodField()
+    file_kind = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ResumeFile
+        fields = ["id", "file", "file_name", "file_kind", "file_size", "created_at"]
+        read_only_fields = fields
+
+    def get_file(self, entry):
+        request = self.context.get("request")
+        return request.build_absolute_uri(entry.file.url) if request else entry.file.url
+
+    def get_file_kind(self, entry):
+        return document_kind(entry.file_name)
+
+    def get_file_size(self, entry):
+        try:
+            return entry.file.size
+        except (OSError, ValueError):
+            return None
+
+
 class ResumeSerializer(serializers.ModelSerializer):
     variant_type_display = serializers.CharField(
         source="get_variant_type_display", read_only=True
@@ -217,6 +245,7 @@ class ResumeSerializer(serializers.ModelSerializer):
     file = serializers.SerializerMethodField()
     file_kind = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
+    files = ResumeFileEntrySerializer(many=True, read_only=True)
     target_company_names = serializers.SerializerMethodField()
     target_companies_info = serializers.SerializerMethodField()
     target_role_names = serializers.SerializerMethodField()
@@ -243,6 +272,7 @@ class ResumeSerializer(serializers.ModelSerializer):
             "file_name",
             "file_kind",
             "file_size",
+            "files",
             "application_count",
             "applications_info",
             "created_at",
@@ -254,6 +284,7 @@ class ResumeSerializer(serializers.ModelSerializer):
             "file",
             "file_kind",
             "file_size",
+            "files",
             "target_company_names",
             "target_companies_info",
             "target_role_names",

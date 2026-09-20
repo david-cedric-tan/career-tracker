@@ -34,14 +34,27 @@ LIST_COLUMNS = {
     "people",
     "reminders",
     "tags",
+    "regions",
+    "connections",
 }
 # …of which these hold ids, not names. A spreadsheet cell is text, so without
 # coercing them back to ints the restore's id lookups silently find nothing.
 ID_LIST_COLUMNS = {"applications", "reminders"}
 # Columns carrying structured JSON that must survive the round trip verbatim.
-JSON_COLUMNS = {"changes"}
-BOOL_COLUMNS = {"is_active", "is_preferred", "has_image", "all_day", "is_done"}
-INT_COLUMNS = {"id", "application", "note", "message", "position"}
+JSON_COLUMNS = {"changes", "listing_outcomes"}
+BOOL_COLUMNS = {
+    "is_active",
+    "is_preferred",
+    "has_image",
+    "all_day",
+    "is_done",
+    "awaiting_response",
+    "is_historical",
+    "is_preset",
+}
+# Three-state: an empty cell means "not known", not "no".
+NULLABLE_BOOL_COLUMNS = {"is_current"}
+INT_COLUMNS = {"id", "application", "note", "message", "position", "cadence_months"}
 
 
 def _to_cell(column, value):
@@ -71,6 +84,8 @@ def _from_cell(column, value):
         if column in ID_LIST_COLUMNS:
             return [int(float(part)) for part in parts if part.replace(".", "").isdigit()]
         return parts
+    if column in NULLABLE_BOOL_COLUMNS:
+        return text.lower() in {"yes", "true", "1"} if text else None
     if column in BOOL_COLUMNS:
         return text.lower() in {"yes", "true", "1"}
     if column in INT_COLUMNS:
@@ -89,6 +104,7 @@ def write_workbook(archive) -> bytes:
     meta.append(["key", "value"])
     meta.append(["version", archive["version"]])
     meta.append(["username", archive["username"]])
+    meta.append(["account", json.dumps(archive.get("account") or {})])
     meta.append(["profile", json.dumps(archive.get("profile") or {})])
     for cell in meta[1]:
         cell.fill, cell.font = HEADER_FILL, HEADER_FONT
@@ -130,7 +146,7 @@ def read_workbook(handle):
             {"file": "That file isn’t a readable spreadsheet."}
         )
 
-    archive = {"version": ARCHIVE_VERSION, "username": "", "profile": {}}
+    archive = {"version": ARCHIVE_VERSION, "username": "", "account": {}, "profile": {}}
 
     if META_SHEET in book.sheetnames:
         for key, value in book[META_SHEET].iter_rows(min_row=2, values_only=True):
@@ -138,11 +154,11 @@ def read_workbook(handle):
                 archive["version"] = int(value)
             elif key == "username" and value is not None:
                 archive["username"] = str(value)
-            elif key == "profile" and value:
+            elif key in {"account", "profile"} and value:
                 try:
-                    archive["profile"] = json.loads(str(value))
+                    archive[key] = json.loads(str(value))
                 except json.JSONDecodeError:
-                    archive["profile"] = {}
+                    archive[key] = {}
 
     for name, columns in SHEETS.items():
         rows = []

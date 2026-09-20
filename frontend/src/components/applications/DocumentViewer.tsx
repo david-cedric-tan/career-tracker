@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  documentExtension,
   documentPreviewMode,
   readDocumentFormatMode,
   writeDocumentFormatMode,
@@ -28,6 +29,14 @@ const PAPER_SIZES: { id: PaperSize; label: string; hint: string }[] = [
 
 const PAPER_SIZE_KEY = 'career-tracker:document-paper-size'
 
+/** The chip text for one format in the switcher: the extension when the
+    name carries one ("PDF", "DOCX"), else the API's kind label ("Word"). */
+function formatLabel(source: PreviewSource): string {
+  const extension = documentExtension(source)
+  if (extension) return extension.toUpperCase()
+  return source.file_kind || 'File'
+}
+
 function readPaperSize(): PaperSize {
   try {
     const raw = localStorage.getItem(PAPER_SIZE_KEY)
@@ -49,17 +58,34 @@ export type ViewerComments = {
 }
 
 export function DocumentViewer({
-  item,
+  item: initialItem,
+  alternates,
   onClose,
   comments,
 }: {
   item: PreviewSource
+  /** Other formats of the same document (a resume's .docx beside its .pdf).
+      When given, the header grows a toggle to switch between them; `item`
+      is whichever one opens first. */
+  alternates?: PreviewSource[]
   onClose: () => void
   /** Notes on the document, editable from the comment button in the header. */
   comments?: ViewerComments
 }) {
   const closeRef = useRef(onClose)
   closeRef.current = onClose
+  // Every format, primary first, de-duplicated by URL so a caller that
+  // passes `item` inside `alternates` too doesn't get it twice.
+  const formats = [initialItem, ...(alternates ?? [])].filter(
+    (entry, index, all) => all.findIndex((other) => other.file === entry.file) === index,
+  )
+  const [activeFile, setActiveFile] = useState(initialItem.file)
+  // Callers keep this mounted and swap `item` to open the next document, so
+  // a stale pick from the previous one has to be dropped here.
+  useEffect(() => {
+    setActiveFile(initialItem.file)
+  }, [initialItem.file])
+  const item = formats.find((entry) => entry.file === activeFile) ?? initialItem
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [draft, setDraft] = useState(comments?.value ?? '')
   const [savingComments, setSavingComments] = useState(false)
@@ -166,6 +192,35 @@ export function DocumentViewer({
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {formats.length > 1 ? (
+              <div
+                role="radiogroup"
+                aria-label="Document format"
+                className="inline-flex rounded-lg border border-line bg-surface-2/80 p-0.5"
+              >
+                {formats.map((entry) => {
+                  const kind = formatLabel(entry)
+                  const active = entry.file === item.file
+                  return (
+                    <button
+                      key={entry.file}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setActiveFile(entry.file)}
+                      title={entry.original_name || entry.file_name || kind}
+                      className={cx(
+                        'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                        active ? 'bg-surface text-brand shadow-sm' : 'text-ink-3 hover:text-ink',
+                      )}
+                    >
+                      <Icon name="file" size={12} />
+                      {kind}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
             {supportsFormatToggle ? (
               <label className="flex items-center gap-2 rounded-lg border border-line bg-surface-2/80 px-2.5 py-1">
                 <span

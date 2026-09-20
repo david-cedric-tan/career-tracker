@@ -4,7 +4,7 @@ import secrets
 import time
 
 from django.conf import settings
-from django.contrib.auth import login, logout
+from django.contrib.auth import get_user_model, login, logout
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Max
 from django.utils import timezone
@@ -33,6 +33,7 @@ from .models import (
     Experience,
     ExperiencePhoto,
     ExtraCurricular,
+    PasswordResetRequest,
     Profile,
     ProfileAddress,
     ProfileAttachment,
@@ -65,10 +66,45 @@ from .serializers import (
 )
 
 
+User = get_user_model()
+
+
 class LoginThrottle(ScopedRateThrottle):
     """Rate limit for the one endpoint worth guessing at."""
 
     scope = "login"
+
+
+class PasswordResetRequestView(APIView):
+    """POST /api/auth/password-reset-requests/ — "I forgot my password".
+
+    Anonymous, and always answers 202 whether or not the username exists, so
+    the form can't be used to check which names are taken. Only one open
+    request per account: asking twice doesn't queue twice. Answered by a
+    superuser setting a new password in the console (see console.views).
+    """
+
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [LoginThrottle]
+
+    def post(self, request):
+        username = (request.data.get("username") or "").strip()
+        message = (request.data.get("message") or "").strip()[:280]
+        if not username:
+            return Response(
+                {"username": ["Enter the username you sign in with."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = User.objects.filter(username__iexact=username, is_active=True).first()
+        if user is not None and not PasswordResetRequest.objects.filter(
+            user=user, resolved_at__isnull=True
+        ).exists():
+            PasswordResetRequest.objects.create(user=user, message=message)
+        return Response(
+            {"detail": "If that account exists, the operator has been asked to reset it."},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class RegisterView(generics.CreateAPIView):
@@ -571,9 +607,20 @@ class RefinementNoteViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         note = serializer.instance
         self._require_own(note)
-        # Reopening is the one edit an answered ticket still allows — that's how
-        # you say "this isn't actually fixed" without rewriting the history of
-        # what was asked and answered.
+        # Marking done is the developer's call, not the reporter's — closing a
+        # complaint takes a fix, which is what `resolve` records. A bare PATCH
+        # to status=done here would let anyone dismiss their own bug report
+        # with no message and nothing for the developer to see. Reopening is
+        # still fine either way — that's how you say "this isn't actually
+        # fixed" without rewriting the history of what was asked and answered.
+        if (
+            serializer.validated_data.get("status") == RefinementStatus.DONE
+            and not self.is_developer
+        ):
+            raise PermissionDenied(
+                "Only the developer can mark a ticket done — delete it instead "
+                "if you don't need it anymore."
+            )
         previous_status = note.status
         previous_body = note.body
         previous_screens = list(note.screens or [])
@@ -663,7 +710,7 @@ class RefinementNoteViewSet(viewsets.ModelViewSet):
         has since been reopened.
         """
         note = self.get_object()
-        if not self.is_developer and note.user_id != request.user.id:
+        if not self.is_developer:
             raise PermissionDenied("Only the developer can resolve this note.")
 
         message = (request.data.get("message") or "").strip()

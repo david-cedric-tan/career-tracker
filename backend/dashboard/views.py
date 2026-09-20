@@ -768,6 +768,7 @@ def _collect_calendar_events(user, start, end, request=None):
                 "date": app.follow_up_date.isoformat(),
                 "done": app.outcome != Outcome.IN_PROGRESS,
                 "target_url": f"/applications/{app.id}",
+                "stage": app.stage,
             }
         )
     # Closing dates of the listings each application covers — the one that
@@ -792,6 +793,9 @@ def _collect_calendar_events(user, start, end, request=None):
                 "company": _company_ref(app.company, request),
                 "urgency": _deadline_urgency(closing_date, today),
                 "details": stage_label(app.stage),
+                # Lets the calendar's "not yet submitted" filter keep only
+                # the deadlines that still need an application written.
+                "stage": app.stage,
             }
         )
 
@@ -841,6 +845,7 @@ def _collect_calendar_events(user, start, end, request=None):
                 "date": app.reapply_at.isoformat(),
                 "done": False,
                 "target_url": f"/applications/{app.id}",
+                "stage": app.stage,
             }
         )
 

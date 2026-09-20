@@ -13,7 +13,9 @@ import { useResource } from '../hooks/useResource'
 import { useToast } from './ui/toast-context'
 
 const SHEET_LABELS: Record<string, string> = {
+  stages: 'Pipeline stages',
   companies: 'Companies',
+  company_notes: 'Company notes',
   roles: 'Roles',
   locations: 'Locations',
   resumes: 'Resumes',
@@ -21,13 +23,18 @@ const SHEET_LABELS: Record<string, string> = {
   applications: 'Applications',
   application_events: 'History entries',
   people: 'Contacts',
+  person_companies: 'Contact roles',
   contact_methods: 'Contact channels',
   catchups: 'Catch-ups',
   todos: 'Todos',
   calendar_events: 'Calendar events',
   library_documents: 'Application documents',
   experiences: 'Experience',
+  education: 'Education',
   certifications: 'Certifications',
+  extracurriculars: 'Extra-curriculars',
+  profile_links: 'Profile links',
+  profile_addresses: 'Addresses',
   refinement_notes: 'Refinement tickets',
   refinement_messages: 'Refinement messages',
   refinement_events: 'Refinement history',
@@ -165,8 +172,9 @@ export function BackupPanel() {
             {summary.data.file_count > 0 ? (
               <p className="mt-2 text-[12px] text-ink-3">
                 Plus {summary.data.file_count} uploaded file
-                {summary.data.file_count === 1 ? '' : 's'} (resumes, photos, logos) —
-                only the "Full Data + Resources" backup includes those.
+                {summary.data.file_count === 1 ? '' : 's'} (resumes, documents, photos,
+                logos, icons, attachments) — only the "Full Data + Resources" backup
+                includes those.
               </p>
             ) : null}
           </>
@@ -296,7 +304,7 @@ export function BackupPanel() {
               {pending.fileCount > 0 ? (
                 <p className="mt-2 text-[12px] text-ink-3">
                   Plus {pending.fileCount} file{pending.fileCount === 1 ? '' : 's'} to reattach
-                  (resumes, photos, logos).
+                  (resumes, documents, photos, logos, icons, attachments).
                 </p>
               ) : null}
             </div>

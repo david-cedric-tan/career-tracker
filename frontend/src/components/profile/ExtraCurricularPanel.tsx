@@ -7,11 +7,13 @@ import { AttachmentGalleryDialog, AttachmentStrip } from './AttachmentGallery'
 import { SectionIconPicker } from './SectionIconPicker'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Input, Textarea } from '../ui/Field'
+import { Input } from '../ui/Field'
 import { Icon } from '../ui/Icon'
+import { MentionTextarea } from '../ui/Mention'
 import { Modal } from '../ui/Modal'
 import { EmptyState, Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
+import { RichText } from '../../lib/richText'
 
 /** FR-PROF-11 — clubs, societies and volunteering. */
 export function ExtraCurricularPanel() {
@@ -38,7 +40,6 @@ export function ExtraCurricularPanel() {
     <Card>
       <CardHeader
         title="Extra-curriculars"
-        subtitle="Clubs, societies and volunteering."
         action={
           <Button
             size="sm"
@@ -95,7 +96,7 @@ export function ExtraCurricularPanel() {
               </div>
 
               {row.description ? (
-                <p className="mt-2 text-[12.5px] text-ink-2">{row.description}</p>
+                <RichText text={row.description} className="mt-2 text-[12.5px] text-ink-2" />
               ) : null}
 
               <AttachmentStrip attachments={row.attachments} onOpen={() => setGalleryId(row.id)} />
@@ -284,11 +285,11 @@ function ExtraCurricularFormBody({
             help="Blank = current"
           />
         </div>
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
         />
       </form>
     </Modal>

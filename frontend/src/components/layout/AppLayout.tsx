@@ -21,6 +21,8 @@ import { TooltipLayer } from '../ui/TooltipLayer'
 import { cx, displayName, shortName } from '../../lib/format'
 import { Avatar } from '../ui/Avatar'
 import { Icon } from '../ui/Icon'
+import { LotsoScene } from '../LotsoScene'
+import { SCENES, hoverTrackFor, useBrandScene, writeScene, type Scene } from '../../lib/brandScene'
 import { Wallpaper } from './Wallpaper'
 import { RefinementLog } from '../devmode/RefinementLog'
 import { useUnseenReplies } from '../devmode/useUnseenReplies'
@@ -44,7 +46,7 @@ const NAV = [
  * profile, while the wordmark goes home. Splitting them keeps each link's
  * destination guessable from what you clicked.
  */
-export const APP_VERSION = '1.1'
+export const APP_VERSION = '1.5'
 
 /** The making-of, for the credit screen. */
 const CREDITS = [
@@ -61,60 +63,6 @@ const NATURE_BIRDS = [
   { top: '40%', duration: 6.1, delay: 3.2 },
 ]
 
-/** The two moods the about screen can be in. */
-const SCENES = {
-  windy: { label: 'Windy', track: '/windy.mp3', icon: 'cloudSnow' },
-  nature: { label: 'Nature', track: '/nature.mp3', icon: 'sun' },
-  // Takes its colours from whatever theme the app is set to rather than
-  // shipping its own, so the about screen matches the rest of the app instead
-  // of being the one place that's always slate-blue or forest-green. It keeps
-  // the windy loop: this scene changes the look, not the soundtrack.
-  theme: { label: 'Theme', track: '/windy.mp3', icon: 'sparkles' },
-} as const
-
-type Scene = keyof typeof SCENES
-
-const SCENE_KEY = 'career-tracker:brand-scene'
-const SCENE_EVENT = 'brand-scene-change'
-
-function readScene(): Scene {
-  try {
-    const saved = localStorage.getItem(SCENE_KEY)
-    return saved && saved in SCENES ? (saved as Scene) : 'windy'
-  } catch {
-    return 'windy'
-  }
-}
-
-function writeScene(scene: Scene) {
-  try {
-    localStorage.setItem(SCENE_KEY, scene)
-  } catch {
-    // The choice still holds for this visit.
-  }
-  // The sidebar and the about screen are separate trees, so a plain setState
-  // in one can't reach the other — switching mood has to repaint the logo
-  // straight away, not on the next reload.
-  window.dispatchEvent(new Event(SCENE_EVENT))
-}
-
-/** The saved mood, kept in step across every component that draws it. */
-function useBrandScene(): Scene {
-  const [scene, setScene] = useState<Scene>(readScene)
-
-  useEffect(() => {
-    const sync = () => setScene(readScene())
-    window.addEventListener(SCENE_EVENT, sync)
-    // `storage` only fires in *other* tabs, so it covers a second window.
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener(SCENE_EVENT, sync)
-      window.removeEventListener('storage', sync)
-    }
-  }, [])
-
-  return scene
-}
 
 /** How long the about screen's soundtrack takes to reach full volume. */
 const CREDIT_FADE_MS = 1600
@@ -178,14 +126,19 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
       runTimer.current = window.setTimeout(stopWeather, motion.runMs)
     }
     setActive(true)
+    // Re-read every time: the mood may have been switched on the about screen
+    // since the last hover. The Theme scene has no track, so there's nothing
+    // to play; Lotso plays the nature loop here rather than its own song.
+    const track = hoverTrackFor(scene)
+    if (!track) {
+      audio.current?.pause()
+      return
+    }
     if (!audio.current) {
       audio.current = new Audio()
       audio.current.loop = true
       audio.current.volume = 0.35
     }
-    // Re-read every time: the mood may have been switched on the about screen
-    // since the last hover.
-    const track = SCENES[scene].track
     if (!audio.current.src.endsWith(track)) audio.current.src = track
     audio.current.volume = media.musicVolume
     if (media.musicVolume <= 0) return
@@ -311,7 +264,12 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
         // lines, and since the scene fills the link's box, the grass ended up
         // stranded at the bottom of a tall box with a gap above it. One tight
         // line means the weather hugs the letters.
-        className="relative select-none overflow-hidden whitespace-nowrap rounded px-1 py-1 text-[17px] font-extrabold uppercase leading-none tracking-normal text-ink transition-colors hover:text-brand"
+        className={cx(
+          'relative select-none overflow-hidden whitespace-nowrap rounded px-1 py-1 text-[17px] font-extrabold uppercase leading-none tracking-normal text-ink transition-colors hover:text-brand',
+          // A strip of ground under the letters for the sleeping bear to lie
+          // on, so he's in front of nothing rather than behind the wordmark.
+          scene === 'lotso' && 'pb-5',
+        )}
       >
         {/* The weather runs across the wordmark too, driven by the icon's
             hover — the logo is one object, so half of it reacting looked like
@@ -320,6 +278,8 @@ function Brand({ onNavigate }: { onNavigate?: () => void }) {
           <NatureScene active={active} settling={settling} wide />
         ) : scene === 'windy' ? (
           <BrandClouds active={active} settling={settling} wide />
+        ) : scene === 'lotso' ? (
+          <LotsoScene active={active} settling={settling} wide />
         ) : null}
         <span className={cx('relative z-10 inline-block', active && scene === 'windy' && 'word-blown')}>
           Career Tracker
@@ -359,7 +319,7 @@ function BrandMark({
       className={cx(
         'relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg shadow-sm',
         'transition-colors duration-700',
-        scene === 'nature' ? 'bg-emerald-600' : 'bg-brand',
+        scene === 'nature' ? 'bg-emerald-600' : scene === 'lotso' ? 'bg-pink-300' : 'bg-brand',
       )}
     >
       <img src="/fuji_1.svg" alt="" className="relative z-10 size-9 object-contain" />
@@ -367,6 +327,8 @@ function BrandMark({
         <NatureScene active={active} settling={settling} />
       ) : scene === 'windy' ? (
         <BrandClouds active={active} settling={settling} />
+      ) : scene === 'lotso' ? (
+        <LotsoScene active={active} settling={settling} />
       ) : null}
     </span>
   )
@@ -470,14 +432,21 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
   // One element reused across scenes: swapping `src` keeps a single audio
   // object rather than leaving the previous track alive and overlapping.
   useEffect(() => {
+    if (fade.current !== null) window.clearInterval(fade.current)
+
+    // Theme has no soundtrack — only Windy and Nature do.
+    const track = SCENES[scene].track
+    if (!track) {
+      audio.current?.pause()
+      return
+    }
+
     const element = audio.current ?? new Audio()
     audio.current = element
     element.loop = true
-    if (element.src !== new URL(SCENES[scene].track, location.href).href) {
-      element.src = SCENES[scene].track
+    if (element.src !== new URL(track, location.href).href) {
+      element.src = track
     }
-
-    if (fade.current !== null) window.clearInterval(fade.current)
 
     if (!playing) {
       element.pause()
@@ -515,6 +484,7 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
 
   const nature = scene === 'nature'
   const themed = scene === 'theme'
+  const lotso = scene === 'lotso'
 
   // Rendered into <body> rather than where it sits in the tree. On mobile the
   // brand lives inside the sticky header, which has its own `backdrop-blur` —
@@ -528,7 +498,7 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       className={cx(
         'brand-credit fixed inset-0 z-[90] grid cursor-pointer place-items-center overflow-y-auto p-6 backdrop-blur-md',
-        nature ? 'bg-emerald-950/55' : themed ? null : 'bg-slate-950/55',
+        nature ? 'bg-emerald-950/55' : lotso ? 'bg-pink-300/80' : themed ? null : 'bg-slate-950/55',
       )}
       style={
         themed
@@ -551,10 +521,11 @@ function BrandCredit({ onClose }: { onClose: () => void }) {
         <span
           className={cx(
             'brand-credit-mark relative grid size-32 place-items-center overflow-hidden rounded-3xl shadow-2xl',
-            nature ? 'bg-emerald-600' : 'bg-brand',
+            nature ? 'bg-emerald-600' : lotso ? 'bg-pink-300' : 'bg-brand',
           )}
         >
           {nature ? <NatureScene /> : null}
+          {lotso ? <LotsoScene /> : null}
           <img src="/fuji_1.svg" alt="" className="relative z-10 size-28 object-contain" />
           {/* Always moving here — the mark is the subject of this screen, so
               there's no hover to wait for. The themed scene stays bare: its
@@ -642,15 +613,22 @@ function Vinyl({
   tuning: boolean
   onTune: () => void
 }) {
+  // Theme is the one scene with no soundtrack — Windy and Nature are the
+  // only two that carry one. The record shouldn't claim to be playing
+  // something that was never there.
+  const hasTrack = Boolean(SCENES[scene].track)
+  const spinning = playing && hasTrack
+
   return (
     <div className="flex flex-col items-center gap-3">
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={onToggle}
-          aria-pressed={playing}
-          aria-label={playing ? 'Pause the soundtrack' : 'Play the soundtrack'}
-          className={cx('vinyl', playing && 'is-spinning', `vinyl-${scene}`)}
+          disabled={!hasTrack}
+          aria-pressed={spinning}
+          aria-label={hasTrack ? (playing ? 'Pause the soundtrack' : 'Play the soundtrack') : 'This scene has no soundtrack'}
+          className={cx('vinyl', spinning && 'is-spinning', `vinyl-${scene}`, !hasTrack && 'opacity-60')}
         >
           <span className="vinyl-groove" />
           <span className="vinyl-groove vinyl-groove-2" />
@@ -668,17 +646,19 @@ function Vinyl({
           </span>
           {/* Counter-spins, so the transport icon stays upright on a turning
               record — and it's what tells you the disc is a button at all. */}
-          <span className={cx('vinyl-transport', playing && 'is-spinning')}>
-            <Icon name={playing ? 'pause' : 'play'} size={15} />
-          </span>
+          {hasTrack ? (
+            <span className={cx('vinyl-transport', spinning && 'is-spinning')}>
+              <Icon name={playing ? 'pause' : 'play'} size={15} />
+            </span>
+          ) : null}
         </button>
 
         <div className="text-left">
           <p className="text-[13px] font-semibold text-white">
-            {playing ? 'Now playing' : 'Paused'}
+            {hasTrack ? (playing ? 'Now playing' : 'Paused') : 'No soundtrack'}
           </p>
           <p className="text-[11px] text-white/50">
-            {SCENES[scene].label} · tap the record to {playing ? 'pause' : 'play'}
+            {hasTrack ? `${SCENES[scene].label} · tap the record to ${playing ? 'pause' : 'play'}` : `${SCENES[scene].label} — visual only`}
           </p>
         </div>
       </div>

@@ -8,11 +8,13 @@ import { SectionIconPicker } from './SectionIconPicker'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Input, Textarea } from '../ui/Field'
+import { Input } from '../ui/Field'
 import { Icon } from '../ui/Icon'
+import { MentionTextarea } from '../ui/Mention'
 import { Modal } from '../ui/Modal'
 import { EmptyState, Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
+import { RichText } from '../../lib/richText'
 
 /** FR-PROF-12 — credentials, each with attachments (the certificate itself). */
 export function CertificationPanel() {
@@ -39,7 +41,6 @@ export function CertificationPanel() {
     <Card>
       <CardHeader
         title="Certifications"
-        subtitle="Credentials and licences."
         action={
           <Button
             size="sm"
@@ -110,7 +111,7 @@ export function CertificationPanel() {
               ) : null}
 
               {row.description ? (
-                <p className="mt-2 text-[12.5px] text-ink-2">{row.description}</p>
+                <RichText text={row.description} className="mt-2 text-[12.5px] text-ink-2" />
               ) : null}
 
               <AttachmentStrip attachments={row.attachments} onOpen={() => setGalleryId(row.id)} />
@@ -308,11 +309,11 @@ function CertificationFormBody({
           error={errors.credential_url}
           onChange={(event) => set('credential_url', event.target.value)}
         />
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
         />
       </form>
     </Modal>

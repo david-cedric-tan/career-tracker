@@ -47,17 +47,14 @@ export function SettingsPage() {
       <PageHeader title="My Settings" />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Appearance is by far the tallest card, so the two short display
-            settings that belong with it move over here — otherwise the right
-            column ran a screen longer than the left. */}
         <div className="flex flex-col gap-4">
           <AppearanceCard />
           <GlassCard />
+          <CelebrationsCard />
+          <TodoSuggestionsCard />
         </div>
 
         <div className="flex flex-col gap-4">
-          <CelebrationsCard />
-          <TodoSuggestionsCard />
           <LocationCard />
           <DeveloperModeCard />
           <BackupPanel />
@@ -212,11 +209,6 @@ function GlassCard() {
         </div>
       </div>
 
-      <p className="mt-3 text-[12px] text-ink-3">
-        Applies to cards, toggles, sliders, the sidebar and the mobile header.
-        Kept per browser — a heavy blur costs more on some machines than others.
-        Off leaves every control looking the way it did before this existed.
-      </p>
     </Card>
   )
 }

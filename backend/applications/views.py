@@ -37,6 +37,7 @@ from .models import (
     Location,
     Outcome,
     Resume,
+    ResumeFile,
     Role,
     RoleType,
     Stage,
@@ -516,6 +517,60 @@ class ResumeViewSet(viewsets.ModelViewSet):
 
         return Response(self.get_serializer(resume).data)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="files",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def add_file(self, request, pk=None):
+        """POST /api/resumes/{id}/files/ — add another format of this resume
+        (the .docx beside the .pdf). The primary `file` is untouched; a
+        resume with no primary yet gets this as its primary instead, so the
+        first upload never lands as an "alternate" of nothing."""
+        resume = self.get_object()
+        serializer = ResumeFileSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        upload = serializer.validated_data["file"]
+
+        if not resume.file:
+            return self.file(request, pk=pk)
+
+        # One file per format: a second .pdf replaces the first rather than
+        # piling up, since the viewer's toggle is per kind, not per upload.
+        kind = os.path.splitext(upload.name)[1].lower()
+        primary_kind = os.path.splitext(resume.file_name)[1].lower()
+        if kind == primary_kind:
+            return Response(
+                {"file": [f"This resume's main document is already a {kind or 'file'} — "
+                          "replace it from the resume itself."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for existing in resume.files.all():
+            if os.path.splitext(existing.file_name)[1].lower() == kind:
+                existing.delete()
+
+        original_name = upload.name
+        upload.name = f"resume-{resume.id}-{secrets.token_hex(4)}{kind}"
+        ResumeFile.objects.create(resume=resume, file=upload, file_name=original_name)
+        resume.save(update_fields=["updated_at"])
+        return Response(self.get_serializer(resume).data)
+
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"files/(?P<file_id>\d+)",
+    )
+    def remove_file(self, request, pk=None, file_id=None):
+        """DELETE /api/resumes/{id}/files/{file_id}/ — drop one alternate."""
+        resume = self.get_object()
+        entry = resume.files.filter(pk=file_id).first()
+        if entry is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        entry.delete()
+        resume.save(update_fields=["updated_at"])
+        return Response(self.get_serializer(resume).data)
+
 
 class JobListingViewSet(viewsets.ModelViewSet):
     """Listings are shared reference data (a posting exists independent of who
@@ -651,6 +706,18 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         company = params.get("company")
         if company:
             qs = qs.filter(company_id=company)
+
+        # "Side jobs" are applications whose listings are tagged side_job —
+        # the casual/part-time work that shouldn't sit in the same pipeline
+        # as the graduate programmes. "careers" is everything else,
+        # including applications with no listing attached.
+        kind = params.get("kind")
+        if kind == "side":
+            qs = qs.filter(
+                listing_links__job_listing__role_type=RoleType.SIDE_JOB
+            ).distinct()
+        elif kind == "careers":
+            qs = qs.exclude(listing_links__job_listing__role_type=RoleType.SIDE_JOB)
 
         region = params.get("region")
         if region:

@@ -5,6 +5,7 @@ import { fieldErrors, formatApiError } from '../api/client'
 import {
   applications,
   companies,
+  jobListings,
   libraryDocuments,
   resumes,
   roles,
@@ -12,6 +13,7 @@ import {
 import type {
   ApplicationSummary,
   Company,
+  JobListing,
   LibraryDocument,
   Resume,
   Role,
@@ -102,17 +104,44 @@ function asPreview(doc: LibraryDocument): PreviewSource {
   }
 }
 
-function resumePreview(resume: Resume): PreviewSource | null {
-  if (!resume.file) return null
-  return {
-    file: resume.file,
+/**
+ * Every format of a resume as preview sources, the one to show first at the
+ * front: the PDF if there is one anywhere (it's what the thumbnail renders
+ * and what gets sent), otherwise the primary document. Empty when nothing's
+ * attached.
+ */
+function resumeFormats(resume: Resume): PreviewSource[] {
+  const shared = {
     title: resume.label,
-    file_kind: resume.file_kind,
-    original_name: resume.file_name || null,
-    file_name: resume.file_name || null,
     description: resume.notes || undefined,
     created_at: resume.updated_at,
   }
+  const all: PreviewSource[] = []
+  if (resume.file) {
+    all.push({
+      ...shared,
+      file: resume.file,
+      file_kind: resume.file_kind,
+      original_name: resume.file_name || null,
+      file_name: resume.file_name || null,
+    })
+  }
+  for (const entry of resume.files ?? []) {
+    all.push({
+      ...shared,
+      file: entry.file,
+      file_kind: entry.file_kind,
+      original_name: entry.file_name || null,
+      file_name: entry.file_name || null,
+    })
+  }
+  const pdf = all.findIndex((entry) => (entry.file_kind || '').toLowerCase() === 'pdf')
+  if (pdf > 0) all.unshift(...all.splice(pdf, 1))
+  return all
+}
+
+function resumePreview(resume: Resume): PreviewSource | null {
+  return resumeFormats(resume)[0] ?? null
 }
 
 /** Legacy /resumes bookmarks land on the Resume Files tab. */
@@ -138,6 +167,7 @@ export function FileDirectoryPage() {
   const [search, setSearch] = useState(params.get('q') ?? '')
   const debouncedSearch = useDebounced(search)
   const [viewing, setViewing] = useState<PreviewSource | null>(null)
+  const [viewingAlternates, setViewingAlternates] = useState<PreviewSource[]>([])
   const [viewingComments, setViewingComments] = useState<ViewerComments | undefined>(undefined)
   const [docForm, setDocForm] = useState<{ open: boolean; existing: LibraryDocument | null }>({
     open: false,
@@ -434,6 +464,7 @@ export function FileDirectoryPage() {
                           docs.reload()
                         },
                       })
+                      setViewingAlternates([])
                       setViewing(asPreview(item.doc))
                     }}
                     onEdit={() => setDocForm({ open: true, existing: item.doc })}
@@ -446,8 +477,9 @@ export function FileDirectoryPage() {
                     resume={item.resume}
                     showKind={tab === 'all'}
                     onPreview={() => {
-                      const preview = resumePreview(item.resume)
+                      const [preview, ...rest] = resumeFormats(item.resume)
                       if (!preview) return
+                      setViewingAlternates(rest)
                       setViewingComments({
                         value: item.resume.notes,
                         onSave: async (text) => {
@@ -483,9 +515,11 @@ export function FileDirectoryPage() {
       {viewing ? (
         <DocumentViewer
           item={viewing}
+          alternates={viewingAlternates}
           comments={viewingComments}
           onClose={() => {
             setViewing(null)
+            setViewingAlternates([])
             setViewingComments(undefined)
           }}
         />
@@ -826,7 +860,11 @@ function ResumeFileCard({
   onEdit: () => void
 }) {
   const { notify } = useToast()
-  const preview = resumePreview(resume)
+  const formats = resumeFormats(resume)
+  const preview = formats[0] ?? null
+  // "PDF · Word" when there's more than one format, so the card says so
+  // without having to open it.
+  const kinds = formats.map((entry) => entry.file_kind).filter(Boolean).join(' · ')
   const targetCompanies =
     resume.target_companies_info?.length > 0
       ? resume.target_companies_info
@@ -840,7 +878,7 @@ function ResumeFileCard({
   return (
     <FileCardShell
       title={resume.label}
-      meta={`${resume.file_kind ? `${resume.file_kind} · ` : ''}Updated ${formatDate(resume.updated_at.slice(0, 10))}`}
+      meta={`${kinds ? `${kinds} · ` : ''}Updated ${formatDate(resume.updated_at.slice(0, 10))}`}
       kind={showKind ? 'Resume' : undefined}
       preview={preview}
       onPreview={onPreview}
@@ -1351,6 +1389,7 @@ function ResumeFormBody({
   const [targetRoles, setTargetRoles] = useState<number[]>(() => existing?.target_roles ?? [])
   const [companyOptions, setCompanyOptions] = useState<Company[]>([])
   const [roleOptions, setRoleOptions] = useState<Role[]>([])
+  const [listings, setListings] = useState<JobListing[]>([])
   const [error, setError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
@@ -1363,14 +1402,36 @@ function ResumeFormBody({
   const guardedCloseRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    void Promise.all([companies.list(), roles.list()]).then(([companyRows, roleRows]) => {
-      setCompanyOptions(companyRows)
-      setRoleOptions(roleRows)
-    })
+    void Promise.all([companies.list(), roles.list(), jobListings.list()]).then(
+      ([companyRows, roleRows, listingRows]) => {
+        setCompanyOptions(companyRows)
+        setRoleOptions(roleRows)
+        setListings(listingRows)
+      },
+    )
   }, [])
 
   const selectedCompanies = companyOptions.filter((row) => targetCompanies.includes(row.id))
   const selectedRoles = roleOptions.filter((row) => targetRoles.includes(row.id))
+
+  // Once a company's picked, narrow Target roles to the roles actually
+  // posted there — picking "Software Engineer" for a company that only ever
+  // hired Analysts was just the whole shared role catalog, unfiltered.
+  // Already-chosen roles stay visible even if they fall outside a newly
+  // narrowed set, so switching companies never silently drops a saved pick.
+  const roleOptionList = useMemo(() => {
+    const mapped = roleOptions.map((role) => ({
+      id: role.id,
+      label: role.name,
+      avatar: null,
+      avatarShape: 'square' as const,
+    }))
+    if (targetCompanies.length === 0) return mapped
+    const postedRoleIds = new Set(
+      listings.filter((listing) => targetCompanies.includes(listing.company)).map((listing) => listing.role),
+    )
+    return mapped.filter((option) => postedRoleIds.has(option.id) || targetRoles.includes(option.id))
+  }, [roleOptions, listings, targetCompanies, targetRoles])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -1498,15 +1559,15 @@ function ResumeFormBody({
           />
           <MultiSelect
             label="Target roles"
-            options={roleOptions.map((role) => ({
-              id: role.id,
-              label: role.name,
-              avatar: null,
-              avatarShape: 'square' as const,
-            }))}
+            options={roleOptionList}
             value={targetRoles}
             onChange={setTargetRoles}
-            emptyText="No roles yet."
+            emptyText={
+              targetCompanies.length
+                ? 'No roles posted at the selected companies yet.'
+                : 'No roles yet.'
+            }
+            help={targetCompanies.length ? 'Narrowed to roles posted at the selected companies.' : undefined}
           />
         </div>
 
@@ -1599,6 +1660,47 @@ function ResumeFormBody({
             }}
           />
         </div>
+
+        {current?.file ? (
+          <div>
+            <Label>Other formats</Label>
+            <p className="mb-2 text-[12px] text-ink-3">
+              The same resume in another format — the .docx you edit beside the .pdf you
+              send. The preview switches between them; the thumbnail shows the PDF.
+            </p>
+            <div className="flex flex-col gap-2">
+              {(current.files ?? []).map((entry) => (
+                <FilePicker
+                  key={entry.id}
+                  url={entry.file}
+                  name={entry.file_name}
+                  kind={entry.file_kind}
+                  size={entry.file_size}
+                  onUpload={async (file) => {
+                    setCurrent(await resumes.addAlternateFile(current.id, file))
+                    onSaved()
+                  }}
+                  onRemove={async () => {
+                    setCurrent(await resumes.removeAlternateFile(current.id, entry.id))
+                    onSaved()
+                  }}
+                />
+              ))}
+              <FilePicker
+                url={null}
+                name=""
+                kind={null}
+                size={null}
+                help="Add a format the main document isn't already in."
+                onUpload={async (file) => {
+                  setCurrent(await resumes.addAlternateFile(current.id, file))
+                  onSaved()
+                }}
+                onRemove={async () => {}}
+              />
+            </div>
+          </div>
+        ) : null}
       </form>
     </Modal>
   )

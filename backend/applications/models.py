@@ -382,6 +382,32 @@ class Resume(models.Model):
         return self.label
 
 
+class ResumeFile(models.Model):
+    """Another format of the same resume — the .docx you edit next to the
+    .pdf you send. `Resume.file` stays the primary document (everything that
+    downloads or previews a resume already reads it); these are the
+    alternates the viewer can switch to, and the thumbnail prefers a PDF
+    from either place."""
+
+    resume = models.ForeignKey(Resume, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="resumes/")
+    file_name = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return self.file_name or f"Resume file {self.pk}"
+
+
+@receiver(post_delete, sender=ResumeFile)
+def delete_resume_file(sender, instance, **kwargs):
+    """Removing the row removes the file, including when the resume cascades."""
+    if instance.file:
+        instance.file.delete(save=False)
+
+
 class JobListing(models.Model):
     """ specific job posting: this role, at this company, in this location, this intake."""
 

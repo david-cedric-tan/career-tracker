@@ -29,5 +29,7 @@ export function AccountSync() {
     bindLocationUser(null)
   }
 
+  // Operators live in the console; the weather/location prompt is tracker UI.
+  if (user?.is_superuser) return null
   return <LocationPrompt />
 }

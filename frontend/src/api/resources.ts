@@ -126,6 +126,13 @@ export const resumes = {
     return api<Resume>(`/resumes/${id}/file/`, { method: 'POST', body })
   },
   removeFile: (id: number) => api<Resume>(`/resumes/${id}/file/`, { method: 'DELETE' }),
+  addAlternateFile: (id: number, file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    return api<Resume>(`/resumes/${id}/files/`, { method: 'POST', body })
+  },
+  removeAlternateFile: (id: number, fileId: number) =>
+    api<Resume>(`/resumes/${id}/files/${fileId}/`, { method: 'DELETE' }),
 }
 
 export const libraryDocuments = {

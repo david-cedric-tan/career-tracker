@@ -10,6 +10,7 @@ from .views import (
     ExperienceViewSet,
     ExtraCurricularViewSet,
     LoginView,
+    PasswordResetRequestView,
     LogoutView,
     PinnedPhotoView,
     ProfileAddressViewSet,
@@ -31,6 +32,11 @@ router.register(r"refinements", RefinementNoteViewSet, basename="refinementnote"
 urlpatterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),
     path("login/", LoginView.as_view(), name="auth-login"),
+    path(
+        "password-reset-requests/",
+        PasswordResetRequestView.as_view(),
+        name="auth-password-reset-request",
+    ),
     path("logout/", LogoutView.as_view(), name="auth-logout"),
     path("me/", AccountView.as_view(), name="auth-account"),
     path("me/avatar/", AvatarView.as_view(), name="auth-avatar"),

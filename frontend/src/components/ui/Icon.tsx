@@ -83,6 +83,7 @@ const PATHS: Record<string, string> = {
   page:
     'M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm7 0v5h5',
   download: 'M12 4v12m0 0 4-4m-4 4-4-4M5 20h14',
+  bear: 'M7 8.5a2.5 2.5 0 1 1 2.2-3.7M17 8.5a2.5 2.5 0 1 0-2.2-3.7M12 20a7 7 0 1 0 0-14 7 7 0 0 0 0 14Zm-2.5-7h.01M14.5 13h.01M12 15.5a2 2 0 0 0 1.5-.7M12 15.5a2 2 0 0 1-1.5-.7',
 }
 
 export function Icon({

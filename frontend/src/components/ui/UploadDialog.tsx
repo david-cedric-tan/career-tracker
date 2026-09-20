@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 import { formatApiError } from '../../api/client'
 import { cx } from '../../lib/format'
 import { DocumentThumbnail } from '../applications/DocumentThumbnail'
 import { Button } from './Button'
 import { Input } from './Field'
 import { Icon } from './Icon'
+import { ImageCropStage } from './ImageCropStage'
 import { Modal } from './Modal'
 
 export type UploadAccept = 'image' | 'document' | 'any'
@@ -66,16 +67,25 @@ export function UploadDialog({
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [croppedBlob, setCroppedBlob] = useState<Blob | null>(null)
   const [captionText, setCaptionText] = useState('')
   const [dragging, setDragging] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const objectUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
+  // Created and revoked inside the same effect run (not a memo revoked by a
+  // separate effect) — see ImageCropStage for why that pairing breaks under
+  // StrictMode's dev-only double-invoke.
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
   useEffect(() => {
-    if (!objectUrl) return
-    return () => URL.revokeObjectURL(objectUrl)
-  }, [objectUrl])
+    if (!file) {
+      setObjectUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(file)
+    setObjectUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
 
   const isImage = Boolean(file?.type.startsWith('image/'))
 
@@ -99,7 +109,13 @@ export function UploadDialog({
       return
     }
     setFile(candidate)
+    setCroppedBlob(null)
   }
+
+  // Every avatar/logo/photo upload goes through the cropper — only the mixed
+  // "any" attachment picker (documents alongside photos) skips it, since a
+  // gallery attachment isn't being framed into an avatar or logo slot.
+  const useCropper = accept === 'image' && isImage && Boolean(file)
 
   function onPick(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files?.[0]
@@ -118,7 +134,12 @@ export function UploadDialog({
     setSaving(true)
     setError('')
     try {
-      await onSave(file, captionText.trim())
+      // The cropper re-exports on every move/zoom, so by the time Save is
+      // clickable there's already a current blob — falling back to the raw
+      // file just covers the instant before the first crop lands.
+      const toUpload =
+        useCropper && croppedBlob ? new File([croppedBlob], file.name, { type: croppedBlob.type }) : file
+      await onSave(toUpload, captionText.trim())
       onClose()
     } catch (err) {
       setError(formatApiError(err))
@@ -155,32 +176,48 @@ export function UploadDialog({
           </p>
         ) : null}
 
-        {/* Current → new. Without a "current" there's just the new one, big. */}
-        <div className="flex items-center justify-center gap-5 py-2">
-          {current ? (
-            <>
-              <figure className="flex flex-col items-center gap-1.5">
-                {typeof current === 'string' ? (
-                  <span className={cx('block size-20 overflow-hidden border border-line bg-surface-2', rounded)}>
-                    <img src={current} alt="" className={cx('size-full', shape === 'circle' ? 'object-cover' : 'object-contain p-1')} />
-                  </span>
-                ) : (
-                  current
-                )}
-                <figcaption className="text-[11px] font-medium uppercase tracking-wide text-ink-3">
-                  Current
-                </figcaption>
-              </figure>
-              <Icon name="arrowRight" size={18} className="text-ink-3" />
-            </>
-          ) : null}
-          <figure className="flex flex-col items-center gap-1.5">
-            <NewPreview file={file} url={objectUrl} isImage={isImage} accept={accept} shape={shape} />
-            <figcaption className="text-[11px] font-medium uppercase tracking-wide text-ink-3">
-              {file ? 'New' : 'Nothing chosen'}
-            </figcaption>
-          </figure>
-        </div>
+        {useCropper && file ? (
+          <div className="flex flex-col items-center gap-3 py-1">
+            {current && typeof current === 'string' ? (
+              <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                <span className={cx('block size-8 overflow-hidden border border-line bg-surface-2', rounded)}>
+                  <img src={current} alt="" className={cx('size-full', shape === 'circle' ? 'object-cover' : 'object-contain p-1')} />
+                </span>
+                Current
+                <Icon name="arrowRight" size={13} />
+                New
+              </div>
+            ) : null}
+            <ImageCropStage file={file} mask={shape} onCropped={setCroppedBlob} />
+          </div>
+        ) : (
+          /* Current → new. Without a "current" there's just the new one, big. */
+          <div className="flex items-center justify-center gap-5 py-2">
+            {current ? (
+              <>
+                <figure className="flex flex-col items-center gap-1.5">
+                  {typeof current === 'string' ? (
+                    <span className={cx('block size-20 overflow-hidden border border-line bg-surface-2', rounded)}>
+                      <img src={current} alt="" className={cx('size-full', shape === 'circle' ? 'object-cover' : 'object-contain p-1')} />
+                    </span>
+                  ) : (
+                    current
+                  )}
+                  <figcaption className="text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                    Current
+                  </figcaption>
+                </figure>
+                <Icon name="arrowRight" size={18} className="text-ink-3" />
+              </>
+            ) : null}
+            <figure className="flex flex-col items-center gap-1.5">
+              <NewPreview file={file} url={objectUrl} isImage={isImage} accept={accept} shape={shape} />
+              <figcaption className="text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                {file ? 'New' : 'Nothing chosen'}
+              </figcaption>
+            </figure>
+          </div>
+        )}
 
         <button
           type="button"
@@ -204,7 +241,7 @@ export function UploadDialog({
           </span>
           <span className="text-[11.5px] text-ink-3">
             {HINT[accept]}
-            {accept !== 'document' && shape === 'circle' ? ' · photos are cropped to a square' : ''}
+            {accept === 'image' && !file ? ' · crop and zoom before saving' : ''}
           </span>
         </button>
 

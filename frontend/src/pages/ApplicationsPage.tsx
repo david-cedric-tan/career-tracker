@@ -43,6 +43,21 @@ const GROUPINGS = [
 ] as const
 type GroupBy = (typeof GROUPINGS)[number]['value']
 
+// Careers and side jobs are different pipelines: a casual retail shift
+// shouldn't sit next to graduate programmes. Careers is the default lens;
+// the toggle swaps to side jobs, or shows both.
+const KINDS = [
+  { value: 'careers', label: 'Careers', icon: 'briefcase' },
+  { value: 'side', label: 'Side jobs', icon: 'clock' },
+  { value: 'all', label: 'All', icon: 'list' },
+] as const
+type Kind = (typeof KINDS)[number]['value']
+
+function parseKind(raw: string | null): Kind {
+  if (raw === 'side' || raw === 'all') return raw
+  return 'careers'
+}
+
 function parseGroupBy(raw: string | null): GroupBy {
   if (raw === 'region' || raw === 'furthest') return raw
   // Legacy `stage` and bare default both mean current portfolio.
@@ -73,6 +88,7 @@ export function ApplicationsPage() {
     ? (params.get('view') as View)
     : 'bubbles'
   const groupBy: GroupBy = parseGroupBy(params.get('groupBy'))
+  const kind: Kind = parseKind(params.get('kind'))
 
   // So an application opened from here can send you back to this exact slice.
   rememberList('applications', params.toString() ? `?${params}` : '')
@@ -90,10 +106,11 @@ export function ApplicationsPage() {
         company,
         region,
         awaiting,
+        kind: kind === 'all' ? '' : kind,
         ordering,
         search: debouncedSearch,
       }),
-    [stage, outcome, company, region, awaiting, ordering, debouncedSearch],
+    [stage, outcome, company, region, awaiting, kind, ordering, debouncedSearch],
   )
 
   function setParam(key: string, value: string) {
@@ -125,6 +142,36 @@ export function ApplicationsPage() {
         }
         action={
           <>
+            <div
+              className="inline-flex rounded-lg border border-line bg-surface p-0.5"
+              role="group"
+              aria-label="Careers or side jobs"
+            >
+              {KINDS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setParam('kind', option.value === 'careers' ? '' : option.value)}
+                  aria-pressed={kind === option.value}
+                  title={
+                    option.value === 'side'
+                      ? 'Applications whose listing is tagged "Side Job"'
+                      : option.value === 'careers'
+                        ? 'Everything that isn’t a side job'
+                        : 'Both together'
+                  }
+                  className={cx(
+                    'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                    kind === option.value
+                      ? 'bg-brand-soft text-brand-strong'
+                      : 'text-ink-2 hover:text-ink',
+                  )}
+                >
+                  <Icon name={option.icon} size={15} />
+                  <span className="hidden sm:inline">{option.label}</span>
+                </button>
+              ))}
+            </div>
             <div className="inline-flex rounded-lg border border-line bg-surface p-0.5">
               {VIEWS.map((option) => (
                 <button
@@ -268,11 +315,19 @@ export function ApplicationsPage() {
         <Card padded={false}>
           <EmptyState
             icon="briefcase"
-            title={activeFilters || search ? 'No matches' : 'No applications yet'}
+            title={
+              activeFilters || search
+                ? 'No matches'
+                : kind === 'side'
+                  ? 'No side jobs yet'
+                  : 'No applications yet'
+            }
             description={
               activeFilters || search
                 ? 'Try loosening the filters above.'
-                : 'Log your first application and the pipeline starts filling in.'
+                : kind === 'side'
+                  ? 'Side jobs are applications whose listing is tagged "Side Job" — link one and it lands here.'
+                  : 'Log your first application and the pipeline starts filling in.'
             }
             action={
               !activeFilters && !search ? (

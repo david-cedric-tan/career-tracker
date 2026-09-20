@@ -90,7 +90,6 @@ export function IdentityCard() {
     <Card>
       <CardHeader
         title="Identity"
-        subtitle="How people find and reach you."
         action={
           editing ? undefined : (
             <Button size="sm" onClick={startEditing} icon={<Icon name="edit" size={14} />}>

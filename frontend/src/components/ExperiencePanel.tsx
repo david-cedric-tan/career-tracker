@@ -10,12 +10,14 @@ import { Button, Spinner } from './ui/Button'
 import { UploadDialog } from './ui/UploadDialog'
 import { Card, CardHeader } from './ui/Card'
 import { Combobox } from './ui/Combobox'
-import { Input, Textarea } from './ui/Field'
+import { Input } from './ui/Field'
 import { Icon } from './ui/Icon'
+import { MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
 import { EmptyState, Loading } from './ui/States'
 import { useToast } from './ui/toast-context'
 import { companyOption } from '../lib/company'
+import { RichText } from '../lib/richText'
 
 
 /**
@@ -72,7 +74,6 @@ export function ExperiencePanel() {
     <Card>
       <CardHeader
         title="Experience"
-        subtitle="Where you've worked, with a gallery per role."
         action={
           <Button
             size="sm"
@@ -187,15 +188,13 @@ function ExperienceRow({
       </div>
 
       {experience.description ? (
-        <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] text-ink-2">
-          {experience.description}
-        </p>
+        <RichText text={experience.description} className="mt-2 break-words text-[12.5px] text-ink-2" />
       ) : null}
 
       <button
         type="button"
         onClick={onOpenGallery}
-        className="mt-2.5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-left transition-colors hover:border-line-strong"
+        className="group/attach mt-2.5 flex w-48 max-w-full items-center gap-2 rounded-lg border border-line bg-surface py-1.5 pl-2 pr-1.5 text-left transition-colors hover:border-line-strong"
       >
         {experience.photos.length ? (
           <span className="flex -space-x-2">
@@ -210,16 +209,20 @@ function ExperienceRow({
             ))}
           </span>
         ) : (
-          <span className="grid size-7 place-items-center rounded-md border border-dashed border-line-strong text-ink-3">
-            <Icon name="plus" size={13} />
+          <span className="grid size-7 shrink-0 place-items-center rounded-md border border-dashed border-line-strong text-ink-3 transition-colors group-hover/attach:border-brand group-hover/attach:text-brand">
+            <Icon
+              name="plus"
+              size={13}
+              className="group-hover/attach:animate-[upload-plus_2s_cubic-bezier(0.34,1.56,0.64,1)_infinite]"
+            />
           </span>
         )}
-        <span className="flex-1 text-[12px] text-ink-2">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-ink-2">
           {experience.photos.length
             ? `${experience.photos.length} photo${experience.photos.length === 1 ? '' : 's'}`
             : 'Add photos'}
         </span>
-        <Icon name="chevronRight" size={14} className="text-ink-3" />
+        <Icon name="chevronRight" size={14} className="shrink-0 text-ink-3" />
       </button>
     </div>
   )
@@ -526,11 +529,11 @@ function ExperienceFormBody({
           />
         </div>
 
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
           placeholder="What you did there."
         />
       </form>

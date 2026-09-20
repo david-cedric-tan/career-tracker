@@ -1,0 +1,579 @@
+/* ------------------------------------------------------------------ */
+/* Admin console — a firmware-setup screen, not the tracker.           */
+/* Self-contained: nothing here leaks into the app's own theme.        */
+/* Green-on-black/white, switchable via [data-theme].                  */
+/* ------------------------------------------------------------------ */
+
+.bios {
+  /* Dark is the default palette; [data-theme="light"] below overrides it. */
+  --bios-bg: #0a0a0a;
+  --bios-panel: #161616;
+  --bios-panel-2: #1f1f1f;
+  --bios-line: #333333;
+  --bios-line-soft: #262626;
+  --bios-text: #ececec;
+  --bios-text-dim: #9a9a9a;
+  --bios-accent: #86bc25;
+  --bios-accent-ink: #0a1400;
+  --bios-accent-soft: rgba(134, 188, 37, 0.16);
+  --bios-warn: #f0ab00;
+  --bios-danger: #e2231a;
+  --bios-ok: #86bc25;
+  --bios-font: 'Open Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --bios-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 600px at 20% -10%, var(--bios-accent-soft), transparent 60%),
+    var(--bios-bg);
+  color: var(--bios-text);
+  font-family: var(--bios-font);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+}
+
+.bios[data-theme='light'] {
+  --bios-bg: #f4f4f4;
+  --bios-panel: #ffffff;
+  --bios-panel-2: #f0f0f0;
+  --bios-line: #d4d4d4;
+  --bios-line-soft: #e2e2e2;
+  --bios-text: #171717;
+  --bios-text-dim: #656565;
+  --bios-accent: #43b02a;
+  --bios-accent-ink: #ffffff;
+  --bios-accent-soft: rgba(67, 176, 42, 0.12);
+  --bios-warn: #a15c00;
+  --bios-danger: #c30000;
+  --bios-ok: #2e7d1f;
+}
+
+/* Faint grid texture: subtle in both themes, never enough to hurt contrast. */
+.bios::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--bios-line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bios-line-soft) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.4;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.25));
+}
+
+.bios > * {
+  position: relative;
+  z-index: 1;
+}
+
+.bios-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--bios-line);
+  background: linear-gradient(to bottom, var(--bios-panel-2), var(--bios-panel));
+}
+.bios-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bios-text);
+}
+.bios-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  background: var(--bios-accent);
+  color: var(--bios-accent-ink);
+  box-shadow: 0 0 0 3px var(--bios-accent-soft);
+}
+.bios-brand small {
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--bios-text-dim);
+}
+.bios-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+  font-size: 11.5px;
+  font-family: var(--bios-font-mono);
+  color: var(--bios-text-dim);
+}
+.bios-meta b {
+  color: var(--bios-text);
+  font-weight: 600;
+}
+
+.bios-theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--bios-line);
+  border-radius: 3px;
+  background: var(--bios-panel-2);
+  color: var(--bios-text);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+.bios-theme-toggle:hover {
+  border-color: var(--bios-accent);
+  color: var(--bios-accent);
+}
+
+.bios-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--bios-line);
+  background: var(--bios-panel);
+  overflow-x: auto;
+}
+.bios-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border: 0;
+  border-right: 1px solid var(--bios-line-soft);
+  background: transparent;
+  color: var(--bios-text-dim);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.bios-tab:hover {
+  color: var(--bios-text);
+  background: var(--bios-panel-2);
+}
+.bios-tab[aria-current='page'] {
+  color: var(--bios-accent-ink);
+  background: var(--bios-accent);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25);
+}
+.bios-tab kbd {
+  font-family: var(--bios-font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.bios-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.bios-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--bios-line);
+  background: var(--bios-panel);
+  font-size: 11.5px;
+  color: var(--bios-text-dim);
+}
+.bios-footer kbd {
+  font-family: var(--bios-font-mono);
+  padding: 1px 6px;
+  margin-right: 6px;
+  border: 1px solid var(--bios-line);
+  border-radius: 3px;
+  color: var(--bios-text);
+  background: var(--bios-panel-2);
+}
+
+/* Panels ------------------------------------------------------------ */
+.bios-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.bios-panel {
+  border: 1px solid var(--bios-line);
+  background: var(--bios-panel);
+}
+.bios-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bios-line-soft);
+  background: var(--bios-panel-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bios-accent);
+  border-left: 3px solid var(--bios-accent);
+}
+.bios-panel-title-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.bios-panel-body {
+  padding: 12px;
+}
+.bios-panel-body.tight {
+  padding: 0;
+}
+
+.bios-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+.bios-kv dt {
+  color: var(--bios-text-dim);
+}
+.bios-kv dd {
+  margin: 0;
+  color: var(--bios-text);
+  word-break: break-all;
+}
+
+.bios-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--bios-line-soft);
+  background: var(--bios-panel);
+}
+.bios-stat b {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--bios-font-mono);
+  color: var(--bios-text);
+  line-height: 1.1;
+}
+.bios-stat span {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bios-text-dim);
+}
+
+/* Tables ------------------------------------------------------------ */
+.bios-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.bios-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bios-text-dim);
+  border-bottom: 1px solid var(--bios-line-soft);
+  white-space: nowrap;
+}
+.bios-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--bios-line-soft);
+  vertical-align: top;
+}
+.bios-table tbody tr:hover {
+  background: var(--bios-accent-soft);
+}
+.bios-table tr[aria-selected='true'] {
+  background: var(--bios-accent-soft);
+  outline: 1px solid var(--bios-accent);
+  outline-offset: -1px;
+}
+.bios-num {
+  text-align: right;
+  font-family: var(--bios-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Controls ---------------------------------------------------------- */
+.bios-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 1px solid var(--bios-accent);
+  background: transparent;
+  color: var(--bios-accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.bios-btn:hover:not(:disabled) {
+  background: var(--bios-accent);
+  color: var(--bios-accent-ink);
+}
+.bios-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.bios-btn.primary {
+  background: var(--bios-accent);
+  color: var(--bios-accent-ink);
+}
+.bios-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.bios-btn.danger {
+  border-color: var(--bios-danger);
+  color: var(--bios-danger);
+}
+.bios-btn.danger:hover:not(:disabled) {
+  background: var(--bios-danger);
+  color: #fff;
+}
+.bios-btn.ghost {
+  border-color: var(--bios-line);
+  color: var(--bios-text);
+}
+.bios-btn.ghost:hover:not(:disabled) {
+  background: var(--bios-panel-2);
+  color: var(--bios-text);
+  border-color: var(--bios-accent);
+}
+.bios-btn.small {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.bios-input,
+.bios-select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--bios-line);
+  background: var(--bios-bg);
+  color: var(--bios-text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.bios-input:focus,
+.bios-select:focus {
+  border-color: var(--bios-accent);
+  box-shadow: 0 0 0 2px var(--bios-accent-soft);
+}
+.bios-select option {
+  background: var(--bios-panel);
+  color: var(--bios-text);
+}
+.bios-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bios-text-dim);
+}
+
+/* Toggle row — a checkbox-styled setting, not the [X]/[ ] of a setup screen. */
+.bios-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--bios-line-soft);
+  background: transparent;
+  color: var(--bios-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bios-toggle:hover {
+  background: var(--bios-accent-soft);
+}
+.bios-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bios-toggle-box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1.5px solid var(--bios-accent);
+  border-radius: 3px;
+  background: var(--bios-accent-soft);
+  color: var(--bios-accent);
+}
+.bios-toggle-box.off {
+  border-color: var(--bios-line);
+  background: transparent;
+  color: var(--bios-text-dim);
+}
+.bios-toggle-main {
+  flex: 1;
+  min-width: 0;
+}
+.bios-toggle-main b {
+  display: block;
+  color: var(--bios-text);
+}
+.bios-toggle-main span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--bios-text-dim);
+}
+.bios-toggle-count {
+  flex: none;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--bios-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.bios-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.bios-badge.ok {
+  color: var(--bios-ok);
+}
+.bios-badge.warn {
+  color: var(--bios-warn);
+}
+.bios-badge.danger {
+  color: var(--bios-danger);
+}
+.bios-badge.dim {
+  color: var(--bios-text-dim);
+}
+.bios-badge.accent {
+  color: var(--bios-accent);
+}
+
+.bios-note {
+  padding: 10px 12px;
+  border-left: 3px solid var(--bios-warn);
+  background: color-mix(in srgb, var(--bios-warn) 12%, transparent);
+  color: var(--bios-text);
+  font-size: 12px;
+}
+.bios-note.danger {
+  border-left-color: var(--bios-danger);
+  background: color-mix(in srgb, var(--bios-danger) 12%, transparent);
+}
+.bios-note.ok {
+  border-left-color: var(--bios-ok);
+  background: color-mix(in srgb, var(--bios-ok) 12%, transparent);
+}
+
+.bios-log {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--bios-font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--bios-text-dim);
+}
+.bios-log .t {
+  color: var(--bios-accent);
+}
+.bios-log .u {
+  color: var(--bios-text);
+}
+
+.bios-blink {
+  animation: bios-blink 1.1s steps(2, start) infinite;
+}
+@keyframes bios-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.bios-progress {
+  height: 6px;
+  border: 1px solid var(--bios-line);
+  background: var(--bios-bg);
+}
+.bios-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--bios-accent);
+}
+
+.bios-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(2px);
+}
+.bios-modal {
+  width: min(560px, 100%);
+  border: 1px solid var(--bios-accent);
+  background: var(--bios-panel);
+  box-shadow:
+    0 0 0 4px var(--bios-accent-soft),
+    0 30px 80px rgba(0, 0, 0, 0.6);
+}
+
+@media (max-width: 640px) {
+  .bios-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .bios-body {
+    padding: 12px;
+  }
+}

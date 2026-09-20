@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/", include("events.urls")),
     path("api/dashboard/", include("dashboard.urls")),
     path("api/backup/", include("backup.urls")),
+    path("api/console/", include("console.urls")),
     path("api/onboarding/", include("onboarding.urls")),
     path("api-auth/", include("rest_framework.urls")),
 ]

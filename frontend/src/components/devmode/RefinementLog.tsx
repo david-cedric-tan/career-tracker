@@ -5,6 +5,7 @@ import { refinements } from '../../api/resources'
 import type { RefinementNote } from '../../api/types'
 import { useAuth } from '../../auth/context'
 import { cx, daysSince, formatDateTime } from '../../lib/format'
+import { writeScene } from '../../lib/brandScene'
 import { Avatar } from '../ui/Avatar'
 import { Icon } from '../ui/Icon'
 import { Spinner } from '../ui/Button'
@@ -181,7 +182,11 @@ export function RefinementLog({
     }
   }
 
-  /** Ticking your own note off. A reply is a different action — see `reply`. */
+  /** Reopening your own answered note, or a developer ticking their own note
+      off directly. Closing someone *else's* note — including a plain user
+      closing their own complaint with no fix attached — is the backend's
+      call to block (see `perform_update`); a user withdraws a complaint by
+      deleting it instead (see `remove`), not by marking it done themselves. */
   async function toggle(note: RefinementNote) {
     const next = note.status === 'done' ? 'open' : 'done'
     try {
@@ -389,7 +394,12 @@ export function RefinementLog({
         <div className="flex items-end gap-2">
           <textarea
             value={body}
-            onChange={(event) => setBody(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value
+              setBody(next)
+              // Undocumented: a word typed here switches the logo to its bear.
+              if (/abeoji$/i.test(next)) writeScene('lotso')
+            }}
             onKeyDown={(event) => {
               // Enter sends, shift+enter breaks the line — the log is for
               // one-liners, and reaching for a button each time adds friction.
@@ -461,6 +471,12 @@ function NoteRow({
   const [draft, setDraft] = useState('')
   const done = note.status === 'done'
   const isNewReply = note.is_mine && Boolean(note.resolution) && !note.resolution_seen_at
+  // Reopening an answered ticket is always the reporter's call either way;
+  // marking one done with no reply attached is the developer's only, even on
+  // their own note — a plain user closes a complaint by deleting it, not by
+  // ticking it off (see `perform_update` on the backend, which enforces this
+  // regardless of what the UI allows).
+  const canToggle = note.is_mine && (done || isDeveloper)
 
   return (
     <li
@@ -476,14 +492,15 @@ function NoteRow({
         <button
           type="button"
           onClick={onToggle}
-          disabled={!note.is_mine}
+          disabled={!canToggle}
           aria-label={done ? 'Reopen' : 'Mark as done'}
+          title={!canToggle && !done ? 'Only a developer can mark this done' : undefined}
           className={cx(
             'mt-1 grid size-4 shrink-0 place-items-center rounded border transition-colors',
             done
               ? 'border-good bg-good text-white'
               : 'border-line-strong text-transparent hover:border-brand',
-            !note.is_mine && 'cursor-not-allowed opacity-50',
+            !canToggle && 'cursor-not-allowed opacity-50 hover:border-line-strong',
           )}
         >
           <Icon name="check" size={10} />
@@ -560,9 +577,11 @@ function NoteRow({
             </div>
           ) : null}
 
-          {/* Replying is the developer's move on someone else's note, and the
-              shortcut for "I fixed my own" on your own. */}
-          {!done && (isDeveloper || note.is_mine) ? (
+          {/* Marking fixed is the developer's move, whether it's someone
+              else's note or their own — a reporter closing their own
+              complaint this way is the same loophole the checkbox above is
+              blocked for, just with an extra message attached. */}
+          {!done && isDeveloper ? (
             replying ? (
               <form
                 onSubmit={(event) => {

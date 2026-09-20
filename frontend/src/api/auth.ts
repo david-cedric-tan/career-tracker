@@ -15,6 +15,16 @@ export type RegisterPayload = {
   school_email?: string
 }
 
+/** "Forgot my password" — queues a request for the operator. Always
+    resolves, whether or not the username exists. */
+export function requestPasswordReset(payload: { username: string; message?: string }) {
+  return api<{ detail: string }>('/auth/password-reset-requests/', {
+    method: 'POST',
+    body: payload,
+    anonymous: true,
+  })
+}
+
 export async function login(payload: LoginPayload): Promise<AuthResponse> {
   const data = await api<AuthResponse>('/auth/login/', {
     method: 'POST',

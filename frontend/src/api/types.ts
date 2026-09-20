@@ -148,6 +148,15 @@ export type PersonCompanyInput = {
 
 /* ---------------------------------------------------------------- resumes */
 
+export type ResumeFile = {
+  id: number
+  file: string
+  file_name: string
+  file_kind: string | null
+  file_size: number | null
+  created_at: string
+}
+
 export type Resume = {
   id: number
   label: string
@@ -173,6 +182,8 @@ export type Resume = {
   /** "PDF" | "Word" | "Pages" | … , or null when nothing is attached. */
   file_kind: string | null
   file_size: number | null
+  /** Other formats of the same document (the .docx beside the .pdf). */
+  files: ResumeFile[]
   application_count: number
   /** The applications sent with this version, for the card's hover list. */
   applications_info: {
@@ -685,6 +696,8 @@ export type CalendarEvent = {
   company?: { id: number; name: string; logo: string | null } | null
   /** Deadlines only: how close the closing date is. */
   urgency?: 'past' | 'critical' | 'soon' | 'later'
+  /** Application entries only: the application's current pipeline stage key. */
+  stage?: string
   /** Only ever present on `domain: 'custom'` rows — every other domain is date-only. */
   all_day?: boolean
   start_time?: string | null

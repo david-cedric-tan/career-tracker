@@ -58,15 +58,38 @@ class RefinementNoteTests(APITestCase):
         )
         self.assertEqual(r.status_code, 404)
 
-    def test_mark_done_and_filter_by_status(self):
-        note = RefinementNote.objects.create(user=self.user, body="Fix it")
+    def test_filter_by_status(self):
+        # Marking done is a developer-only move (see DeveloperInboxTests) —
+        # this only checks that the ?status= filter itself works, so the
+        # "done" row is seeded directly rather than through the API.
+        RefinementNote.objects.create(user=self.user, body="Fix it", status="done")
         RefinementNote.objects.create(user=self.user, body="Still open")
 
-        self.client.patch(
-            f"/api/auth/refinements/{note.id}/", {"status": "done"}, format="json"
-        )
         open_notes = self.client.get("/api/auth/refinements/?status=open").data
         self.assertEqual([n["body"] for n in open_notes], ["Still open"])
+
+    def test_reporter_cannot_mark_their_own_note_done(self):
+        """Closing a complaint takes a fix — a reporter dismissing their own
+        bug report with no message and no developer involvement is exactly
+        the loophole this blocks. Deleting it is still there for "never mind"."""
+        note = RefinementNote.objects.create(user=self.user, body="Fix it")
+        r = self.client.patch(
+            f"/api/auth/refinements/{note.id}/", {"status": "done"}, format="json"
+        )
+        self.assertEqual(r.status_code, 403)
+        note.refresh_from_db()
+        self.assertEqual(note.status, "open")
+
+    def test_reporter_cannot_resolve_their_own_note(self):
+        note = RefinementNote.objects.create(user=self.user, body="Fix it")
+        r = self.client.post(
+            f"/api/auth/refinements/{note.id}/resolve/",
+            {"message": "closing this myself"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, 403)
+        note.refresh_from_db()
+        self.assertEqual(note.status, "open")
 
     def test_requires_auth(self):
         self.client.force_authenticate(None)
@@ -380,12 +403,15 @@ class DeveloperInboxTests(APITestCase):
         )
 
     def test_ticking_your_own_note_off_does_not_lock_it(self):
-        self.client.force_authenticate(self.sister)
+        # Only the developer can tick a note done directly (no resolve reply)
+        # — exercise it on the developer's own note, not the reporter's.
+        self.client.force_authenticate(self.dev)
+        own = RefinementNote.objects.create(user=self.dev, body="Dev's own reminder")
         self.client.patch(
-            f"/api/auth/refinements/{self.note.id}/", {"status": "done"}, format="json"
+            f"/api/auth/refinements/{own.id}/", {"status": "done"}, format="json"
         )
         r = self.client.patch(
-            f"/api/auth/refinements/{self.note.id}/",
+            f"/api/auth/refinements/{own.id}/",
             {"body": "still my note to edit"},
             format="json",
         )

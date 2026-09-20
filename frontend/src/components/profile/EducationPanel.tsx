@@ -7,12 +7,14 @@ import { AttachmentList } from './AttachmentList'
 import { AttachmentGalleryDialog, AttachmentStrip } from './AttachmentGallery'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
-import { Input, Textarea } from '../ui/Field'
+import { Input } from '../ui/Field'
 import { Icon } from '../ui/Icon'
 import { ImagePicker } from '../ui/ImagePicker'
+import { MentionTextarea } from '../ui/Mention'
 import { Modal } from '../ui/Modal'
 import { EmptyState, Loading } from '../ui/States'
 import { useToast } from '../ui/toast-context'
+import { RichText } from '../../lib/richText'
 
 /** FR-PROF-10 — schools and programmes, each with a school logo and
  *  attachments (transcripts, certificates). List rows mirror Experience:
@@ -45,7 +47,6 @@ export function EducationPanel() {
     <Card>
       <CardHeader
         title="Education"
-        subtitle="Schools and programmes."
         action={
           <Button
             size="sm"
@@ -113,9 +114,7 @@ export function EducationPanel() {
               </div>
 
               {row.description ? (
-                <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] text-ink-2">
-                  {row.description}
-                </p>
+                <RichText text={row.description} className="mt-2 break-words text-[12.5px] text-ink-2" />
               ) : null}
 
               <AttachmentStrip attachments={row.attachments} onOpen={() => setGalleryId(row.id)} />
@@ -348,11 +347,11 @@ function EducationFormBody({
             help="Blank = current"
           />
         </div>
-        <Textarea
+        <MentionTextarea
           label="Description"
           value={form.description}
           error={errors.description}
-          onChange={(event) => set('description', event.target.value)}
+          onChange={(value) => set('description', value)}
         />
 
         {row ? (

@@ -54,6 +54,7 @@ export function DayTimeline({
   onDayDragOver,
   onDayDragLeave,
   onDayDrop,
+  onAllDayDrop,
   onHourDragOver,
   onHourDrop,
   onHourDragLeave,
@@ -75,6 +76,9 @@ export function DayTimeline({
   onDayDragOver: (event: DragEvent, iso: string) => void
   onDayDragLeave: (iso: string) => void
   onDayDrop: (event: DragEvent, iso: string) => void
+  /** Drop onto the all-day strip itself — a timed item dropped here loses
+      its clock time, which a plain day drop must not do. */
+  onAllDayDrop?: (event: DragEvent, iso: string) => void
   onHourDragOver: (event: DragEvent, hour: number) => void
   onHourDrop: (event: DragEvent, hour: number) => void
   /** Drag left the hour grid entirely — drop the landing preview. */
@@ -203,7 +207,7 @@ export function DayTimeline({
         )}
         onDragOver={(event) => onDayDragOver(event, iso)}
         onDragLeave={() => onDayDragLeave(iso)}
-        onDrop={(event) => onDayDrop(event, iso)}
+        onDrop={(event) => (onAllDayDrop ?? onDayDrop)(event, iso)}
         onDoubleClick={(event) => {
           event.preventDefault()
           onComposeAllDay()

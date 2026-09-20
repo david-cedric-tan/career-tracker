@@ -3078,3 +3078,99 @@
   max-width: 8.5in;
   min-height: 11in;
 }
+
+/* ------------------------------------------------------- brand scene: lotso
+   On the square mark: a bear standing behind the logo, waving slowly. On the
+   wide wordmark: the same bear asleep on a strip of grass under a moon.
+   Same fade timing as the other scenes so switching moods doesn't switch
+   the feel of leaving. */
+@keyframes lotso-wave {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(34deg); }
+}
+@keyframes lotso-peek {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5%); }
+}
+@keyframes lotso-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.04); }
+}
+@keyframes lotso-z {
+  0% { opacity: 0; transform: translate(0, 4px); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, -10px); }
+}
+.lotso-scene {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.3s ease-out;
+}
+.lotso-scene.is-out {
+  opacity: 1;
+  transition-duration: 0.3s;
+}
+.lotso-bear {
+  position: absolute;
+  left: 50%;
+  bottom: -16%;
+  width: 82%;
+  height: auto;
+  translate: -50% 0;
+  animation: lotso-peek 3s ease-in-out infinite;
+  filter: drop-shadow(0 6px 10px rgba(74, 31, 58, 0.3));
+}
+.lotso-arm {
+  /* the shoulder, in viewBox units */
+  transform-origin: 152px 166px;
+  /* A wave, not a shake: one full swing every couple of seconds. */
+  animation: lotso-wave 1.6s ease-in-out infinite;
+}
+
+/* The wordmark box is wide and short, so this variant lays out in pixels
+   and sits behind the letters, like the clouds and the grass do. */
+.lotso-scene.is-wide {
+  z-index: 0;
+  overflow: hidden;
+}
+.lotso-grass {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 5px;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, #86efac, #22c55e);
+}
+.lotso-moon {
+  position: absolute;
+  right: 8px;
+  top: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  /* A crescent: the box's own colour bites into a cream disc. */
+  background: #fde68a;
+  box-shadow: 3px -1px 0 0 var(--color-surface, #fff) inset;
+  opacity: 0.9;
+}
+.lotso-sleeper {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  width: 44px;
+  height: auto;
+  transform-origin: bottom center;
+  animation: lotso-breathe 3.2s ease-in-out infinite;
+}
+.lotso-z {
+  animation: lotso-z 2.4s ease-out infinite;
+}
+.lotso-z-2 {
+  animation-delay: 0.8s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lotso-bear, .lotso-arm, .lotso-sleeper, .lotso-z { animation: none; }
+}

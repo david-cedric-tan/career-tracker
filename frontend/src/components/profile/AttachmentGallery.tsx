@@ -27,10 +27,7 @@ export function AttachmentStrip({
     <button
       type="button"
       onClick={onOpen}
-      className={cx(
-        "mt-2.5 flex w-full items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-left transition-colors hover:border-line-strong",
-        !attachments.length && "upload-zone",
-      )}
+      className="group/attach mt-2.5 flex w-48 max-w-full items-center gap-2 rounded-lg border border-line bg-surface py-1.5 pl-2 pr-1.5 text-left transition-colors hover:border-line-strong"
     >
       {attachments.length ? (
         <span className="flex -space-x-2">
@@ -44,16 +41,23 @@ export function AttachmentStrip({
           ))}
         </span>
       ) : (
-        <span className="grid size-7 place-items-center rounded-md border border-dashed border-line-strong text-ink-3">
-          <Icon name="plus" size={13} className="upload-plus" />
+        <span className="grid size-7 shrink-0 place-items-center rounded-md border border-dashed border-line-strong text-ink-3 transition-colors group-hover/attach:border-brand group-hover/attach:text-brand">
+          {/* Only spins on hover here — the same idle pulse other upload
+              zones always run would mean every empty section on this one
+              page animating at once. */}
+          <Icon
+            name="plus"
+            size={13}
+            className="group-hover/attach:animate-[upload-plus_2s_cubic-bezier(0.34,1.56,0.64,1)_infinite]"
+          />
         </span>
       )}
-      <span className="flex-1 text-[12px] text-ink-2">
+      <span className="min-w-0 flex-1 truncate text-[12px] text-ink-2">
         {attachments.length
           ? `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`
           : 'Add attachments'}
       </span>
-      <Icon name="chevronRight" size={14} className="text-ink-3" />
+      <Icon name="chevronRight" size={14} className="shrink-0 text-ink-3" />
     </button>
   )
 }

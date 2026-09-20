@@ -15,6 +15,7 @@ import { Combobox } from './ui/Combobox'
 import { Input, Select } from './ui/Field'
 import { MentionInput, MentionTextarea } from './ui/Mention'
 import { Modal } from './ui/Modal'
+import { Switch } from './ui/Switch'
 import { useToast } from './ui/toast-context'
 import { companyOption } from '../lib/company'
 import { usePublishDraft, type CalendarDraft, type CalendarDraftRef } from '../lib/calendarDraft'
@@ -215,7 +216,7 @@ function TodoFormBody({
           placeholder="Message Sarah after the OA"
         />
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Input
             label="Due date"
             type="date"
@@ -231,6 +232,27 @@ function TodoFormBody({
               }))
             }}
           />
+          {/* An explicit switch: browsers give a time input no reliable way
+              to clear itself, so "make this all-day again" needs a control
+              of its own rather than relying on emptying the field. */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[13px] font-medium text-ink-2">All day</span>
+            <label className="flex h-10 items-center gap-2.5 text-[13px] text-ink-2">
+              <Switch
+                label="All day"
+                checked={!form.due_time}
+                disabled={!form.due_date}
+                onChange={(allDay) =>
+                  setForm((prev) =>
+                    allDay
+                      ? { ...prev, due_time: '', due_end_time: '' }
+                      : { ...prev, due_time: '09:00', due_end_time: '10:00' },
+                  )
+                }
+              />
+              {form.due_time ? 'Timed' : 'No set time'}
+            </label>
+          </div>
           <Input
             label="Start"
             type="time"

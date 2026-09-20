@@ -42,6 +42,7 @@ export function LinksPanel() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [copiedId, setCopiedId] = useState<number | null>(null)
   const [draggingId, setDraggingId] = useState<number | null>(null)
+  const [adding, setAdding] = useState(false)
 
   function reload() {
     return profileLinks.list().then(setRows)
@@ -60,6 +61,7 @@ export function LinksPanel() {
       setLabel('')
       setUrl('')
       setCategory('other')
+      setAdding(false)
       await reload()
       notify('Link added.')
     } catch (err) {
@@ -118,7 +120,16 @@ export function LinksPanel() {
 
   return (
     <Card>
-      <CardHeader title="Important Links" subtitle="Portfolio, GitHub, personal site…" />
+      <CardHeader
+        title="Important Links"
+        action={
+          adding ? undefined : (
+            <Button size="sm" onClick={() => setAdding(true)} icon={<Icon name="plus" size={14} />}>
+              Add
+            </Button>
+          )
+        }
+      />
 
       {error ? (
         <p className="mt-3 text-[13px] text-critical">{error}</p>
@@ -209,37 +220,43 @@ export function LinksPanel() {
         </ul>
       )}
 
-      <form onSubmit={onSubmit} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.4fr_auto_auto]">
-        <Input
-          value={label}
-          onChange={(event) => setLabel(event.target.value)}
-          placeholder="Label"
-          error={fieldError.label}
-          aria-label="Link label"
-        />
-        <Input
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          placeholder="https://…"
-          type="url"
-          error={fieldError.url}
-          aria-label="Link URL"
-        />
-        <Select
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-          aria-label="Link category"
-        >
-          {CATEGORIES.map((entry) => (
-            <option key={entry.value} value={entry.value}>
-              {entry.label}
-            </option>
-          ))}
-        </Select>
-        <Button type="submit" loading={saving} icon={<Icon name="plus" size={14} />}>
-          Add
-        </Button>
-      </form>
+      {adding ? (
+        <form onSubmit={onSubmit} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.4fr_auto_auto_auto]">
+          <Input
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+            placeholder="Label"
+            error={fieldError.label}
+            aria-label="Link label"
+            autoFocus
+          />
+          <Input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://…"
+            type="url"
+            error={fieldError.url}
+            aria-label="Link URL"
+          />
+          <Select
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            aria-label="Link category"
+          >
+            {CATEGORIES.map((entry) => (
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
+            ))}
+          </Select>
+          <Button type="submit" loading={saving} icon={<Icon name="plus" size={14} />}>
+            Add
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setAdding(false)}>
+            Cancel
+          </Button>
+        </form>
+      ) : null}
     </Card>
   )
 }

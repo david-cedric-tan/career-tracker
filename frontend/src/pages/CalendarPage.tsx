@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { formatApiError } from '../api/client'
 import { calendarEvents, catchups, dashboard, todos } from '../api/resources'
@@ -56,6 +64,23 @@ const DOMAINS = Object.keys(CALENDAR_DOMAIN_META) as (keyof typeof CALENDAR_DOMA
 const DRAG_MIME = 'application/x-career-tracker-calendar'
 const VIEW_MODES = ['day', 'week', 'month', 'year'] as const
 type ViewMode = (typeof VIEW_MODES)[number]
+
+/** Kinds that own a row of their own here, so a copy can be created. */
+function isDuplicable(event: CalendarEvent): boolean {
+  return (
+    event.domain === 'custom' ||
+    event.domain === 'todo' ||
+    event.domain === 'catchup' ||
+    event.domain === 'catchup_followup'
+  )
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
 
 function isMovable(event: CalendarEvent): boolean {
   return event.domain === 'custom' || event.domain === 'todo'
@@ -127,6 +152,9 @@ export function CalendarPage() {
     const raw = params.get('domains')
     return raw ? new Set(raw.split(',')) : new Set<string>(DOMAINS)
   }, [params])
+  // Narrows application entries to the ones still unsubmitted — the
+  // deadlines that need an application written, not the ones already in.
+  const unsubmittedOnly = params.get('unsubmitted') === '1'
 
   useEffect(() => {
     rememberList('calendar', params.toString() ? `?${params}` : '')
@@ -144,6 +172,15 @@ export function CalendarPage() {
   const [dropBeforeId, setDropBeforeId] = useState<string | null>(null)
   const [dropHour, setDropHour] = useState<number | null>(null)
   const [movingId, setMovingId] = useState<string | null>(null)
+  // Right-click → "Duplicate / Copy"; ⌘C copies the chip under the pointer,
+  // ⌘V pastes the copy onto the selected day. Both go through duplicateItem.
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    item: CalendarEvent
+  } | null>(null)
+  const [clipboard, setClipboard] = useState<CalendarEvent | null>(null)
+  const hoveredRef = useRef<CalendarEvent | null>(null)
 
   const year = cursor.getFullYear()
   const month = cursor.getMonth()
@@ -175,6 +212,7 @@ export function CalendarPage() {
     const map = new Map<string, CalendarEvent[]>()
     for (const event of calendar.data?.events ?? []) {
       if (!activeDomains.has(event.domain)) continue
+      if (unsubmittedOnly && event.stage !== undefined && event.stage !== 'not_submitted') continue
       const list = map.get(event.date) ?? []
       list.push(event)
       map.set(event.date, list)
@@ -185,7 +223,7 @@ export function CalendarPage() {
     return map
     // orderVersion forces re-sort after a same-day reorder.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calendar.data, activeDomains, orderVersion])
+  }, [calendar.data, activeDomains, unsubmittedOnly, orderVersion])
 
   const days = useMemo(() => buildMonthGrid(year, month), [year, month])
   const months = useMemo(
@@ -650,6 +688,169 @@ export function CalendarPage() {
     await moveAllDayItem(item, iso)
   }
 
+  /** The all-day strip: a timed todo/event dropped here becomes all-day. */
+  async function onAllDayDrop(event: DragEvent, iso: string) {
+    const id = event.dataTransfer.getData(DRAG_MIME) || draggingId
+    const item = (calendar.data?.events ?? []).find((row) => row.id === id)
+    if (!item || !isMovable(item) || !isTimed(item)) {
+      await onDayDrop(event, iso)
+      return
+    }
+    event.preventDefault()
+    setDraggingId(null)
+    setDropTarget(null)
+    setDropBeforeId(null)
+    setDropHour(null)
+    setMovingId(item.id)
+    try {
+      if (item.domain === 'todo') {
+        await todos.update(parseEventId(item), {
+          due_date: iso,
+          due_time: null,
+          due_end_time: null,
+        })
+        notify('Todo is now all-day.')
+      } else {
+        const record = await calendarEvents.get(parseEventId(item))
+        await calendarEvents.update(record.id, {
+          title: record.title,
+          date: iso,
+          all_day: true,
+          start_time: null,
+          end_time: null,
+          notes: record.notes,
+          is_done: record.is_done,
+          company: record.company,
+          application: record.application,
+          people: record.people,
+          reminders: record.reminders.map((reminder) => ({
+            minutes_before: reminder.minutes_before,
+          })),
+        })
+        notify('Event is now all-day.')
+      }
+      calendar.reload()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+    } finally {
+      setMovingId(null)
+    }
+  }
+
+  /** Create a fresh copy of a todo / event / catch-up on `targetDate`. */
+  async function duplicateItem(item: CalendarEvent, targetDate: string) {
+    setMovingId(item.id)
+    try {
+      const id = parseEventId(item)
+      if (item.domain === 'todo') {
+        const record = await todos.get(id)
+        await todos.create({
+          title: record.title,
+          description: record.description,
+          due_date: targetDate,
+          due_time: record.due_time,
+          due_end_time: record.due_end_time,
+          priority: record.priority,
+          status: 'open',
+          application: record.application,
+          person: record.person,
+          company: record.company,
+        })
+        notify(`Todo duplicated onto ${targetDate}.`)
+      } else if (item.domain === 'custom') {
+        const record = await calendarEvents.get(id)
+        await calendarEvents.create({
+          title: record.title,
+          date: targetDate,
+          all_day: record.all_day,
+          start_time: record.start_time,
+          end_time: record.end_time,
+          notes: record.notes,
+          is_done: false,
+          company: record.company,
+          application: record.application,
+          people: record.people,
+          reminders: record.reminders.map((reminder) => ({
+            minutes_before: reminder.minutes_before,
+          })),
+        })
+        notify(`Event duplicated onto ${targetDate}.`)
+      } else {
+        const record = await catchups.get(id)
+        await catchups.create({
+          person: record.person,
+          met_on: targetDate,
+          title: record.title,
+          format: record.format,
+          format_other: record.format_other,
+          message_channel: record.message_channel,
+          location: record.location,
+          minutes: record.minutes,
+          takeaways: record.takeaways,
+          follow_up_on: null,
+        })
+        notify(`Catch-up duplicated onto ${targetDate}.`)
+      }
+      setSelectedDay(targetDate)
+      calendar.reload()
+    } catch (err) {
+      notify(formatApiError(err), 'error')
+    } finally {
+      setMovingId(null)
+    }
+  }
+
+  function chipFromTarget(target: EventTarget | null): CalendarEvent | null {
+    const el = (target as HTMLElement | null)?.closest?.('[data-event-id]') as HTMLElement | null
+    const id = el?.dataset.eventId
+    if (!id) return null
+    return (calendar.data?.events ?? []).find((row) => row.id === id) ?? null
+  }
+
+  function onCalendarContextMenu(event: ReactMouseEvent<HTMLDivElement>) {
+    const item = chipFromTarget(event.target)
+    if (!item || !isDuplicable(item)) return
+    event.preventDefault()
+    setContextMenu({ x: event.clientX, y: event.clientY, item })
+  }
+
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    window.addEventListener('click', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', close)
+    }
+  }, [contextMenu])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+      if (isEditableTarget(event.target) || compose.open || viewing) return
+      const key = event.key.toLowerCase()
+      if (key === 'c') {
+        const item = hoveredRef.current
+        if (!item || !isDuplicable(item)) return
+        // Only claim the shortcut when there's something to copy — a plain
+        // text selection elsewhere on the page still copies as usual.
+        event.preventDefault()
+        setClipboard(item)
+        notify(`Copied "${item.title}" — press ⌘V on a day to paste.`)
+      } else if (key === 'v') {
+        if (!clipboard) return
+        event.preventDefault()
+        void duplicateItem(clipboard, selectedDay)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipboard, selectedDay, compose.open, viewing, calendar.data])
+
   async function onHourDrop(event: DragEvent, hour: number) {
     event.preventDefault()
     const id = event.dataTransfer.getData(DRAG_MIME) || draggingId
@@ -718,7 +919,13 @@ export function CalendarPage() {
           : cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onContextMenu={onCalendarContextMenu}
+      onMouseOver={(event) => {
+        hoveredRef.current = chipFromTarget(event.target)
+      }}
+    >
       <PageHeader
         className="mb-3 shrink-0"
         title="Calendar"
@@ -790,7 +997,7 @@ export function CalendarPage() {
         label="Show"
         className="mb-2 shrink-0"
         // Hidden kinds count as live filters; all-on is the default and shows no badge.
-        activeCount={DOMAINS.length - activeDomains.size}
+        activeCount={DOMAINS.length - activeDomains.size + (unsubmittedOnly ? 1 : 0)}
         trailing={<CalendarGlowSettings />}
       >
         {DOMAINS.map((domain) => {
@@ -814,6 +1021,22 @@ export function CalendarPage() {
             </button>
           )
         })}
+        <span className="mx-1 hidden h-4 w-px bg-line sm:inline-block" aria-hidden />
+        <button
+          type="button"
+          onClick={() => updateParams({ unsubmitted: unsubmittedOnly ? null : '1' })}
+          aria-pressed={unsubmittedOnly}
+          title="Only application dates for applications you haven't submitted yet"
+          className={cx(
+            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors',
+            unsubmittedOnly
+              ? 'border-brand bg-brand-soft text-brand-strong'
+              : 'border-dashed border-line text-ink-3 hover:bg-surface-2',
+          )}
+        >
+          <Icon name="edit" size={12} />
+          Not submitted only
+        </button>
       </FilterDrawer>
 
       {calendar.error && !calendar.data ? (
@@ -873,6 +1096,7 @@ export function CalendarPage() {
           onDayDragOver={onDayDragOver}
           onDayDragLeave={onDayDragLeave}
           onDayDrop={(event, iso) => void onDayDrop(event, iso)}
+          onAllDayDrop={(event, iso) => void onAllDayDrop(event, iso)}
           onHourDragOver={onHourDragOver}
           onHourDrop={(event, hour) => void onHourDrop(event, hour)}
           onHourDragLeave={() => setDropHour(null)}
@@ -1047,6 +1271,61 @@ export function CalendarPage() {
             setViewing(null)
           }}
         />
+      ) : null}
+
+      {contextMenu ? (
+        <div
+          role="menu"
+          className="fixed z-50 min-w-44 overflow-hidden rounded-lg border border-line bg-surface py-1 text-[13px] shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <p className="truncate px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+            {contextMenu.item.title}
+          </p>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ink hover:bg-surface-2"
+            onClick={() => {
+              const { item } = contextMenu
+              setContextMenu(null)
+              void duplicateItem(item, item.date)
+            }}
+          >
+            <Icon name="copy" size={14} />
+            Duplicate here
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ink hover:bg-surface-2"
+            onClick={() => {
+              const { item } = contextMenu
+              setContextMenu(null)
+              setClipboard(item)
+              notify(`Copied "${item.title}" — press ⌘V on a day to paste.`)
+            }}
+          >
+            <Icon name="copy" size={14} />
+            Copy (⌘C)
+          </button>
+          {clipboard ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ink hover:bg-surface-2"
+              onClick={() => {
+                const target = contextMenu.item.date
+                setContextMenu(null)
+                void duplicateItem(clipboard, target)
+              }}
+            >
+              <Icon name="plus" size={14} />
+              Paste "{clipboard.title}" on {contextMenu.item.date}
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {linkedPreview ? (

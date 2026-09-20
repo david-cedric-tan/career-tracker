@@ -20,6 +20,38 @@ def is_owner_username(username):
     return bool(owner) and (username or "").strip().lower() == owner.strip().lower()
 
 
+class PasswordResetRequest(models.Model):
+    """"I forgot my password" — raised from the login screen, answered by a
+    superuser in the console.
+
+    There is no email round-trip in this app (no mail server, and most
+    accounts are people the operator knows), so a reset is a person asking
+    the operator to set a new one. The request is the queue: it shows the
+    operator who asked and when, and clears once they set a password on
+    that account.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="password_reset_requests"
+    )
+    message = models.CharField(max_length=280, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Reset request from {self.user_id}"
+
+
 class Profile(models.Model):
     """One-to-one extension of User, created on demand.
 

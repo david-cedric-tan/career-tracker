@@ -2,7 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AppearanceProvider } from './appearance/AppearanceProvider'
 import { AuthProvider } from './auth/AuthContext'
 import { CelebrationProvider } from './celebrate/CelebrationProvider'
-import { GuestRoute, ProtectedRoute } from './auth/ProtectedRoute'
+import { ConsoleRoute, GuestRoute, ProtectedRoute } from './auth/ProtectedRoute'
 import { AccountSync } from './components/AccountSync'
 import { AppLayout } from './components/layout/AppLayout'
 import { ToastProvider } from './components/ui/Toast'
@@ -24,6 +24,11 @@ import { CalendarPage } from './pages/CalendarPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TodosPage } from './pages/TodosPage'
+import { AccountsScreen } from './console/AccountsScreen'
+import { ConsoleLayout } from './console/ConsoleLayout'
+import { MigrationScreen } from './console/MigrationScreen'
+import { RefinementsScreen } from './console/RefinementsScreen'
+import { SystemScreen } from './console/SystemScreen'
 
 export default function App() {
   return (
@@ -37,6 +42,16 @@ export default function App() {
                 <Route element={<GuestRoute />}>
                   <Route path="/login" element={<LoginPage />} />
                   <Route path="/register" element={<RegisterPage />} />
+                </Route>
+
+                {/* Operators: the firmware-style console, no tracker chrome. */}
+                <Route element={<ConsoleRoute />}>
+                  <Route path="/console" element={<ConsoleLayout />}>
+                    <Route index element={<SystemScreen />} />
+                    <Route path="accounts" element={<AccountsScreen />} />
+                    <Route path="migration" element={<MigrationScreen />} />
+                    <Route path="refinements" element={<RefinementsScreen />} />
+                  </Route>
                 </Route>
 
                 <Route element={<ProtectedRoute />}>

@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     "dashboard",
     "backup",
     "onboarding",
+    "console",
 ]
 
 MIDDLEWARE = [

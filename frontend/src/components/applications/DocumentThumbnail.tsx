@@ -9,6 +9,7 @@ import { convertDocxToHtml } from '../../lib/docxPreview'
 import { renderPdfThumbnail } from '../../lib/pdfPreview'
 import { peekThumbnail } from '../../lib/thumbnailCache'
 import { cx } from '../../lib/format'
+import { looksLikeRtf, rtfToPlainText } from '../../lib/rtf'
 import { Icon } from '../ui/Icon'
 
 const TEXT_SNIPPET_BYTES = 1200
@@ -272,7 +273,10 @@ function FileTypeTile({
 export async function fetchDocumentText(url: string): Promise<string> {
   const response = await fetch(url)
   if (!response.ok) throw new Error('Could not load document')
-  const text = await response.text()
+  const raw = await response.text()
+  // An .rtf's bytes are markup (`{\rtf1\ansi...}`), not the words it holds —
+  // reading it as plain text showed the markup instead of the document.
+  const text = looksLikeRtf(raw) ? rtfToPlainText(raw) : raw
   if (text.length > TEXT_SNIPPET_BYTES * 40) {
     return text.slice(0, TEXT_SNIPPET_BYTES * 40)
   }

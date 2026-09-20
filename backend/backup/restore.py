@@ -22,10 +22,14 @@ from rest_framework import serializers
 from accounts.models import (
     AttachmentKind,
     Certification,
+    Education,
     Experience,
     ExperiencePhoto,
+    ExtraCurricular,
     Profile,
+    ProfileAddress,
     ProfileAttachment,
+    ProfileLink,
     RefinementEventLog,
     RefinementMessage,
     RefinementNote,
@@ -33,8 +37,10 @@ from accounts.models import (
 from applications.models import (
     Application,
     ApplicationJobListing,
+    ApplicationStage,
     AppsEventLog,
     Company,
+    CompanyNote,
     Country,
     Industry,
     JobListing,
@@ -46,7 +52,8 @@ from applications.models import (
 )
 from catchups.models import Catchup
 from events.models import CalendarEvent, EventReminder
-from network.models import ContactMethod, MetSourceTag, Person, RelationshipTag
+from network.models import ContactMethod, MetSourceTag, Person, PersonCompany, RelationshipTag
+from onboarding.models import SampleDataRecord
 from todos.models import Todo
 
 from .archive import ARCHIVE_VERSION, archive_counts
@@ -71,6 +78,21 @@ def _datetime(value):
 
 def _time_value(value):
     return parse_time(value) if value else None
+
+
+def _backdate(instance, **stamps):
+    """Write `auto_now_add`/`auto_now` timestamps from the archive.
+
+    `save()` would stamp "now" over them, so this goes straight to the row.
+    A stamp that's missing or unparseable is left as whatever the create set.
+    """
+    values = {
+        field: parsed
+        for field, raw in stamps.items()
+        if (parsed := _datetime(raw)) is not None
+    }
+    if values:
+        type(instance)._default_manager.filter(pk=instance.pk).update(**values)
 
 
 def validate_archive(archive):
@@ -101,8 +123,16 @@ def wipe(user):
     Experience.objects.filter(user=user).delete()
     Application.objects.filter(user=user).delete()
     Resume.objects.filter(user=user).delete()
+    CompanyNote.objects.filter(user=user).delete()
+    Education.objects.filter(user=user).delete()
     Certification.objects.filter(user=user).delete()
+    ExtraCurricular.objects.filter(user=user).delete()
+    ProfileLink.objects.filter(user=user).delete()
+    ProfileAddress.objects.filter(user=user).delete()
     RefinementNote.objects.filter(user=user).delete()
+    # Sample-data bookkeeping points at rows by id; every one of those is
+    # gone now, so the records would only ever dangle.
+    SampleDataRecord.objects.filter(user=user).delete()
 
 
 def _actor_for(username, restoring_user, archive_username):
@@ -131,13 +161,34 @@ def restore(user, archive):
     wipe(user)
     archive_username = archive.get("username") or ""
 
-    # --- appearance & dashboard layout --------------------------------------
+    # --- account name ------------------------------------------------------
+    # The email is deliberately not restored: it's the login here, and the
+    # archive may be landing in a different account than it came from.
+    account_row = archive.get("account") or {}
+    name_fields = {
+        field: account_row[field]
+        for field in ("first_name", "last_name")
+        if account_row.get(field)
+    }
+    if name_fields:
+        for field, value in name_fields.items():
+            setattr(user, field, value)
+        user.save(update_fields=list(name_fields))
+
+    # --- profile: contact details, appearance & dashboard layout -----------
     # Absent (rather than falsy) means an archive from before this was
     # tracked — leave the restoring account's own settings alone.
     profile_row = archive.get("profile")
     if profile_row:
         profile = Profile.for_user(user)
         for field in (
+            "preferred_name",
+            "mobile_number",
+            "school_email",
+            "personal_email",
+            "linkedin_url",
+            "pinned_photo_caption",
+            "onboarding_completed",
             "theme_mode",
             "wallpaper",
             "wallpaper_blur",
@@ -152,11 +203,33 @@ def restore(user, archive):
         profile.save()
 
     # --- shared catalogs: ensure, never delete ----------------------------
+    # Pipeline stages are shared too: a custom stage this archive's
+    # applications sit in is created if missing, but an existing row's name
+    # and order are left alone — they're everyone's pipeline, not this
+    # account's. Presets always exist after `migrate`, so only customs land.
+    for row in archive.get("stages", []):
+        if not row.get("key") or ApplicationStage.objects.filter(key=row["key"]).exists():
+            continue
+        ApplicationStage.objects.create(
+            key=row["key"],
+            name=row.get("name") or row["key"],
+            is_preset=bool(row.get("is_preset", False)),
+        )
+
     companies = {}
     for row in archive.get("companies", []):
         if not row.get("name"):
             continue
         company, _ = Company.objects.get_or_create(name=row["name"])
+        # Shared attributes fill in blanks but never overwrite what another
+        # account already set on the same catalog row.
+        if row.get("short_name") and not company.short_name:
+            company.short_name = row["short_name"]
+            company.save(update_fields=["short_name"])
+        if row.get("regions"):
+            company.regions.add(
+                *[Country.objects.get_or_create(name=name)[0] for name in row["regions"]]
+            )
         # "industries" (a list) is the current shape; "industry" (a single
         # string) is what an older export before the FK->M2M change used —
         # both are accepted so a backup made before that change still restores.
@@ -200,6 +273,16 @@ def restore(user, archive):
             roles[name], _ = Role.objects.get_or_create(name=name)
         return roles[name]
 
+    # --- private per-company notes ------------------------------------------
+    for row in archive.get("company_notes", []):
+        company = company_for(row.get("company"))
+        if not company or not (row.get("notes") or "").strip():
+            continue
+        note, _ = CompanyNote.objects.update_or_create(
+            user=user, company=company, defaults={"notes": row["notes"]}
+        )
+        _backdate(note, updated_at=row.get("updated_at"))
+
     # --- resumes -----------------------------------------------------------
     resumes = {}
     for row in archive.get("resumes", []):
@@ -221,6 +304,7 @@ def restore(user, archive):
         resume.target_roles.set(
             [r for r in (role_for(n) for n in row.get("target_roles") or []) if r]
         )
+        _backdate(resume, created_at=row.get("created_at"))
         resumes[row["label"]] = resume
 
     # --- job listings ------------------------------------------------------
@@ -240,6 +324,8 @@ def restore(user, archive):
                 "work_arrangement": row.get("work_arrangement") or "",
                 "closing_at": _date(row.get("closing_at")),
                 "job_url": row.get("job_url") or None,
+                "description": row.get("description") or "",
+                "skills": row.get("skills") or "",
             },
         )
         listings_by_role[(company.name, role.name)] = listing
@@ -262,13 +348,25 @@ def restore(user, archive):
             follow_up_date=_date(row.get("follow_up_date")),
             reapply_at=_date(row.get("reapply_at")),
             notes=row.get("notes") or "",
+            awaiting_response=bool(row.get("awaiting_response", False)),
+            awaiting_since=_datetime(row.get("awaiting_since")),
+            is_historical=bool(row.get("is_historical", False)),
+            stage_updated_at=_datetime(row.get("stage_updated_at")),
         )
+        # An empty workbook cell parses as [] rather than {} — treat both as
+        # "every role follows the application".
+        listing_outcomes = row.get("listing_outcomes") or {}
+        if not isinstance(listing_outcomes, dict):
+            listing_outcomes = {}
         for role_name in row.get("listings") or []:
             listing = listings_by_role.get((company.name, role_name))
             if listing:
                 ApplicationJobListing.objects.get_or_create(
-                    application=application, job_listing=listing
+                    application=application,
+                    job_listing=listing,
+                    defaults={"outcome": listing_outcomes.get(role_name) or ""},
                 )
+        _backdate(application, created_at=row.get("created_at"))
         if row.get("id") is not None:
             applications[row["id"]] = application
 
@@ -317,7 +415,10 @@ def restore(user, archive):
             relationship=relationship_tag_for(row.get("relationship")),
             source=source_tag_for(row.get("source")),
             last_meeting_at=_date(row.get("last_meeting_at")),
+            last_messaged_at=_date(row.get("last_messaged_at")),
+            last_message_channel=row.get("last_message_channel") or "",
             next_chat_at=_date(row.get("next_chat_at")),
+            cadence_months=row.get("cadence_months"),
             notes=row.get("notes") or "",
         )
         person.companies.set(
@@ -326,7 +427,38 @@ def restore(user, archive):
         person.applications.set(
             [applications[i] for i in row.get("applications") or [] if i in applications]
         )
+        _backdate(person, created_at=row.get("created_at"))
         people[row["full_name"]] = person
+
+    # Connections are symmetrical and between people who may appear later in
+    # the sheet, so they're wired up once everyone exists.
+    for row in archive.get("people", []):
+        person = people.get(row.get("full_name"))
+        if not person:
+            continue
+        person.connections.set(
+            [p for p in (people.get(n) for n in row.get("connections") or []) if p]
+        )
+
+    # The title/dates on each person↔company link. `companies.set()` above
+    # already created the bare rows; this fills them in (or adds a link the
+    # names list didn't carry).
+    for row in archive.get("person_companies", []):
+        person = people.get(row.get("person"))
+        company = company_for(row.get("company"))
+        if not person or not company:
+            continue
+        link, _ = PersonCompany.objects.update_or_create(
+            person=person,
+            company=company,
+            defaults={
+                "title": row.get("title") or "",
+                "started_on": _date(row.get("started_on")),
+                "ended_on": _date(row.get("ended_on")),
+                "is_current": row.get("is_current"),
+            },
+        )
+        _backdate(link, created_at=row.get("created_at"))
 
     for row in archive.get("contact_methods", []):
         person = people.get(row.get("person"))
@@ -344,7 +476,7 @@ def restore(user, archive):
         met_on = _date(row.get("met_on"))
         if not person or not met_on:
             continue
-        Catchup.objects.create(
+        catchup = Catchup.objects.create(
             user=user,
             person=person,
             met_on=met_on,
@@ -357,6 +489,7 @@ def restore(user, archive):
             takeaways=row.get("takeaways") or "",
             follow_up_on=_date(row.get("follow_up_on")),
         )
+        _backdate(catchup, created_at=row.get("created_at"))
 
     # --- todos -------------------------------------------------------------
     for row in archive.get("todos", []):
@@ -381,6 +514,7 @@ def restore(user, archive):
         # reconcile rather than hitting the DB constraint.
         todo.sync_completion()
         todo.save()
+        _backdate(todo, created_at=row.get("created_at"))
 
     # --- calendar events -----------------------------------------------------
     for row in archive.get("calendar_events", []):
@@ -404,6 +538,7 @@ def restore(user, archive):
         )
         for minutes in row.get("reminders") or []:
             EventReminder.objects.get_or_create(event=event, minutes_before=minutes)
+        _backdate(event, created_at=row.get("created_at"))
 
     # --- library documents (files ride along via reattach_media below,
     #     matched on the old id this dict is keyed by) ------------------------
@@ -422,6 +557,7 @@ def restore(user, archive):
             application=applications.get(row.get("application")),
             company=company_for(row.get("company")),
         )
+        _backdate(document, created_at=row.get("created_at"))
         if row.get("id") is not None:
             library_documents[row["id"]] = document
 
@@ -443,7 +579,26 @@ def restore(user, archive):
                 "description": row.get("description") or "",
             },
         )
+        _backdate(experience, created_at=row.get("created_at"))
         experiences[(company.name, row["title"], row["started_on"])] = experience
+
+    # --- education ---------------------------------------------------------
+    education = {}  # (school, started_on) → instance
+    for row in archive.get("education", []):
+        started = _date(row.get("started_on"))
+        if not row.get("school") or not started:
+            continue
+        school = Education.objects.create(
+            user=user,
+            school=row["school"],
+            degree=row.get("degree") or "",
+            field_of_study=row.get("field_of_study") or "",
+            started_on=started,
+            ended_on=_date(row.get("ended_on")),
+            description=row.get("description") or "",
+        )
+        _backdate(school, created_at=row.get("created_at"))
+        education[(row["school"], row["started_on"])] = school
 
     # --- certifications ----------------------------------------------------
     certifications = {}  # name → instance
@@ -459,7 +614,49 @@ def restore(user, archive):
             credential_url=row.get("credential_url") or "",
             description=row.get("description") or "",
         )
+        _backdate(certification, created_at=row.get("created_at"))
         certifications[row["name"]] = certification
+
+    # --- extra-curriculars -------------------------------------------------
+    extracurriculars = {}  # (organization, started_on) → instance
+    for row in archive.get("extracurriculars", []):
+        started = _date(row.get("started_on"))
+        if not row.get("organization") or not started:
+            continue
+        activity = ExtraCurricular.objects.create(
+            user=user,
+            organization=row["organization"],
+            role=row.get("role") or "",
+            started_on=started,
+            ended_on=_date(row.get("ended_on")),
+            description=row.get("description") or "",
+        )
+        _backdate(activity, created_at=row.get("created_at"))
+        extracurriculars[(row["organization"], row["started_on"])] = activity
+
+    # --- profile links & addresses -----------------------------------------
+    profile_links = {}  # (label, url) → instance
+    for row in archive.get("profile_links", []):
+        if not row.get("label") or not row.get("url"):
+            continue
+        link = ProfileLink.objects.create(
+            user=user,
+            label=row["label"],
+            url=row["url"],
+            category=row.get("category") or "other",
+            position=row.get("position") or 0,
+        )
+        profile_links[(row["label"], row["url"])] = link
+
+    for row in archive.get("profile_addresses", []):
+        if not row.get("label") or not row.get("address"):
+            continue
+        country = None
+        if row.get("country"):
+            country, _ = Country.objects.get_or_create(name=row["country"])
+        ProfileAddress.objects.create(
+            user=user, label=row["label"], address=row["address"], country=country
+        )
 
     # --- refinement trail (notes → messages → events) ----------------------
     refinement_notes = {}  # old id → new instance
@@ -529,7 +726,10 @@ def restore(user, archive):
         "resumes": resumes,
         "people": people,
         "experiences": experiences,
+        "education": education,
         "certifications": certifications,
+        "extracurriculars": extracurriculars,
+        "profile_links": profile_links,
         "refinement_notes": refinement_notes,
         "refinement_messages": refinement_messages,
         "library_documents": library_documents,
@@ -559,9 +759,47 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
     """
     profile = Profile.for_user(user)
     attached = 0
-    cert_content_type = ContentType.objects.get_for_model(Certification)
-    certifications = refs.setdefault("certifications", {})
     refinement_messages = refs.setdefault("refinement_messages", {})
+
+    # The three profile sections share icon/attachment handling; each is
+    # looked up by the natural key its manifest row carries, and a section
+    # whose data row is missing (an older media-only zip) is recreated as a
+    # shell so its files still land.
+    sections = {
+        "education": (
+            Education,
+            refs.setdefault("education", {}),
+            lambda m: (m.get("school"), m.get("started_on")),
+            lambda m: {"school": m.get("school"), "started_on": _date(m.get("started_on"))},
+        ),
+        "certification": (
+            Certification,
+            refs.setdefault("certifications", {}),
+            lambda m: m.get("name"),
+            lambda m: {"name": m.get("name")},
+        ),
+        "extracurricular": (
+            ExtraCurricular,
+            refs.setdefault("extracurriculars", {}),
+            lambda m: (m.get("organization"), m.get("started_on")),
+            lambda m: {
+                "organization": m.get("organization"),
+                "started_on": _date(m.get("started_on")),
+            },
+        ),
+    }
+
+    def section_for(prefix, match):
+        model, lookup, key_of, fields_of = sections[prefix]
+        key = key_of(match)
+        fields = fields_of(match)
+        if not all(fields.values()):
+            return None
+        section = lookup.get(key)
+        if section is None:
+            section, _ = model.objects.get_or_create(user=user, **fields)
+            lookup[key] = section
+        return section
 
     for row in manifest_rows:
         data = media_bytes.get(row.get("path"))
@@ -576,6 +814,12 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
             profile.avatar.save(name, content, save=True)
         elif kind == "profile_wallpaper":
             profile.custom_wallpaper.save(name, content, save=True)
+        elif kind == "profile_pinned_photo":
+            profile.pinned_photo.save(name, content, save=True)
+        elif kind == "profile_link_icon":
+            link = refs.get("profile_links", {}).get((match.get("label"), match.get("url")))
+            if link:
+                link.icon.save(name, content, save=True)
         elif kind == "resume":
             resume = refs["resumes"].get(match.get("label"))
             if resume:
@@ -599,33 +843,20 @@ def reattach_media(user, refs, manifest_rows, media_bytes):
                 ExperiencePhoto.objects.create(
                     experience=experience, image=content, caption=row.get("caption") or ""
                 )
-        elif kind == "certification_icon":
-            cert_name = match.get("name")
-            if not cert_name:
+        elif kind.endswith("_icon") and kind[: -len("_icon")] in sections:
+            section = section_for(kind[: -len("_icon")], match)
+            if section is None:
                 continue
-            certification = certifications.get(cert_name)
-            if certification is None:
-                certification, _ = Certification.objects.get_or_create(
-                    user=user, name=cert_name
-                )
-                certifications[cert_name] = certification
-            certification.icon.save(name, content, save=True)
-        elif kind == "certification_attachment":
-            cert_name = match.get("name")
-            if not cert_name:
+            section.icon.save(name, content, save=True)
+        elif kind.endswith("_attachment") and kind[: -len("_attachment")] in sections:
+            section = section_for(kind[: -len("_attachment")], match)
+            if section is None:
                 continue
-            certification = certifications.get(cert_name)
-            if certification is None:
-                # Pre-certification-sheet zip: media only. Recreate the shell.
-                certification, _ = Certification.objects.get_or_create(
-                    user=user, name=cert_name
-                )
-                certifications[cert_name] = certification
             original_name = (row.get("original_name") or name or "").strip()
             caption = (row.get("caption") or "").strip()
             ProfileAttachment.objects.create(
-                content_type=cert_content_type,
-                object_id=certification.id,
+                content_type=ContentType.objects.get_for_model(type(section)),
+                object_id=section.id,
                 file=content,
                 original_name=original_name,
                 kind=_attachment_kind(original_name or name, row.get("attachment_kind")),
