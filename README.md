@@ -8,7 +8,7 @@ Personal career + productivity assistant for tracking job applications, network 
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![Tailwind](https://img.shields.io/badge/Tailwind-4-06B6D4?logo=tailwindcss&logoColor=white)
-![Claude Code](https://shields.io)
+![Claude Code](https://img.shields.io/badge/Claude_Code-555?logo=claude)
 
 ## Core features
 
