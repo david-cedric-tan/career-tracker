@@ -130,6 +130,92 @@ class MigrationTests(ConsoleBase):
         missing = [str(m) for m in dumpable_models() if m not in seen]
         self.assertEqual(missing, [])
 
+    def test_pending_migrations_get_a_plain_answer(self):
+        from unittest import mock
+
+        from django.db.migrations.executor import MigrationExecutor
+
+        migration = mock.Mock(app_label="todos")
+        migration.name = "0099_new_column"  # `name=` in Mock() names the mock itself
+        pending = [(migration, False)]
+        with mock.patch.object(MigrationExecutor, "migration_plan", return_value=pending):
+            for response in (
+                self.client.get("/api/console/migration/sections/"),
+                self.client.get("/api/console/migration/export.zip"),
+            ):
+                self.assertEqual(response.status_code, 409)
+                self.assertIn("manage.py migrate", response.data["detail"])
+
+    def test_archive_from_before_a_new_field_still_restores(self):
+        """Archives made before a column existed lack that field; loaddata
+        gives it the model default rather than refusing the row."""
+        dump = [
+            {
+                "model": "todos.todo",
+                "pk": 9001,
+                "fields": {
+                    "user": self.alice.pk,
+                    "title": "From an old archive",
+                    "status": "open",
+                    "priority": "medium",
+                    "position": 0,
+                    "created_at": "2026-09-01T00:00:00Z",
+                    "updated_at": "2026-09-01T00:00:00Z",
+                },
+            }
+        ]
+        from django.core import serializers
+
+        objects = list(serializers.deserialize("json", json.dumps(dump)))
+        self.assertEqual(objects[0].object.google_task_id, "")
+
+    def test_export_keeps_sub_millisecond_timestamps(self):
+        from datetime import datetime, timezone as tz
+
+        from applications.models import AppsEventLog
+
+        app = Application.objects.filter(user=self.alice).first()
+        base = datetime(2026, 9, 11, 9, 41, tzinfo=tz.utc)
+        for micro in (0, 1, 2):
+            AppsEventLog.objects.create(
+                application=app, event_type="edited", changed_at=base.replace(microsecond=micro)
+            )
+        _, dump, _ = self.read_zip(self.client.get("/api/console/migration/export.zip").content)
+        stamps = sorted(
+            row["fields"]["changed_at"]
+            for row in dump
+            if row["model"] == "applications.appseventlog"
+            and row["fields"]["changed_at"].startswith("2026-09-11T09:41")
+        )
+        self.assertEqual(len(set(stamps)), 3)
+
+    def test_rounded_timestamps_in_an_old_dump_are_moved_apart(self):
+        from .migration import repair_dump
+
+        def log(pk, stamp):
+            return {
+                "model": "applications.appseventlog",
+                "pk": pk,
+                "fields": {"application": 7, "changed_at": stamp, "event_type": "edited"},
+            }
+
+        dump = [
+            log(2, "2026-09-11T09:41:00.000Z"),
+            log(1, "2026-09-11T09:41:00.000Z"),
+            log(3, "2026-09-11T09:41:00.001Z"),  # already holds the first free slot
+            log(4, "2026-09-11T09:41:00.000Z"),
+        ]
+        fixed, repaired = repair_dump(json.dumps(dump).encode())
+        self.assertEqual(repaired, 2)
+        stamps = {row["pk"]: row["fields"]["changed_at"] for row in json.loads(fixed)}
+        self.assertEqual(stamps[1], "2026-09-11T09:41:00.000Z")  # oldest keeps its stamp
+        self.assertEqual(stamps[3], "2026-09-11T09:41:00.001Z")
+        self.assertEqual(stamps[2], "2026-09-11T09:41:00.002000Z")
+        self.assertEqual(stamps[4], "2026-09-11T09:41:00.003000Z")
+
+        untouched, none = repair_dump(fixed)
+        self.assertEqual((untouched, none), (fixed, 0))
+
     def read_zip(self, content):
         zf = zipfile.ZipFile(BytesIO(content))
         return json.loads(zf.read("manifest.json")), json.loads(zf.read("dump.json")), zf

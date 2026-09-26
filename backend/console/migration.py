@@ -13,7 +13,7 @@ suite checks that, so a new table can't silently fall out of the migration.
 
 import json
 import zipfile
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -22,9 +22,11 @@ from django.apps import apps
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.core import management
+from django.core.serializers.json import DjangoJSONEncoder
 from django.core import serializers as django_serializers
 from django.db import models, transaction
 from django.db.models.deletion import ProtectedError
+from django.utils.dateparse import parse_datetime
 
 DUMP_FILENAME = "dump.json"
 MANIFEST_FILENAME = "manifest.json"
@@ -36,6 +38,9 @@ EXCLUDED_MODELS = {
     "auth.permission",
     "sessions.session",
     "admin.logentry",
+    # OAuth tokens belong to this install's Google client; the new machine
+    # reconnects from Settings instead.
+    "google_tasks.googletasksconnection",
 }
 
 # Section key → (label, description, model labels). Order matters twice: it's
@@ -263,6 +268,118 @@ def describe_sections(user_ids=None):
     return out
 
 
+class PreciseJSONEncoder(DjangoJSONEncoder):
+    """DjangoJSONEncoder, minus its rounding of times to milliseconds.
+
+    That rounding is lossy in a way that matters here: rows kept apart by a
+    unique constraint on a timestamp — `uniq_event_per_app_time` on the
+    application history, where older versions spaced same-moment rows by
+    microseconds — come out of the dump with identical stamps, and the
+    restore then fails on the very constraint the source satisfied.
+    `loaddata` reads full-precision ISO strings back without complaint.
+    """
+
+    def default(self, o):
+        if isinstance(o, datetime):
+            text = o.isoformat()
+            return text[:-6] + "Z" if text.endswith("+00:00") else text
+        if isinstance(o, time):
+            return o.isoformat()
+        return super().default(o)
+
+
+def _unique_field_sets(model):
+    """Every set of field names the database holds unique for `model`."""
+    sets = [list(fields) for fields in model._meta.unique_together]
+    for constraint in model._meta.constraints:
+        if (
+            isinstance(constraint, models.UniqueConstraint)
+            and constraint.fields
+            and constraint.condition is None
+        ):
+            sets.append(list(constraint.fields))
+    return sets
+
+
+def _instant(value):
+    return parse_datetime(value) if isinstance(value, str) else None
+
+
+def repair_dump(dump_bytes):
+    """Undo the millisecond rounding in dumps made before PreciseJSONEncoder.
+
+    For each unique constraint that includes exactly one datetime field,
+    rows whose values now clash are moved apart by a millisecond at a time,
+    in primary-key (creation) order, onto the first stamp nobody else holds.
+    Returns `(dump_bytes, rows_repaired)`; the bytes are untouched when
+    nothing clashed.
+    """
+    rows = json.loads(dump_bytes.decode("utf-8"))
+    if not isinstance(rows, list):
+        return dump_bytes, 0
+    by_label = {_label(m): m for m in apps.get_models()}
+    grouped = {}
+    for row in rows:
+        if isinstance(row, dict) and row.get("model") in by_label:
+            grouped.setdefault(row["model"], []).append(row)
+
+    repaired = 0
+    for label, model_rows in grouped.items():
+        model = by_label[label]
+        for field_names in _unique_field_sets(model):
+            try:
+                fields = [model._meta.get_field(name) for name in field_names]
+            except Exception:  # noqa: BLE001 — a constraint on a renamed field
+                continue
+            stamps = [f.name for f in fields if isinstance(f, models.DateTimeField)]
+            if len(stamps) != 1:
+                continue
+            stamp = stamps[0]
+
+            def key(row, moment=None):
+                # Stamps compared as instants, not strings: an old dump's
+                # "…00.001Z" and a repaired "…00.001000Z" are the same moment.
+                values = row.get("fields", {})
+                return tuple(
+                    (moment if moment is not None else _instant(values.get(name)))
+                    if name == stamp
+                    # Natural foreign keys arrive as lists; make them hashable.
+                    else (
+                        None
+                        if values.get(name) is None
+                        else json.dumps(values.get(name), sort_keys=True)
+                    )
+                    for name in field_names
+                )
+
+            candidates = [r for r in model_rows if None not in key(r)]
+            taken = {key(r) for r in candidates}
+            kept = set()
+            candidates.sort(
+                key=lambda r: (0, r["pk"], "")
+                if isinstance(r.get("pk"), int)
+                else (1, 0, str(r.get("pk")))
+            )
+            for row in candidates:
+                current = key(row)
+                if current not in kept:
+                    kept.add(current)
+                    continue
+                moment = _instant(row["fields"][stamp])
+                while True:
+                    moment += timedelta(milliseconds=1)
+                    if key(row, moment) not in taken:
+                        break
+                row["fields"][stamp] = PreciseJSONEncoder().default(moment)
+                taken.add(key(row, moment))
+                kept.add(key(row, moment))
+                repaired += 1
+
+    if not repaired:
+        return dump_bytes, 0
+    return json.dumps(rows).encode("utf-8"), repaired
+
+
 def build_migration(sections=None, user_ids=None, include_media=True):
     """Zip bytes: dump.json (+ media/ tree) + manifest.json.
 
@@ -299,6 +416,7 @@ def build_migration(sections=None, user_ids=None, include_media=True):
         objects,
         use_natural_foreign_keys=True,
         use_natural_primary_keys=True,
+        cls=PreciseJSONEncoder,
     )
 
     buffer = BytesIO()
@@ -411,6 +529,7 @@ def apply_migration(zf, manifest, dump_bytes, media_names):
         labels = list(by_label)
     targets = [by_label[label] for label in labels if label in by_label]
 
+    dump_bytes, repaired = repair_dump(dump_bytes)
     with TemporaryDirectory() as tmp:
         dump_file = Path(tmp) / DUMP_FILENAME
         dump_file.write_bytes(dump_bytes)
@@ -434,4 +553,8 @@ def apply_migration(zf, manifest, dump_bytes, media_names):
     # ContentType ids are per-database; anything cached from before the
     # reload could now point at the wrong table.
     ContentType.objects.clear_cache()
-    return {"models": [_label(m) for m in targets], "files_copied": copied}
+    return {
+        "models": [_label(m) for m in targets],
+        "files_copied": copied,
+        "timestamps_repaired": repaired,
+    }

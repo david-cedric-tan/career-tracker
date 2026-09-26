@@ -18,6 +18,7 @@ import { Modal } from '../components/ui/Modal'
 import { Switch } from '../components/ui/Switch'
 import { useToast } from '../components/ui/toast-context'
 import { BackupPanel } from '../components/BackupPanel'
+import { GoogleTasksCard } from '../components/GoogleTasksCard'
 import { ImportGuideModal } from '../components/ImportGuideModal'
 import { useAutoOpenFromQuery } from '../hooks/useAutoOpenFromQuery'
 import { useAppearance } from '../appearance/context'
@@ -52,6 +53,7 @@ export function SettingsPage() {
           <GlassCard />
           <CelebrationsCard />
           <TodoSuggestionsCard />
+          <GoogleTasksCard />
         </div>
 
         <div className="flex flex-col gap-4">

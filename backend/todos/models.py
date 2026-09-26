@@ -62,6 +62,10 @@ class Todo(models.Model):
     # it's a separate view of the same todos.
     position = models.PositiveIntegerField(default=0)
 
+    # The Google task this todo is mirrored to, when Google Tasks sync is on
+    # (see google_tasks.sync). Blank means not mirrored yet.
+    google_task_id = models.CharField(max_length=255, blank=True, editable=False)
+
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -11,7 +11,14 @@ export async function downloadFile(url: string, fallbackName: string): Promise<v
   const response = await fetch(url, {
     headers: { Authorization: `Token ${getToken() ?? ''}` },
   })
-  if (!response.ok) throw new Error(`Download failed (${response.status})`)
+  if (!response.ok) {
+    // Prefer the server's own explanation (e.g. "run migrate") when it sent one.
+    const detail = await response
+      .json()
+      .then((body: { detail?: unknown }) => (typeof body.detail === 'string' ? body.detail : ''))
+      .catch(() => '')
+    throw new Error(detail || `Download failed (${response.status})`)
+  }
 
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)

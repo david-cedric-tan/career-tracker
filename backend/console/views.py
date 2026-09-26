@@ -312,10 +312,35 @@ def password_resets(request):
     )
 
 
+def _pending_migrations_response():
+    """A plain answer when the code is ahead of the database schema.
+
+    Otherwise every query touching a new column fails with a raw SQL error
+    ("column … does not exist") — the export as a bare 500, the import as a
+    confusing rollback — when the fix is one command.
+    """
+    from django.db.migrations.executor import MigrationExecutor
+
+    executor = MigrationExecutor(connection)
+    plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
+    if not plan:
+        return None
+    names = ", ".join(f"{m.app_label}.{m.name}" for m, _ in plan)
+    return Response(
+        {
+            "detail": "The database is behind the code — run `python manage.py "
+            f"migrate` (or restart ./run.sh), then try again. Pending: {names}."
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
 @api_view(["GET"])
 @permission_classes(console_api)
 def migration_sections(request):
     """The toggle list, with live counts — optionally for chosen accounts."""
+    if (pending := _pending_migrations_response()) is not None:
+        return pending
     user_ids = _user_ids(request.query_params.get("users"))
     return Response({"sections": describe_sections(user_ids), "users": user_ids})
 
@@ -335,6 +360,8 @@ def _user_ids(raw):
 @permission_classes(console_api)
 def migration_export(request):
     """`?sections=a,b&users=1,2&media=1` → the zip."""
+    if (pending := _pending_migrations_response()) is not None:
+        return pending
     raw_sections = request.query_params.get("sections")
     sections = [s for s in raw_sections.split(",") if s] if raw_sections else None
     user_ids = _user_ids(request.query_params.get("users"))
@@ -364,6 +391,8 @@ def migration_import(request):
     The signed-in operator may be replaced too if the dump carries accounts
     — the response says so, and the SPA sends them back to sign in.
     """
+    if (pending := _pending_migrations_response()) is not None:
+        return pending
     upload = request.FILES.get("file")
     if upload is None:
         return Response({"detail": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)

@@ -230,6 +230,30 @@ export const todos = {
     api<{ ids: number[] }>('/todos/reorder/', { method: 'POST', body: { ids } }),
 }
 
+/** Settings → Google Tasks: one-way mirror of todos into a Google task list. */
+export type GoogleTasksStatus = {
+  configured: boolean
+  connected: boolean
+  connected_at: string | null
+  last_synced_at: string | null
+  last_error: string
+  synced_count: number
+}
+
+export const googleTasks = {
+  status: () => api<GoogleTasksStatus>('/google-tasks/'),
+  start: (redirectUri?: string) =>
+    api<{ auth_url: string }>('/google-tasks/start/', {
+      method: 'POST',
+      body: { redirect_uri: redirectUri },
+    }),
+  complete: (url: string) =>
+    api<GoogleTasksStatus>('/google-tasks/complete/', { method: 'POST', body: { url } }),
+  resync: () =>
+    api<GoogleTasksStatus & { queued: number }>('/google-tasks/resync/', { method: 'POST' }),
+  disconnect: () => api<GoogleTasksStatus>('/google-tasks/disconnect/', { method: 'POST' }),
+}
+
 export const catchups = {
   ...crud<Catchup>('catchups'),
   choices: () => api<CatchupChoices>('/catchups/choices/'),

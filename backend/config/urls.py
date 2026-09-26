@@ -20,6 +20,7 @@ urlpatterns = [
     path("api/backup/", include("backup.urls")),
     path("api/console/", include("console.urls")),
     path("api/onboarding/", include("onboarding.urls")),
+    path("api/google-tasks/", include("google_tasks.urls")),
     path("api-auth/", include("rest_framework.urls")),
 ]
 

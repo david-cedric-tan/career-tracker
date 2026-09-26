@@ -46,7 +46,7 @@ const NAV = [
  * profile, while the wordmark goes home. Splitting them keeps each link's
  * destination guessable from what you clicked.
  */
-export const APP_VERSION = '1.5'
+export const APP_VERSION = '1.6'
 
 /** The making-of, for the credit screen. */
 const CREDITS = [

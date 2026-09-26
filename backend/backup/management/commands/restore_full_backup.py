@@ -64,6 +64,14 @@ class Command(BaseCommand):
                     "This zip has no dump.json — it isn't a full-backup export."
                 )
 
+            # Older exports rounded timestamps to milliseconds; see repair_dump.
+            from console.migration import repair_dump
+
+            fixed, repaired = repair_dump(dump_file.read_bytes())
+            if repaired:
+                dump_file.write_bytes(fixed)
+                self.stdout.write(f"Moved {repaired} clashing timestamp(s) apart.")
+
             with transaction.atomic():
                 self.stdout.write("Wiping existing data...")
                 management.call_command("flush", "--noinput")

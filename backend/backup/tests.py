@@ -391,6 +391,7 @@ class ExportTests(BackupTestBase):
             "is_developer",  # a trust grant, not the user's data
             "listings",  # M2M mirror of listing_links
             "attachments", "photos",  # binaries via manifest; captions kept
+            "google_task_id",  # a restored todo gets its own new Google task
         }
         sheets = {
             "applications": Application,

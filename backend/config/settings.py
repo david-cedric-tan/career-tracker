@@ -77,6 +77,7 @@ INSTALLED_APPS = [
     "backup",
     "onboarding",
     "console",
+    "google_tasks",
 ]
 
 MIDDLEWARE = [
@@ -277,3 +278,12 @@ LOGGING = {
         },
     },
 }
+
+# Google Tasks sync (Settings → Google Tasks). A Google Cloud OAuth client of
+# type "Desktop app" with the Tasks API enabled — see google_tasks/client.py
+# for why it has to be that type. Leave both blank to hide the feature.
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_TASKS_LIST_TITLE = os.getenv("GOOGLE_TASKS_LIST_TITLE", "Career Tracker")
+# Tests run sync jobs in the calling thread instead of the background worker.
+GOOGLE_TASKS_SYNC_INLINE = False
